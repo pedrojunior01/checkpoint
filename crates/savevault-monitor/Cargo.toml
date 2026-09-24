@@ -1,0 +1,11 @@
+[package]
+name = "savevault-monitor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+savevault-core = { path = "../savevault-core" }
+notify = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

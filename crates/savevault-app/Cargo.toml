@@ -1,0 +1,24 @@
+[package]
+name = "savevault-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "savevault"
+path = "src/main.rs"
+
+[dependencies]
+savevault-core = { path = "../savevault-core" }
+savevault-db = { path = "../savevault-db" }
+savevault-discovery = { path = "../savevault-discovery" }
+savevault-backup = { path = "../savevault-backup" }
+savevault-monitor = { path = "../savevault-monitor" }
+savevault-sync = { path = "../savevault-sync" }
+savevault-cloud = { path = "../savevault-cloud" }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

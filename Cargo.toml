@@ -1,0 +1,60 @@
+[workspace]
+members = [
+    "crates/savevault-core",
+    "crates/savevault-db",
+    "crates/savevault-discovery",
+    "crates/savevault-backup",
+    "crates/savevault-monitor",
+    "crates/savevault-sync",
+    "crates/savevault-cloud",
+    "crates/savevault-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["pedro"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Hashing
+blake3 = "1"
+
+# Filesystem watcher
+notify = { version = "6", features = ["serde"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP client (for cloud APIs)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Walkdir
+walkdir = "2"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Test helpers
+tempfile = "3"

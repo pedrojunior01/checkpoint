@@ -1,0 +1,15 @@
+[package]
+name = "savevault-sync"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+savevault-core = { path = "../savevault-core" }
+savevault-db = { path = "../savevault-db" }
+savevault-backup = { path = "../savevault-backup" }
+savevault-cloud = { path = "../savevault-cloud" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

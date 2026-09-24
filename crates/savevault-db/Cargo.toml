@@ -1,0 +1,14 @@
+[package]
+name = "savevault-db"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+savevault-core = { path = "../savevault-core" }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }

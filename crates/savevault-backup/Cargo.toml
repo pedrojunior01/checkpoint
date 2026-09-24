@@ -1,0 +1,18 @@
+[package]
+name = "savevault-backup"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+savevault-core = { path = "../savevault-core" }
+blake3 = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+uuid = { workspace = true }
