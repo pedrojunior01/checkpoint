@@ -1,75 +1,132 @@
 # Relatório de Implementação e Arquitetura - SaveVault
 
-**Versão Atual:** v0.4.1  
-**Data do Relatório:** Setembro 2026
-
-## Visão Geral do Projeto
-O SaveVault é um sistema *CLI-first* escrito em Rust projetado para detectar automaticamente jogos instalados, mapear seus diretórios de save, monitorar alterações em tempo real, criar backups incrementais (snapshots) e sincronizar esses arquivos de forma segura com a nuvem (ex: Google Drive).
-
-A arquitetura escolhida foi a de **Workspace Modular**, separando responsabilidades em múltiplos *crates* autônomos, focando em extrema confiabilidade, baixo uso de CPU e tolerância a falhas.
+**Versão Atual:** v0.5.0  
+**Data do Relatório:** Setembro 2026  
+**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) Operacionais
 
 ---
 
-## Crates e Módulos Implementados
+## 1. Visão Geral do Projeto
+O **SaveVault** é um sistema *CLI-first* escrito 100% em Rust projetado para detectar automaticamente jogos instalados no Windows (10/11 x64), mapear seus diretórios de saves, monitorar alterações em tempo real de forma não-bloqueante, gerar snapshots versionados com integridade garantida por hash BLAKE3 e sincronizar os backups de maneira assíncrona com a nuvem (Google Drive via OAuth 2.0).
+
+A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o código em 8 *crates* autônomos para garantir alta confiabilidade, concorrência segura, ausência de deadlocks e baixo consumo de CPU/IO.
+
+---
+
+## 2. Crates e Módulos Implementados
 
 ### 1. `savevault-core` (Completo)
-- Define as estruturas de dados universais (`Game`, `SaveLocation`, `BackupSnapshot`, `FileEntry`).
-- Gerencia o motor de configuração do usuário via `%APPDATA%\SaveVault\config.toml` (ex: limites de versionamento de backups).
-- Garante o isolamento de modelos para não criar dependências circulares entre crates.
+- **Modelos de Domínio**: Define estruturas de dados universais (`Game`, `SaveLocation`, `FileEntry`, `Backup`, `SyncQueueItem`).
+- **Normalização de Caminhos Windows (`src/path.rs`)**:
+  - Remoção de prefixos estendidos `\\?\` e `\\?\UNC\`.
+  - Tratamento case-insensitive preservando formatação original.
+  - Mitigação de directory traversal indevido.
+- **Configuração**: Gerenciamento do arquivo `%APPDATA%\SaveVault\config.toml` (retenção de versões, tempos de debounce e caminhos do sistema).
 
 ### 2. `savevault-db` (Completo)
-- Banco de dados **SQLite** totalmente embutido via `rusqlite` com a flag `bundled`, dispensando a instalação de drivers externos no Windows.
-- **Sistema de Migrações Idempotente**: Migrações (`001_initial_schema`, `002_save_locations_unique_path`) rodam de forma determinística na inicialização.
-- **Repositórios CRUD**: 
-  - `GamesRepo` (com `INSERT OR IGNORE` e reaproveitamento seguro de IDs).
-  - `SaveLocationsRepo` (com constraints UNIQUE de caminho + jogo).
-  - `FilesRepo`, `BackupsRepo`, `SyncQueueRepo`.
-- Implementação rigorosa de `ON DELETE CASCADE` para não deixar banco de dados sujo ao remover um jogo.
+- **SQLite Embutido**: Utiliza `rusqlite` com flag `bundled` (independente de drivers externos ou DLLs do sistema).
+- **Migrações Determinísticas**:
+  - `001_initial_schema`: criação das tabelas fundamentais (`games`, `save_locations`, `files`, `backups`, `sync_queue`).
+  - `002_save_locations_unique_path`: desduplicação e índice de unicidade.
+  - `003_save_locations_nocase_index`: suporte a `COLLATE NOCASE` para caminhos Windows.
+- **Repositórios CRUD com Integridade Referencial**:
+  - `GamesRepo`: suporte a `find_by_platform_id` e reaproveitamento seguro de UUIDs.
+  - `SaveLocationsRepo`: método `upsert` idempotente que preserva UUIDs existentes.
+  - `FilesRepo`: suporte a `find_by_id` e `find_by_path`.
+  - `BackupsRepo`: controle de retenção com método `prune_old_versions`.
+  - `SyncQueueRepo`: enfileiramento, listagem de pendentes e controle de tentativas.
+  - Implementação estrita de `ON DELETE CASCADE`.
 
-### 3. `savevault-discovery` (Funcionalidade Core da v0.4.1 Concluída)
-- **Steam Engine**: Lê o `libraryfolders.vdf`, itera pelas bibliotecas e lê nativamente arquivos de manifesto `.acf` para extrair nome, Steam AppID e caminhos absolutos de instalação.
-- **Ludusavi Manifest Engine**: 
-  - Baixa de forma assíncrona o banco de dados oficial do Ludusavi (~17MB, mais de 53 mil jogos) e realiza cache por 7 dias.
-  - Parseia o YAML e extrai as regras de salvamento de cada jogo aplicáveis para Windows.
-- **Path Resolver (A Estrela do Discovery)**:
-  - Traduz dezenas de variáveis fictícias (ex: `<winAppData>`, `<root>`) para caminhos dinâmicos baseados no PC do usuário e diretórios de instalação de cada jogo (gerados pelo detector Steam).
-  - **Suporte a Glob / <storeUserId>**: Descobre proativamente diretórios que usam o ID da Steam do usuário gerando expansões e buscando caminhos válidos no sistema de arquivos. Garante a detecção autônoma de jogos complexos (ex: *Elden Ring*, *Sekiro*).
+### 3. `savevault-discovery` (Completo)
+- **Steam Engine**:
+  - Mapeamento dinâmico de múltiplas bibliotecas via leitura do `libraryfolders.vdf`.
+  - Parser nativo de arquivos `.acf` para extrair nome, Steam AppID e pasta de instalação sem resíduos de aspas.
+- **Ludusavi Manifest Engine**:
+  - Download assíncrono do catálogo oficial do Ludusavi (~17MB, +53.000 jogos) com cache local por 7 dias.
+  - Parser nativo de YAML com filtragem de tags e regras específicas para Windows.
+- **Path Resolver & Suporte a Globs**:
+  - Resolução de variáveis de ambiente (`<winAppData>`, `<winDocuments>`, `<winLocalAppData>`, `<root>`).
+  - Resolução dinâmica de identificadores de conta Steam (`<storeUserId>`) via expansão de globs reais no disco.
 
-### 4. `savevault-backup` (Fundação Completa)
-- Motor de hashing implementado usando criptografia moderna **BLAKE3**.
-- Criado o fluxo de lógica para testes de determinação se o arquivo de save foi modificado desde o último check, economizando IO e armazenamento.
+### 4. `savevault-monitor` (Completo)
+- **Pipeline de Monitoramento Resiliente**:
+  - `SaveScanner`: varredura recursiva de arquivos, diretórios e padrões glob.
+  - `SaveWatcherService`: integração com a crate `notify` em canal não-bloqueante (`try_send`) com contadores atômicos contra overflow e monitoramento dinâmico de pastas-mãe.
+  - `FileDebouncer`: agrupamento (*coalescing*) causal de múltiplos eventos de escrita em janela temporal configurável, evitando sobrecarga de IO.
+  - `StabilityChecker`: motor de detecção de escrita em andamento. Mapeia códigos de erro nativos do Windows (`ERROR_SHARING_VIOLATION` 32 e 33) e aplica retentativas com backoff exponencial e jitter para garantir que saves em gravação ativa pelo jogo não sejam corrompidos ou lidos prematuramente.
 
-### 5. `savevault-app` (Orquestrador)
-- **`savevault`**: Binário silencioso/principal. Inicializa e coordena a DB, executa todo o discovery de ponta a ponta e salva de forma idempotente sem travar.
-- **`scan_report`**: Binário visual e diagnóstico que imprime no terminal uma listagem colorida e tabular com todos os jogos, caminhos encontrados e verificação ao vivo de existência (`OK` vs `Ausente`) da pasta no sistema.
+### 5. `savevault-backup` (Completo)
+- **Criptografia e Hashing**: Cálculo determinístico de assinaturas via **BLAKE3**.
+- **SnapshotManager**:
+  - Criação de snapshots locais versionados (`backup_root/<file_id>/v<version>/filename`).
+  - Rotina de **restauração segura**: gera automaticamente cópia temporária (`.savevault_safety_bak`) antes de substituir o arquivo original, permitindo desfazer rollbacks acidentais.
 
-### 6. Crates Prontos para Expansão (Scaffolds com build limpo)
-- `savevault-monitor`: Criado. (Alvo da v0.5)
-- `savevault-sync`: Criado.
-- `savevault-cloud`: Criado.
+### 6. `savevault-cloud` (Funcional)
+- **Autenticação OAuth 2.0 (`src/auth.rs`)**:
+  - Fluxo *Authorization Code com PKCE via Loopback IP* (`127.0.0.1:8085`).
+  - Abertura automática do navegador padrão do sistema para consentimento do usuário.
+  - Escopo restrito de segurança: `https://www.googleapis.com/auth/drive.file` (acesso exclusivo aos arquivos criados pelo próprio SaveVault).
+  - Armazenamento seguro de *Refresh Token* no **Windows Credential Manager** via crate `keyring`.
+  - Renovação automática e transparente de *Access Tokens* expirados.
+- **Google Drive Provider (`src/google_drive.rs`)**:
+  - Criação hierárquica automática de pastas no Drive (`SaveVault/<save_location_id>/<file_id>/`).
+  - Upload Multipart (metadados JSON + binário do snapshot em requisição HTTP única).
+  - Métodos implementados para download e remoção remota de arquivos.
+
+### 7. `savevault-sync` (Funcional)
+- **SyncEngine**:
+  - Consumo assíncrono da tabela `sync_queue`.
+  - Tratamento de falhas de rede com backoff exponencial (até 5 tentativas antes de marcar como falha definitiva).
+  - Atualização idempotente do status de sincronização (`Pending` ➔ `Synced`) e persistência do caminho remoto (`cloud_path`).
+  - Operação segura em modo offline (ignora silenciosamente uploads pendentes quando o usuário não estiver autenticado).
+
+### 8. `savevault-app` (Orquestrador & CLI)
+- **Binário Principal (`savevault`)**:
+  - Orquestra descoberta, resolução e persistência em banco.
+  - Aciona o consumidor de sincronização após cada ciclo.
+  - Suporte a subcomandos de linha de comando:
+    - `savevault auth login`: inicia o fluxo de login no navegador.
+    - `savevault auth status`: verifica se há credenciais válidas salvas.
+    - `savevault auth logout`: desvincula e limpa o cofre do Windows.
+    - `savevault sync`: executa manualmente o processamento da fila de sincronização.
+- **Binário de Diagnóstico (`scan_report`)**:
+  - Exibe tabela formatada com jogos detectados, AppIDs, status da pasta no disco (`OK` vs `Ausente`) e métricas do catálogo.
 
 ---
 
-## Bateria de Testes Automatizados (QA)
-Foram implementados 45 testes unitários e de integração, garantindo o funcionamento do núcleo do SaveVault. Atualmente, a cobertura é de **100% de aprovação (45/45 testes passando)**:
+## 3. Bateria de Testes Automatizados (QA)
 
-1. **Testes de Hashing (`savevault-backup`: 8 testes)**
-   - O BLAKE3 lida perfeitamente com arquivos vazios, é determinístico, e reflete mudanças microscópicas com mudança de hash garantida.
-2. **Testes de Regras de Negócio (`savevault-core`: 10 testes)**
-   - Geração forçada de UUIDs únicos, conversão sem perdas (roundtrip) do arquivo `.toml` da configuração, e separação segura de variantes e confidence scores.
-3. **Testes de Integridade da DB (`savevault-db`: 16 testes)**
-   - Simulação de migrações sendo aplicadas múltiplas vezes (idempotência), exclusão de jogos causando o "delete cascade" correto dos caminhos de save, e UPSERTS funcionando corretamente para não corromper IDs.
-4. **Testes do Resolver e Discovery (`savevault-discovery`: 11 testes)**
-   - Testes isolados garantindo que caminhos baseados em placeholders do Linux (`<xdgData>`) são devidamente limpos, e que `<winAppData>` reflete a variável de ambiente correta.
+Atualmente a suíte conta com **121 testes automatizados (100% de aprovação)** cobrindo todos os módulos críticos:
+
+1. **`savevault-db` (28 testes)**: Idempotência de migrações, índices case-insensitive (`COLLATE NOCASE`), `ON DELETE CASCADE`, consistência de UUIDs e operações CRUD.
+2. **`savevault-monitor` (30 testes)**: Coalescência de debouncing, limites de memória, recuperação de sharing violation (locks do Windows), deleção e renomeação atômica.
+3. **`savevault-discovery` (28 testes)**: Parsing de manifestos Steam ACF, resolução de variáveis de ambiente Windows, filtros de tag e integração com fixtures oficiais do Ludusavi.
+4. **`savevault-core` (22 testes)**: Normalização de paths, roundtrip do arquivo `config.toml`, modelos e validação de UUIDs.
+5. **`savevault-backup` (8 testes)**: Determinismo e velocidade do hash BLAKE3, integridade de snapshots versionados e rollback com backup de segurança.
+6. **`savevault-cloud` (5 testes)**: Decodificação de parâmetros de requisição HTTP e parsing do fluxo OAuth 2.0.
 
 ---
 
-## Decisões Técnicas Arquiteturais Tomadas
-1. **Idempotência**: Toda vez que o programa abre, ele detecta dezenas de jogos. Foi montada uma estrutura com SQLite de `INSERT OR IGNORE` e checagem de UUIDs no Rust que assegura que o sistema apenas insere o "novo" e atualiza o resto.
-2. **Separação UI/Backend**: Sem logs excessivos no binário principal `savevault` para que futuramente uma interface (Tauri, por exemplo) possa orquestrá-lo invisivelmente. A parte visual fica contida utilitários como o `scan_report`.
-3. **Rust Toolchain**: Tudo alinhado para a edição "2021" do Rust.
+## 4. Decisões Técnicas e Arquiteturais
+1. **Configuração de Toolchain do Cargo (`.cargo/config.toml`)**:
+   - Mapeamento explícito de `target-dir = "C:/svt"` para contornar limitações de linkers no Windows com caminhos que possuem acentuação ou espaços (ex: `Programação`).
+   - Suporte transparente à toolchain GNU (`stable-x86_64-pc-windows-gnu` + MinGW64) e MSVC.
+2. **Segurança de Credenciais**:
+   - Nenhum segredo ou token em texto plano no disco.
+   - Utilização do cofre de credenciais nativo do Windows (Windows Credential Manager via `keyring`).
+   - Disponibilização de template seguro `.env.example` mantendo o `.env` protegido via `.gitignore`.
+3. **Tolerância a Falhas**:
+   - Falhas de conexão à nuvem não bloqueiam o monitoramento nem corrompem a gravação de snapshots locais.
 
-## Próximos Passos (Próximos Milestones)
-- [ ] **v0.5 - Watcher Assíncrono**: Integrar a crate `notify` dentro do `savevault-monitor` para assistir todas as pastas resgatadas do banco SQLite.
-- [ ] **v0.6 - Snapshot Manager**: Interligar os eventos do Watcher com o motor de hashing para comprimir e versionar `.zip`s e mover para um cofre isolado.
-- [ ] **v0.7 - Fila de Sincronização**: Realizar mock e API real para envio de blocos assíncronos para provedores Cloud.
+---
+
+## 5. Próximos Passos (Milestones Futuros)
+
+- [ ] **Daemon de Monitoramento Ativo no `savevault-app`**: Integrar o loop assíncrono do `SaveWatcherService` diretamente ao binário principal para manter o processo em execução contínua em segundo plano após o discovery inicial.
+- [ ] **CLI de Restauração (`savevault restore`)**: Criar comandos de terminal para listar snapshots históricos de um jogo e acionar a restauração segura via linha de comando.
+- [ ] **Ampliadores de Descoberta (GOG & Genérico)**:
+  - Implementar leitura das chaves de registro do Windows (`HKLM\SOFTWARE\GOG.com\Games`).
+  - Implementar heurísticas para busca de saves em jogos independentes fora do manifesto.
+- [ ] **Interface Desktop & System Tray (v1.0)**:
+  - Ícone na bandeja do Windows (System Tray) para monitoramento silencioso.
+  - Interface gráfica opcional (Tauri / egui) para visualização amigável de status e backups.
