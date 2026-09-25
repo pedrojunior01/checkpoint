@@ -101,6 +101,18 @@ impl<'a> SaveLocationsRepo<'a> {
         Ok(locs)
     }
 
+    pub fn list_all(&self) -> Result<Vec<SaveLocation>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, game_id, path, location_type FROM save_locations"
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut locs = Vec::new();
+        while let Some(row) = rows.next()? {
+            locs.push(row_to_location(row)?);
+        }
+        Ok(locs)
+    }
+
     pub fn delete(&self, id: Uuid) -> Result<()> {
         self.conn.execute("DELETE FROM save_locations WHERE id = ?1", params![id.to_string()])?;
         Ok(())

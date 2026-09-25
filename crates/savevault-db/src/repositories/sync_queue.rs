@@ -32,13 +32,22 @@ impl<'a> SyncQueueRepo<'a> {
     pub fn list_pending(&self) -> Result<Vec<SyncQueueItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, backup_id, operation, status, attempts, created_at
-             FROM sync_queue WHERE status = 'pending' OR status = 'failed'
+             FROM sync_queue WHERE status = 'pending'
              ORDER BY created_at ASC LIMIT 50"
         )?;
         let items = stmt.query_map([], row_to_item)?
             .filter_map(|r| r.ok())
             .collect();
         Ok(items)
+    }
+
+    pub fn find_by_id(&self, id: Uuid) -> Result<Option<SyncQueueItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, backup_id, operation, status, attempts, created_at
+             FROM sync_queue WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map(params![id.to_string()], row_to_item)?;
+        Ok(rows.next().transpose()?)
     }
 
     pub fn update_status(&self, id: Uuid, status: &SyncStatus, attempts: u32) -> Result<()> {

@@ -634,6 +634,281 @@ mod tests {
     }
 
     #[test]
+    fn test_prune_caso_a_backup_sem_drive_file_id_removido_sem_delete_remoto() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+        let queue_repo = SyncQueueRepo::new(&db.conn);
+
+        let game = Game::new("PruneCaseA", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\PruneA"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneA\s.dat"), hash: "hash".into(),
+            size_bytes: 100, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        // 4 backups sem drive_file_id
+        let mut ids = Vec::new();
+        for v in 1..=4u32 {
+            let b = Backup {
+                id: Uuid::new_v4(), file_id, version: v,
+                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            };
+            backups_repo.insert(&b).unwrap();
+            ids.push(b.id);
+        }
+
+        // Pruning mantendo 2 versões (deve manter v4 e v3; remover v1 e v2)
+        backups_repo.prune_old_versions(file_id, 2).unwrap();
+
+        let remaining = backups_repo.list_by_file(file_id).unwrap();
+        assert_eq!(remaining.len(), 2, "Apenas as 2 mais recentes devem permanecer");
+        assert_eq!(remaining[0].version, 4);
+        assert_eq!(remaining[1].version, 3);
+
+        // v1 e v2 foram removidos do SQLite
+        assert!(backups_repo.find_by_id(ids[0]).unwrap().is_none());
+        assert!(backups_repo.find_by_id(ids[1]).unwrap().is_none());
+
+        // Nenhum delete remoto enfileirado
+        let queue = queue_repo.list_pending().unwrap();
+        assert_eq!(queue.len(), 0, "Nenhum delete remoto necessário para backups locais sem drive_file_id");
+    }
+
+    #[test]
+    fn test_prune_caso_b_backup_com_drive_file_id_preserva_referencia_e_enfileira_delete() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+        let queue_repo = SyncQueueRepo::new(&db.conn);
+
+        let game = Game::new("PruneCaseB", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\PruneB"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneB\s.dat"), hash: "hash".into(),
+            size_bytes: 100, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        // v1: sincronizado com drive_file_id remoto
+        let b1 = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/v1.sav".into()),
+            drive_file_id: Some("drive_file_id_alpha_999".into()),
+            sync_status: SyncStatus::Synced,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b1).unwrap();
+
+        // v2: local sem cloud
+        let b2 = Backup {
+            id: Uuid::new_v4(), file_id, version: 2,
+            cloud_path: None, drive_file_id: None,
+            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+        };
+        backups_repo.insert(&b2).unwrap();
+
+        // v3: mais recente
+        let b3 = Backup {
+            id: Uuid::new_v4(), file_id, version: 3,
+            cloud_path: Some("cloud/v3.sav".into()),
+            drive_file_id: Some("drive_file_id_beta_888".into()),
+            sync_status: SyncStatus::Synced,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b3).unwrap();
+
+        // Pruning mantendo apenas 1 versão mais recente (v3 mantido, v1 e v2 podados)
+        backups_repo.prune_old_versions(file_id, 1).unwrap();
+
+        // Invariante ARCH-01:
+        // v2 (sem drive_file_id) foi deletado do SQLite
+        assert!(backups_repo.find_by_id(b2.id).unwrap().is_none());
+
+        // v1 (com drive_file_id) Teve sua referência remota PRESERVADA!
+        let b1_persisted = backups_repo.find_by_id(b1.id).unwrap().expect("b1 deve ser preservado para deleção remota");
+        assert_eq!(b1_persisted.drive_file_id, Some("drive_file_id_alpha_999".to_string()));
+
+        // Fila possui exatamente a operação Delete com o backup_id correto
+        let queue = queue_repo.list_pending().unwrap();
+        assert_eq!(queue.len(), 1, "Operação de delete remoto deve estar enfileirada");
+        assert_eq!(queue[0].backup_id, b1.id);
+        assert_eq!(queue[0].operation, SyncOperation::Delete);
+        assert_eq!(queue[0].status, SyncStatus::Pending);
+    }
+
+    #[test]
+    fn test_prune_caso_c_pruning_em_modo_offline_mantem_consistencia_e_pendencia() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+        let queue_repo = SyncQueueRepo::new(&db.conn);
+
+        let game = Game::new("PruneCaseC", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\PruneC"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneC\s.dat"), hash: "hash".into(),
+            size_bytes: 100, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        let b1 = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/offline.sav".into()),
+            drive_file_id: Some("drive_offline_token_123".into()),
+            sync_status: SyncStatus::Synced,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b1).unwrap();
+
+        let b2 = Backup {
+            id: Uuid::new_v4(), file_id, version: 2,
+            cloud_path: None, drive_file_id: None,
+            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+        };
+        backups_repo.insert(&b2).unwrap();
+
+        // Pruning executado offline (nenhuma conexão ou provider ativo)
+        backups_repo.prune_old_versions(file_id, 1).unwrap();
+
+        // Aplicação continua consistente:
+        // 1. Integridade de chave estrangeira válida (PRAGMA foreign_keys = ON)
+        let queue_item = queue_repo.list_pending().unwrap();
+        assert_eq!(queue_item.len(), 1);
+        assert_eq!(queue_item[0].backup_id, b1.id);
+
+        // 2. Não perdeu a identidade remota
+        let b1_check = backups_repo.find_by_id(b1.id).unwrap().unwrap();
+        assert_eq!(b1_check.drive_file_id.as_deref(), Some("drive_offline_token_123"));
+
+        // 3. Chamadas subsequentes de prune são idempotentes e não duplicam itens na fila
+        backups_repo.prune_old_versions(file_id, 1).unwrap();
+        let queue_after = queue_repo.list_pending().unwrap();
+        assert_eq!(queue_after.len(), 1, "Idempotência: não deve duplicar item de deleção");
+    }
+
+    #[test]
+    fn test_prune_caso_d_atomicidade_transacional_e_resistencia_a_falha() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new("PruneCaseD", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\PruneD"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneD\s.dat"), hash: "hash".into(),
+            size_bytes: 100, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        let b1 = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/crash_test.sav".into()),
+            drive_file_id: Some("drive_crash_protection_id".into()),
+            sync_status: SyncStatus::Synced,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b1).unwrap();
+
+        // Simula falha abortando se sync_queue sofrer INSERT
+        db.conn.execute_batch(
+            "CREATE TRIGGER abort_sync_queue BEFORE INSERT ON sync_queue \
+             BEGIN \
+                 SELECT RAISE(FAIL, 'Simulated crash before local removal'); \
+             END;",
+        ).unwrap();
+
+        // Execução do prune deve falhar atomicamente
+        let res = backups_repo.prune_old_versions(file_id, 0);
+        assert!(res.is_err(), "Falha simulada deve retornar Err");
+
+        // Remove trigger para verificar consistência
+        db.conn.execute("DROP TRIGGER abort_sync_queue", []).unwrap();
+
+        // O backup original permanece intocado: a referência remota NÃO foi silenciosamente perdida
+        let b1_recovered = backups_repo.find_by_id(b1.id).unwrap().unwrap();
+        assert_eq!(b1_recovered.drive_file_id.as_deref(), Some("drive_crash_protection_id"));
+    }
+
+    #[test]
+    fn test_backups_clear_cloud_metadata() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new("ClearMeta", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\ClearMeta"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\ClearMeta\s.dat"), hash: "hash".into(),
+            size_bytes: 100, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        let backup = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/active.sav".into()),
+            drive_file_id: Some("drive_id_active".into()),
+            sync_status: SyncStatus::Synced,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&backup).unwrap();
+
+        // Limpa metadados de nuvem mantendo registro local
+        backups_repo.clear_cloud_metadata(backup.id, &SyncStatus::PendingOffline).unwrap();
+
+        let updated = backups_repo.find_by_id(backup.id).unwrap().unwrap();
+        assert!(updated.cloud_path.is_none());
+        assert!(updated.drive_file_id.is_none());
+        assert_eq!(updated.sync_status, SyncStatus::PendingOffline);
+    }
+
+    #[test]
     fn backups_update_sync_status() {
         let db = open_test_db();
         let games_repo = GamesRepo::new(&db.conn);
@@ -666,6 +941,50 @@ mod tests {
         backups_repo.update_sync_status(backup_id, &SyncStatus::Synced).unwrap();
         let updated = backups_repo.list_by_file(file_id).unwrap();
         assert_eq!(updated[0].sync_status, SyncStatus::Synced);
+    }
+
+    #[test]
+    fn backups_find_by_id() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new("FindBackupTest", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\FB"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\FB\s.dat"), hash: "h".into(),
+            size_bytes: 1, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        let backup = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/path/v1".into()),
+            drive_file_id: Some("drive_id_abc123".into()),
+            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+        };
+        backups_repo.insert(&backup).unwrap();
+
+        let found = backups_repo.find_by_id(backup.id).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, backup.id);
+        assert_eq!(found.file_id, file_id);
+        assert_eq!(found.version, 1);
+        assert_eq!(found.cloud_path, Some("cloud/path/v1".into()));
+        assert_eq!(found.drive_file_id, Some("drive_id_abc123".into()));
+
+        let missing = backups_repo.find_by_id(Uuid::new_v4()).unwrap();
+        assert!(missing.is_none());
     }
 
     // ------------------------------------------------------------------
@@ -755,47 +1074,25 @@ mod tests {
         queue_repo.delete(item_id).unwrap();
         assert_eq!(queue_repo.list_pending().unwrap().len(), 0);
     }
-#[test]
-    fn backups_find_by_id() {
+
+    #[test]
+    fn save_locations_list_all_returns_all_locations() {
         let db = open_test_db();
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
-        let files_repo = FilesRepo::new(&db.conn);
-        let backups_repo = BackupsRepo::new(&db.conn);
 
-        let game = Game::new("FindBackupTest", Platform::Generic, None, Confidence::High);
-        games_repo.insert(&game).unwrap();
-        let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\FB"), location_type: SaveLocationType::Directory,
-        };
-        loc_repo.insert(&loc).unwrap();
-        let file_id = Uuid::new_v4();
-        let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\FB\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
-        };
-        files_repo.upsert(&entry).unwrap();
+        let g1 = Game::new("Game 1", Platform::Steam, None, Confidence::High);
+        let g2 = Game::new("Game 2", Platform::Gog, None, Confidence::High);
+        games_repo.insert(&g1).unwrap();
+        games_repo.insert(&g2).unwrap();
 
-        let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: Some("cloud/path/v1".into()),
-            drive_file_id: Some("drive_id_abc123".into()),
-            sync_status: SyncStatus::Pending, created_at: Utc::now(),
-        };
-        backups_repo.insert(&backup).unwrap();
+        let l1 = SaveLocation::new(g1.id, r"C:\Saves\G1", SaveLocationType::Directory);
+        let l2 = SaveLocation::new(g2.id, r"C:\Saves\G2", SaveLocationType::Directory);
+        loc_repo.insert(&l1).unwrap();
+        loc_repo.insert(&l2).unwrap();
 
-        let found = backups_repo.find_by_id(backup.id).unwrap();
-        assert!(found.is_some());
-        let found = found.unwrap();
-        assert_eq!(found.id, backup.id);
-        assert_eq!(found.file_id, file_id);
-        assert_eq!(found.version, 1);
-        assert_eq!(found.cloud_path, Some("cloud/path/v1".into()));
-        assert_eq!(found.drive_file_id, Some("drive_id_abc123".into()));
-
-        let missing = backups_repo.find_by_id(Uuid::new_v4()).unwrap();
-        assert!(missing.is_none());
+        let all = loc_repo.list_all().unwrap();
+        assert_eq!(all.len(), 2);
     }
 }
+
