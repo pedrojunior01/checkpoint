@@ -57,37 +57,92 @@ impl SnapshotManager {
     }
 
     /// Restaura um backup para o caminho de destino.
-    /// Segurança: antes de restaurar, faz backup temporário do arquivo atual.
+    /// Segurança:
+    /// 1. Valida a existência da versão de origem ANTES de qualquer modificação no disco;
+    /// 2. Cria backup de segurança único (sem nunca sobrescrever backups anteriores);
+    /// 3. Realiza a restauração de forma atômica via arquivo temporário e rename;
+    /// 4. Preserva o destino original em caso de qualquer falha na cópia.
     pub async fn restore_snapshot(
         &self,
         file_id: Uuid,
         version: u32,
         dest_path: &Path,
-    ) -> Result<()> {
-        // Passo 1: backup de segurança do arquivo atual
-        if dest_path.exists() {
-            let safety_path = dest_path.with_extension("savevault_safety_bak");
-            tokio::fs::copy(dest_path, &safety_path).await?;
-            debug!("Backup de segurança criado: {}", safety_path.display());
+    ) -> Result<Option<PathBuf>> {
+        let filename = dest_path.file_name()
+            .ok_or_else(|| anyhow::anyhow!("Caminho de destino inválido: sem nome de arquivo"))?;
+
+        let dest_parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
+        if !dest_parent.exists() {
+            tokio::fs::create_dir_all(dest_parent).await?;
         }
 
-        // Passo 2: encontrar o arquivo da versão solicitada
+        // Validação antecipada da versão de origem (nunca alterar o disco se a versão não existir)
         let version_dir = self.backup_root
             .join(file_id.to_string())
             .join(format!("v{}", version));
 
-        let filename = dest_path.file_name()
-            .ok_or_else(|| anyhow::anyhow!("Caminho de destino inválido"))?;
-
         let source = version_dir.join(filename);
 
         if !source.exists() {
-            anyhow::bail!("Versão {} do arquivo {} não encontrada em {}", version, file_id, version_dir.display());
+            anyhow::bail!(
+                "Versão {} do arquivo {} não encontrada em {}",
+                version, file_id, version_dir.display()
+            );
         }
 
-        tokio::fs::copy(&source, dest_path).await?;
-        info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
+        if source.is_dir() {
+            anyhow::bail!(
+                "Restauração recursiva de diretórios não é suportada diretamente em restore_snapshot: {}",
+                source.display()
+            );
+        }
 
-        Ok(())
+        // Passo 1: backup de segurança com identificador único resistente a colisões
+        let safety_path = if dest_path.exists() {
+            let orig_name = filename.to_string_lossy();
+            let mut candidate;
+            let mut counter = 0u32;
+            loop {
+                let unique_suffix = format!("{}_{:04x}", Uuid::new_v4().simple(), counter);
+                let safety_name = format!("{}.savevault_safety_{}", orig_name, unique_suffix);
+                candidate = dest_parent.join(safety_name);
+                if !candidate.exists() {
+                    break;
+                }
+                counter += 1;
+            }
+
+            tokio::fs::copy(dest_path, &candidate).await.map_err(|e| {
+                anyhow::anyhow!(
+                    "Falha ao criar backup de segurança em '{}': {}",
+                    candidate.display(), e
+                )
+            })?;
+            debug!("Backup de segurança criado: {}", candidate.display());
+            Some(candidate)
+        } else {
+            None
+        };
+
+        // Passo 2: cópia atômica via arquivo temporário no mesmo diretório de destino
+        let orig_name = filename.to_string_lossy();
+        let tmp_path = dest_parent.join(format!("{}.restore_tmp_{}", orig_name, Uuid::new_v4().simple()));
+
+        if let Err(e) = tokio::fs::copy(&source, &tmp_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            anyhow::bail!("Falha ao copiar versão {} para staging: {}", version, e);
+        }
+
+        // Move/renomeia atomicamente sobre o destino
+        if let Err(e) = tokio::fs::rename(&tmp_path, dest_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            anyhow::bail!(
+                "Falha ao aplicar restauração atômica em '{}': {}. Destino permanece intacto.",
+                dest_path.display(), e
+            );
+        }
+
+        info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
+        Ok(safety_path)
     }
 }
