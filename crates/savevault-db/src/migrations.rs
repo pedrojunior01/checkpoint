@@ -39,6 +39,7 @@ const CREATE_MIGRATIONS_TABLE: &str = "
 /// Adicionar sempre no final — nunca modificar migrações já aplicadas.
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_initial_schema", MIGRATION_001),
+    ("002_save_locations_unique_path", MIGRATION_002),
 ];
 
 const MIGRATION_001: &str = "
@@ -90,3 +91,16 @@ CREATE INDEX IF NOT EXISTS idx_files_location ON files(save_location_id);
 CREATE INDEX IF NOT EXISTS idx_backups_file ON backups(file_id);
 CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
 ";
+
+const MIGRATION_002: &str = "
+-- Remove duplicatas de save_locations mantendo a entrada mais antiga por (game_id, path)
+DELETE FROM save_locations
+WHERE id NOT IN (
+    SELECT MIN(id) FROM save_locations GROUP BY game_id, path
+);
+
+-- Cria índice único para garantir idempotência em inserções futuras
+CREATE UNIQUE INDEX IF NOT EXISTS idx_save_locations_unique_path
+    ON save_locations(game_id, path);
+";
+

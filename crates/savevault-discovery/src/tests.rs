@@ -89,16 +89,19 @@ mod tests {
     // ------------------------------------------------------------------
     mod orchestrator_tests {
         use crate::run_all;
+        use tempfile::tempdir;
 
         #[tokio::test]
         async fn run_all_returns_ok() {
-            let result = run_all().await;
+            let dir = tempdir().unwrap();
+            let result = run_all(dir.path()).await;
             assert!(result.is_ok(), "run_all não deve retornar erro");
         }
 
         #[tokio::test]
         async fn run_all_games_have_valid_names() {
-            let result = run_all().await.unwrap();
+            let dir = tempdir().unwrap();
+            let result = run_all(dir.path()).await.unwrap();
             for game in &result.games {
                 assert!(!game.name.is_empty(), "Nome do jogo não deve ser vazio");
             }
@@ -106,7 +109,8 @@ mod tests {
 
         #[tokio::test]
         async fn run_all_games_have_unique_ids() {
-            let result = run_all().await.unwrap();
+            let dir = tempdir().unwrap();
+            let result = run_all(dir.path()).await.unwrap();
             let ids: std::collections::HashSet<_> = result.games.iter().map(|g| g.id).collect();
             assert_eq!(ids.len(), result.games.len(), "Todos os IDs devem ser únicos");
         }

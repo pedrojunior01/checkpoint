@@ -15,7 +15,8 @@ impl<'a> SaveLocationsRepo<'a> {
 
     pub fn insert(&self, loc: &SaveLocation) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO save_locations (id, game_id, path, location_type) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO save_locations (id, game_id, path, location_type)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
                 loc.id.to_string(),
                 loc.game_id.to_string(),
