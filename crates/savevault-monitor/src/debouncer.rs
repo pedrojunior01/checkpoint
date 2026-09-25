@@ -349,11 +349,12 @@ fn update_pending_state(
 
         *next_deadline = Some(next_deadline.map_or(entry.deadline, |d| d.min(entry.deadline)));
     } else {
-        // Verifica limite de capacidade de memória
-        if pending.len() >= config.max_pending_paths {
+        // Verifica limite global de capacidade de memória (pending + ready_queue sob backpressure)
+        let total_tracked = pending.len() + ready_queue.len();
+        if total_tracked >= config.max_pending_paths {
             overflow_counter.fetch_add(1, Ordering::SeqCst);
             tracing::warn!(
-                "Debouncer atingiu a capacidade máxima de caminhos pendentes ({}). Evento descartado sob overflow para: {}",
+                "Debouncer atingiu a capacidade máxima global de caminhos pendentes e prontos ({}). Evento descartado sob overflow para: {}",
                 config.max_pending_paths,
                 event.path.display()
             );
