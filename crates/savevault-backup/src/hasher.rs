@@ -28,7 +28,7 @@ mod tests {
 
     #[tokio::test]
     async fn hash_changes_on_content_change() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "versão 1").unwrap();
         let h1 = hash_file(tmp.path()).await.unwrap();
 

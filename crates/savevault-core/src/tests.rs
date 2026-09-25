@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::models::{Confidence, Game, Platform};
 
     // ------------------------------------------------------------------
     // Config
@@ -57,7 +55,7 @@ mod tests {
     mod model_tests {
         use crate::models::{
             Confidence, Game, Platform, SaveLocation, SaveLocationType,
-            SyncStatus, SyncOperation,
+            SyncStatus,
         };
         use std::path::PathBuf;
         use uuid::Uuid;

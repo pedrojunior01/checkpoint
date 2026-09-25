@@ -5,8 +5,6 @@ mod tests {
     // ------------------------------------------------------------------
     mod steam_parsing {
         use crate::steam::SteamDetector;
-        use savevault_core::models::Platform;
-        use std::io::Write;
         use tempfile::tempdir;
 
         /// Cria uma estrutura de biblioteca Steam falsa para testes
