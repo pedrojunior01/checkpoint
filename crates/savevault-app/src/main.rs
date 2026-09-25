@@ -3,6 +3,8 @@
 //! ## Uso
 //! ```
 //! savevault                    # Executa o discovery e persiste no banco
+//! savevault restore <id>       # Restaura snapshot com safety backup e escrita atômica
+//! savevault restore list       # Lista os snapshots disponíveis
 //! savevault auth login         # Autentica no Google Drive via navegador
 //! savevault auth logout        # Remove as credenciais salvas
 //! savevault auth status        # Verifica se está autenticado
@@ -58,6 +60,48 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             println!("Sincronização concluída: {} backup(s) enviado(s).", synced);
+            return Ok(());
+        }
+
+        // ----------------------------------------------------------------
+        // savevault restore — restaura um snapshot para o save original
+        // ----------------------------------------------------------------
+        [restore_cmd, list_cmd]
+            if restore_cmd == "restore"
+                && (list_cmd == "list" || list_cmd == "--list" || list_cmd == "-l") =>
+        {
+            handle_restore_list(&config)?;
+            return Ok(());
+        }
+
+        [restore_cmd, help_flag]
+            if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h") =>
+        {
+            print_restore_help();
+            return Ok(());
+        }
+
+        [restore_cmd, id_str, flag, hash_str]
+            if restore_cmd == "restore" && (flag == "--expected-hash" || flag == "-e") =>
+        {
+            handle_restore_command(&config, id_str, Some(hash_str.to_string())).await?;
+            return Ok(());
+        }
+
+        [restore_cmd, flag, id_str]
+            if restore_cmd == "restore" && (flag == "--snapshot" || flag == "-s") =>
+        {
+            handle_restore_command(&config, id_str, None).await?;
+            return Ok(());
+        }
+
+        [restore_cmd, id_str] if restore_cmd == "restore" => {
+            handle_restore_command(&config, id_str, None).await?;
+            return Ok(());
+        }
+
+        [restore_cmd] if restore_cmd == "restore" => {
+            print_restore_help();
             return Ok(());
         }
 
@@ -272,4 +316,196 @@ async fn handle_auth_command(sub: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_restore_command(
+    config: &Config,
+    id_str: &str,
+    expected_hash: Option<String>,
+) -> anyhow::Result<()> {
+    let snapshot_id = match uuid::Uuid::parse_str(id_str) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!(
+                "[FALHA] ID de snapshot inválido: '{}'. Esperado um UUID v4 (ex.: 550e8400-e29b-41d4-a716-446655440000).",
+                id_str
+            );
+            return Err(anyhow::anyhow!("ID de snapshot inválido: {}", id_str));
+        }
+    };
+
+    let db = Database::open(&config.paths.database_path)?;
+    let request = match expected_hash {
+        Some(hash) => savevault_app::RestoreRequest::with_expected_hash(snapshot_id, hash),
+        None => savevault_app::RestoreRequest::new(snapshot_id),
+    };
+
+    match savevault_app::restore_snapshot(&db.conn, &config.paths.backup_dir, &request).await {
+        Ok(report) => {
+            println!("✅ [OK] Restauração concluída com sucesso!");
+            println!("  Snapshot ID:       {}", report.snapshot_id);
+            println!("  Versão:            v{}", report.version);
+            println!("  Arquivo destino:   {}", report.dest_path.display());
+            println!("  Bytes restaurados: {}", report.bytes_restored);
+            println!("  Hash BLAKE3:       {}", report.restored_hash);
+            match report.safety_backup_path {
+                Some(p) => println!("  Safety Backup:     {}", p.display()),
+                None => println!("  Safety Backup:     (nenhum arquivo pré-existente no destino)"),
+            }
+            Ok(())
+        }
+        Err(savevault_app::RestoreError::SnapshotNotFound(id)) => {
+            eprintln!(
+                "[FALHA] Snapshot '{}' não encontrado no banco de dados. Use 'savevault restore list' para ver os snapshots disponíveis.",
+                id
+            );
+            Err(anyhow::anyhow!("Snapshot não encontrado"))
+        }
+        Err(savevault_app::RestoreError::FileNotFound(id)) => {
+            eprintln!(
+                "[FALHA] Registro de arquivo (ID '{}') associado ao snapshot não foi encontrado no banco de dados.",
+                id
+            );
+            Err(anyhow::anyhow!("Arquivo associado não encontrado"))
+        }
+        Err(savevault_app::RestoreError::SaveLocationNotFound(id)) => {
+            eprintln!(
+                "[FALHA] Local de save autorizado (ID '{}') associado ao arquivo não foi encontrado no banco de dados.",
+                id
+            );
+            Err(anyhow::anyhow!("SaveLocation não encontrado"))
+        }
+        Err(savevault_app::RestoreError::PhysicalSnapshotMissing(path)) => {
+            eprintln!(
+                "[FALHA] Arquivo físico do snapshot não encontrado em '{}'. O snapshot pode ter sido apagado externamente.",
+                path.display()
+            );
+            Err(anyhow::anyhow!("Arquivo físico ausente"))
+        }
+        Err(savevault_app::RestoreError::InvalidSnapshotSource(path)) => {
+            eprintln!(
+                "[FALHA] O arquivo de snapshot em '{}' é inválido ou um diretório.",
+                path.display()
+            );
+            Err(anyhow::anyhow!("Snapshot inválido"))
+        }
+        Err(savevault_app::RestoreError::PathSecurityViolation(reason)) => {
+            eprintln!(
+                "[FALHA DE SEGURANÇA] Bloqueada tentativa de restauração fora do diretório autorizado: {}",
+                reason
+            );
+            Err(anyhow::anyhow!("Violação de segurança de caminho"))
+        }
+        Err(savevault_app::RestoreError::IntegrityCheckFailed(id, exp, act)) => {
+            eprintln!(
+                "[FALHA DE INTEGRIDADE] O snapshot '{}' está corrompido! Hash BLAKE3 calculado ('{}') difere do esperado ('{}'). O save atual não foi modificado.",
+                id, act, exp
+            );
+            Err(anyhow::anyhow!("Integridade violada"))
+        }
+        Err(savevault_app::RestoreError::SafetyBackupFailed(path, err)) => {
+            eprintln!(
+                "[FALHA] Falha crítica ao criar safety backup em '{}': {}. O save original permanece intocado.",
+                path.display(),
+                err
+            );
+            Err(anyhow::anyhow!("Falha ao criar safety backup"))
+        }
+        Err(savevault_app::RestoreError::AtomicWriteFailed(path, err)) => {
+            eprintln!(
+                "[FALHA] Falha na escrita atômica do save em '{}': {}. O save original permanece protegido.",
+                path.display(),
+                err
+            );
+            Err(anyhow::anyhow!("Falha de escrita atômica"))
+        }
+        Err(savevault_app::RestoreError::PostWriteValidationFailed(path)) => {
+            eprintln!(
+                "[FALHA DE INTEGRIDADE] A validação pós-escrita falhou em '{}'. O conteúdo gravado diverge do snapshot. O safety backup foi preservado.",
+                path.display()
+            );
+            Err(anyhow::anyhow!("Validação pós-escrita falhou"))
+        }
+        Err(e) => {
+            eprintln!("[FALHA] Erro durante a restauração: {}", e);
+            Err(anyhow::anyhow!(e))
+        }
+    }
+}
+
+fn handle_restore_list(config: &Config) -> anyhow::Result<()> {
+    let db = Database::open(&config.paths.database_path)?;
+    let mut stmt = db.conn.prepare(
+        "SELECT b.id, b.version, b.created_at, f.path, g.name
+         FROM backups b
+         JOIN files f ON b.file_id = f.id
+         JOIN save_locations sl ON f.save_location_id = sl.id
+         JOIN games g ON sl.game_id = g.id
+         ORDER BY b.created_at DESC
+         LIMIT 50",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let version: i64 = row.get(1)?;
+        let created_at: String = row.get(2)?;
+        let file_path: String = row.get(3)?;
+        let game_name: String = row.get(4)?;
+        Ok((id, version, created_at, file_path, game_name))
+    })?;
+
+    println!("================================================================================");
+    println!(
+        "{:<38} {:<15} {:<6} {:<20} ARQUIVO",
+        "SNAPSHOT ID", "JOGO", "VERSÃO", "CRIADO EM"
+    );
+    println!("--------------------------------------------------------------------------------");
+    let mut count = 0;
+    for r in rows {
+        let (id, version, created_at, file_path, game_name) = r?;
+        let short_file = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file_path);
+        let short_created = if created_at.len() > 19 {
+            &created_at[..19]
+        } else {
+            &created_at
+        };
+        println!(
+            "{:<38} {:<15} v{:<5} {:<20} {}",
+            id, game_name, version, short_created, short_file
+        );
+        count += 1;
+    }
+    println!("================================================================================");
+    println!(
+        "Total: {} snapshot(s) listado(s). Para restaurar, use: savevault restore <SNAPSHOT_ID>",
+        count
+    );
+
+    Ok(())
+}
+
+fn print_restore_help() {
+    println!("Uso: savevault restore <snapshot-id> [opções]");
+    println!("     savevault restore list");
+    println!();
+    println!("Restaura um snapshot versionado para o local de save original.");
+    println!("Cria automaticamente um backup de segurança (safety backup) do estado atual");
+    println!("antes de aplicar qualquer alteração no disco.");
+    println!();
+    println!("Argumentos:");
+    println!("  <snapshot-id>            UUID do snapshot a ser restaurado");
+    println!("  list                     Lista os snapshots disponíveis no banco de dados");
+    println!();
+    println!("Opções:");
+    println!("  --snapshot, -s <id>      Especifica o UUID do snapshot (sintaxe alternativa)");
+    println!("  --expected-hash <hash>   Valida o hash BLAKE3 do snapshot antes de restaurar");
+    println!("  --help, -h               Exibe esta mensagem de ajuda");
+    println!();
+    println!("Exemplos:");
+    println!("  savevault restore 550e8400-e29b-41d4-a716-446655440000");
+    println!("  savevault restore --snapshot 550e8400-e29b-41d4-a716-446655440000");
+    println!("  savevault restore list");
 }
