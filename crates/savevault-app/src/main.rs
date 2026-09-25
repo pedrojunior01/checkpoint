@@ -140,6 +140,67 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("{} backup(s) sincronizado(s) com o Google Drive.", synced);
     }
 
+    // Se for solicitado modo pontual (--once ou scan), finaliza aqui
+    if args.iter().any(|a| a == "--once" || a == "scan") {
+        tracing::info!("Execução pontual concluída com sucesso.");
+        return Ok(());
+    }
+
+    // ------------------------------------------------------------------------
+    // MODO RESIDENTE: Monitoramento Contínuo e Sincronização em Background
+    // ------------------------------------------------------------------------
+    let all_locations = locations_repo.list_all()?;
+    if all_locations.is_empty() {
+        tracing::warn!("Nenhum local de save encontrado no banco para monitorar.");
+    } else {
+        tracing::info!(
+            "Iniciando serviço de monitoramento para {} local(is) de save...",
+            all_locations.len()
+        );
+    }
+
+    let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
+    let watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+
+    let (watcher, stable_rx) = match savevault_monitor::watcher::SaveWatcherService::start(
+        watcher_config,
+        all_locations,
+        file_access,
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!("Falha ao inicializar o serviço de monitoramento: {}", e);
+            return Err(anyhow::anyhow!("Erro ao iniciar watcher: {}", e));
+        }
+    };
+
+    let (pipeline_shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    tracing::info!("SaveVault monitorando em modo residente. Pressione Ctrl+C para encerrar.");
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Sinal de encerramento recebido (Ctrl+C). Iniciando shutdown gracioso...");
+            let _ = pipeline_shutdown_tx.send(true);
+            watcher.shutdown().await;
+            tracing::info!("Serviço de monitoramento encerrado com sucesso.");
+        }
+        res = savevault_app::pipeline::run_pipeline(
+            &db.conn,
+            stable_rx,
+            config.paths.backup_dir.clone(),
+            config.general.max_versions,
+            pipeline_shutdown_rx,
+            true,
+        ) => {
+            if let Err(e) = res {
+                tracing::error!("Erro no pipeline de eventos: {}", e);
+            }
+            watcher.shutdown().await;
+        }
+    }
+
+    println!("SaveVault encerrado com sucesso.");
     Ok(())
 }
 

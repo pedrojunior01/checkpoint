@@ -1,0 +1,199 @@
+//! Pipeline de integração do SaveVault:
+//! Conecta eventos estáveis de filesystem (`StableFileEvent`) à criação
+//! de snapshots locais, versionamento, persistência SQLite e enfileiramento
+//! na `SyncQueue` para sincronização em nuvem.
+
+use anyhow::Result;
+use chrono::Utc;
+use rusqlite::Connection;
+use std::path::{Path, PathBuf};
+use tokio::sync::{mpsc, watch};
+use uuid::Uuid;
+
+use savevault_backup::hasher::hash_file;
+use savevault_backup::snapshot::SnapshotManager;
+use savevault_core::models::{Backup, FileEntry, SyncOperation, SyncQueueItem, SyncStatus};
+use savevault_db::repositories::{BackupsRepo, FilesRepo, SyncQueueRepo};
+use savevault_monitor::events::{StableFileEvent, StableFileEventKind};
+
+/// Processa um único `StableFileEvent`, garantindo o ciclo completo:
+/// hash → verificação/upsert FileEntry → snapshot em disco → Backup persistido → SyncQueueItem enfileirado.
+pub async fn handle_stable_event(
+    conn: &Connection,
+    event: &StableFileEvent,
+    backup_root: &Path,
+    max_versions: u32,
+) -> Result<Option<(Backup, SyncQueueItem)>> {
+    match event.kind {
+        StableFileEventKind::Created | StableFileEventKind::Modified => {}
+        StableFileEventKind::Removed => {
+            tracing::info!(
+                "Arquivo removido detectado: {} (save_location: {})",
+                event.path.display(),
+                event.save_location_id
+            );
+            return Ok(None);
+        }
+    }
+
+    if !event.path.exists() {
+        tracing::warn!(
+            "Evento estável recebido mas arquivo não existe no disco: {}",
+            event.path.display()
+        );
+        return Ok(None);
+    }
+
+    // 1. Calcula hash criptográfico BLAKE3 do arquivo estável
+    let hash = match hash_file(&event.path).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(
+                "Falha ao calcular hash de {}: {}",
+                event.path.display(),
+                e
+            );
+            return Err(e);
+        }
+    };
+
+    // 2. Consulta banco para deduplicação e identificação de file_id
+    let files_repo = FilesRepo::new(conn);
+    let existing_entry = files_repo.find_by_path(&event.path)?;
+
+    if let Some(ref entry) = existing_entry {
+        if entry.hash == hash {
+            tracing::debug!(
+                "Arquivo {} inalterado (mesmo hash {}). Ignorando snapshot.",
+                event.path.display(),
+                hash
+            );
+            return Ok(None);
+        }
+    }
+
+    let file_id = existing_entry.map(|e| e.id).unwrap_or_else(Uuid::new_v4);
+    let backups_repo = BackupsRepo::new(conn);
+    let existing_backups = backups_repo.list_by_file(file_id)?;
+    let next_version = existing_backups.first().map(|b| b.version + 1).unwrap_or(1);
+
+    // 3. Cria snapshot físico imutável no diretório de backups
+    let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
+    let backup = snapshot_manager
+        .create_snapshot(file_id, &event.path, next_version)
+        .await?;
+
+    // 4. Persiste metadados no SQLite de forma atômica/coerente
+    let file_entry = FileEntry {
+        id: file_id,
+        save_location_id: event.save_location_id,
+        path: event.path.clone(),
+        hash,
+        size_bytes: event.size_bytes,
+        modified_at: Utc::now(),
+    };
+    files_repo.upsert(&file_entry)?;
+
+    backups_repo.insert(&backup)?;
+
+    if max_versions > 0 {
+        if let Err(e) = backups_repo.prune_old_versions(file_id, max_versions) {
+            tracing::warn!(
+                "Falha ao podar versões antigas do arquivo {}: {}",
+                file_id,
+                e
+            );
+        }
+    }
+
+    let sync_queue_repo = SyncQueueRepo::new(conn);
+    let item = SyncQueueItem {
+        id: Uuid::new_v4(),
+        backup_id: backup.id, // OBRIGATÓRIO: backup_id, NUNCA file_id
+        operation: SyncOperation::Upload,
+        status: SyncStatus::Pending,
+        attempts: 0,
+        created_at: Utc::now(),
+    };
+    sync_queue_repo.enqueue(&item)?;
+
+    tracing::info!(
+        "Backup #{} criado para {} (backup_id: {}, queue_id: {})",
+        backup.version,
+        event.path.display(),
+        backup.id,
+        item.id
+    );
+
+    Ok(Some((backup, item)))
+}
+
+/// Loop residente de processamento de eventos estáveis da aplicação.
+pub async fn run_pipeline(
+    conn: &Connection,
+    mut stable_rx: mpsc::Receiver<StableFileEvent>,
+    backup_root: PathBuf,
+    max_versions: u32,
+    mut shutdown_rx: watch::Receiver<bool>,
+    trigger_sync: bool,
+) -> Result<()> {
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("Shutdown recebido no processador de eventos do pipeline.");
+                    break;
+                }
+            }
+            event_opt = stable_rx.recv() => {
+                match event_opt {
+                    Some(event) => {
+                        let res = handle_stable_event(
+                            conn,
+                            &event,
+                            &backup_root,
+                            max_versions,
+                        ).await;
+
+                        match res {
+                            Ok(Some((_backup, _queue_item))) => {
+                                if trigger_sync {
+                                    if let Err(e) = savevault_sync::process_queue_google_drive(
+                                        conn,
+                                        backup_root.clone(),
+                                    ).await {
+                                        tracing::debug!("Sync em nuvem durante evento: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::error!(
+                                    "Erro processando evento de {}: {}",
+                                    event.path.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::info!("Canal de eventos estáveis foi encerrado.");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Drenagem final no encerramento limpo
+    while let Ok(event) = stable_rx.try_recv() {
+        let _ = handle_stable_event(
+            conn,
+            &event,
+            &backup_root,
+            max_versions,
+        ).await;
+    }
+
+    Ok(())
+}
