@@ -3,3 +3,10 @@ Cargo.lock
 *.db
 *.log
 .env
+
+# O diretório de build fica em C:\svt (fora do projeto), não precisa de .gitignore
+# .cargo/config.toml é versionado intencionalmente (configuração do projeto)
+
+.vs/
+
+.vs/

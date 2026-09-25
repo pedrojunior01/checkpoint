@@ -58,3 +58,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Test helpers
 tempfile = "3"
+
+# Secure secrets storage (Windows Credential Manager)
+keyring = "3"

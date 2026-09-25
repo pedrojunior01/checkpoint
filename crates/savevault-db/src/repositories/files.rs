@@ -40,6 +40,14 @@ impl<'a> FilesRepo<'a> {
         Ok(rows.next().transpose()?)
     }
 
+    pub fn find_by_id(&self, id: Uuid) -> Result<Option<FileEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map(params![id.to_string()], row_to_entry)?;
+        Ok(rows.next().transpose()?)
+    }
+
     pub fn list_by_location(&self, location_id: Uuid) -> Result<Vec<FileEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE save_location_id = ?1"
