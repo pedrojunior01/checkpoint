@@ -11,8 +11,8 @@
 
 use savevault_core::config::Config;
 use savevault_db::{
-    Database,
     repositories::{GamesRepo, SaveLocationsRepo},
+    Database,
 };
 use std::path::PathBuf;
 
@@ -91,7 +91,8 @@ async fn main() -> anyhow::Result<()> {
         let mut real_id = game.id;
 
         if let Some(ref platform_id) = game.platform_id {
-            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id) {
+            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id)
+            {
                 real_id = existing.id;
             } else {
                 games_repo.insert(game)?;
@@ -129,12 +130,10 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Tenta processar a fila de sync em background (falha silenciosa se offline)
-    let synced = savevault_sync::process_queue_google_drive(
-        &db.conn,
-        config.paths.backup_dir.clone(),
-    )
-    .await
-    .unwrap_or(0);
+    let synced =
+        savevault_sync::process_queue_google_drive(&db.conn, config.paths.backup_dir.clone())
+            .await
+            .unwrap_or(0);
 
     if synced > 0 {
         tracing::info!("{} backup(s) sincronizado(s) com o Google Drive.", synced);
@@ -174,19 +173,38 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let (pipeline_shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
+    let db_conn = std::sync::Arc::new(tokio::sync::Mutex::new(db.conn));
 
-    tracing::info!("SaveVault monitorando em modo residente. Pressione Ctrl+C para encerrar.");
+    let reconciler_config = savevault_app::ReconciliationConfig::new(
+        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+    );
+    let reconciler = std::sync::Arc::new(savevault_app::Reconciler::new(
+        db_conn.clone(),
+        config.paths.backup_dir.clone(),
+        config.general.max_versions,
+    ));
+
+    let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
+    let recon_shutdown_rx = shutdown_tx.subscribe();
+
+    let reconciler_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
+        reconciler,
+        reconciler_config,
+        recon_shutdown_rx,
+    ));
+
+    tracing::info!("SaveVault monitorando em modo residente (Watcher + Reconciler). Pressione Ctrl+C para encerrar.");
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Sinal de encerramento recebido (Ctrl+C). Iniciando shutdown gracioso...");
-            let _ = pipeline_shutdown_tx.send(true);
+            let _ = shutdown_tx.send(true);
             watcher.shutdown().await;
-            tracing::info!("Serviço de monitoramento encerrado com sucesso.");
+            let _ = reconciler_handle.await;
+            tracing::info!("Serviços de monitoramento e reconciliação encerrados com sucesso.");
         }
         res = savevault_app::pipeline::run_pipeline(
-            &db.conn,
+            db_conn.clone(),
             stable_rx,
             config.paths.backup_dir.clone(),
             config.general.max_versions,
@@ -196,7 +214,9 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = res {
                 tracing::error!("Erro no pipeline de eventos: {}", e);
             }
+            let _ = shutdown_tx.send(true);
             watcher.shutdown().await;
+            let _ = reconciler_handle.await;
         }
     }
 
@@ -244,7 +264,10 @@ async fn handle_auth_command(sub: &str) -> anyhow::Result<()> {
             }
         }
         other => {
-            eprintln!("Subcomando desconhecido: 'auth {}'. Use: login | logout | status", other);
+            eprintln!(
+                "Subcomando desconhecido: 'auth {}'. Use: login | logout | status",
+                other
+            );
         }
     }
 

@@ -17,6 +17,13 @@ pub struct GeneralConfig {
     pub log_level: String,
     /// Tempo de espera (ms) para estabilização do arquivo após detecção de mudança.
     pub debounce_ms: u64,
+    /// Intervalo (segundos) entre ciclos de reconciliação periódica.
+    #[serde(default = "default_reconciliation_interval_secs")]
+    pub reconciliation_interval_secs: u64,
+}
+
+fn default_reconciliation_interval_secs() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +48,7 @@ impl Default for Config {
                 max_versions: 10,
                 log_level: "info".into(),
                 debounce_ms: 2000,
+                reconciliation_interval_secs: 30,
             },
             cloud: CloudConfig {
                 provider: "google_drive".into(),

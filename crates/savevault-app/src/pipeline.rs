@@ -7,6 +7,7 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
@@ -16,56 +17,20 @@ use savevault_core::models::{Backup, FileEntry, SyncOperation, SyncQueueItem, Sy
 use savevault_db::repositories::{BackupsRepo, FilesRepo, SyncQueueRepo};
 use savevault_monitor::events::{StableFileEvent, StableFileEventKind};
 
-/// Processa um único `StableFileEvent`, garantindo o ciclo completo:
-/// hash → verificação/upsert FileEntry → snapshot em disco → Backup persistido → SyncQueueItem enfileirado.
-pub async fn handle_stable_event(
+/// Consulta SQLite para deduplicação pelo hash e determinação do próximo número de versão.
+pub fn check_existing_and_next_version(
     conn: &Connection,
-    event: &StableFileEvent,
-    backup_root: &Path,
-    max_versions: u32,
-) -> Result<Option<(Backup, SyncQueueItem)>> {
-    match event.kind {
-        StableFileEventKind::Created | StableFileEventKind::Modified => {}
-        StableFileEventKind::Removed => {
-            tracing::info!(
-                "Arquivo removido detectado: {} (save_location: {})",
-                event.path.display(),
-                event.save_location_id
-            );
-            return Ok(None);
-        }
-    }
-
-    if !event.path.exists() {
-        tracing::warn!(
-            "Evento estável recebido mas arquivo não existe no disco: {}",
-            event.path.display()
-        );
-        return Ok(None);
-    }
-
-    // 1. Calcula hash criptográfico BLAKE3 do arquivo estável
-    let hash = match hash_file(&event.path).await {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(
-                "Falha ao calcular hash de {}: {}",
-                event.path.display(),
-                e
-            );
-            return Err(e);
-        }
-    };
-
-    // 2. Consulta banco para deduplicação e identificação de file_id
+    path: &Path,
+    hash: &str,
+) -> Result<Option<(Uuid, u32)>> {
     let files_repo = FilesRepo::new(conn);
-    let existing_entry = files_repo.find_by_path(&event.path)?;
+    let existing_entry = files_repo.find_by_path(path)?;
 
     if let Some(ref entry) = existing_entry {
         if entry.hash == hash {
             tracing::debug!(
                 "Arquivo {} inalterado (mesmo hash {}). Ignorando snapshot.",
-                event.path.display(),
+                path.display(),
                 hash
             );
             return Ok(None);
@@ -77,13 +42,19 @@ pub async fn handle_stable_event(
     let existing_backups = backups_repo.list_by_file(file_id)?;
     let next_version = existing_backups.first().map(|b| b.version + 1).unwrap_or(1);
 
-    // 3. Cria snapshot físico imutável no diretório de backups
-    let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
-    let backup = snapshot_manager
-        .create_snapshot(file_id, &event.path, next_version)
-        .await?;
+    Ok(Some((file_id, next_version)))
+}
 
-    // 4. Persiste metadados no SQLite de forma atômica/coerente
+/// Persiste metadados do snapshot no SQLite e enfileira na `sync_queue`.
+pub fn persist_snapshot_and_sync(
+    conn: &Connection,
+    file_id: Uuid,
+    event: &StableFileEvent,
+    hash: String,
+    backup: &Backup,
+    max_versions: u32,
+) -> Result<SyncQueueItem> {
+    let files_repo = FilesRepo::new(conn);
     let file_entry = FileEntry {
         id: file_id,
         save_location_id: event.save_location_id,
@@ -94,7 +65,8 @@ pub async fn handle_stable_event(
     };
     files_repo.upsert(&file_entry)?;
 
-    backups_repo.insert(&backup)?;
+    let backups_repo = BackupsRepo::new(conn);
+    backups_repo.insert(backup)?;
 
     if max_versions > 0 {
         if let Err(e) = backups_repo.prune_old_versions(file_id, max_versions) {
@@ -125,12 +97,120 @@ pub async fn handle_stable_event(
         item.id
     );
 
+    Ok(item)
+}
+
+/// Processa um único `StableFileEvent`, garantindo o ciclo completo:
+/// hash → verificação/upsert FileEntry → snapshot em disco → Backup persistido → SyncQueueItem enfileirado.
+///
+/// Versão direta recebendo `&Connection` para compatibilidade com chamadas síncronas/testes existentes.
+pub async fn handle_stable_event(
+    conn: &Connection,
+    event: &StableFileEvent,
+    backup_root: &Path,
+    max_versions: u32,
+) -> Result<Option<(Backup, SyncQueueItem)>> {
+    match event.kind {
+        StableFileEventKind::Created | StableFileEventKind::Modified => {}
+        StableFileEventKind::Removed => {
+            tracing::info!(
+                "Arquivo removido detectado: {} (save_location: {})",
+                event.path.display(),
+                event.save_location_id
+            );
+            return Ok(None);
+        }
+    }
+
+    if !event.path.exists() {
+        tracing::warn!(
+            "Evento estável recebido mas arquivo não existe no disco: {}",
+            event.path.display()
+        );
+        return Ok(None);
+    }
+
+    let hash = match hash_file(&event.path).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Falha ao calcular hash de {}: {}", event.path.display(), e);
+            return Err(e);
+        }
+    };
+
+    let (file_id, next_version) = match check_existing_and_next_version(conn, &event.path, &hash)? {
+        Some(pair) => pair,
+        None => return Ok(None),
+    };
+
+    let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
+    let backup = snapshot_manager
+        .create_snapshot(file_id, &event.path, next_version)
+        .await?;
+
+    let item = persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
+
+    Ok(Some((backup, item)))
+}
+
+/// Processa um arquivo com concorrência segura (`Send`), adquirindo o lock do banco
+/// apenas durante as consultas/escritas SQLite, mantendo-o livre durante o hashing e snapshot em disco.
+pub async fn process_file(
+    db: &tokio::sync::Mutex<Connection>,
+    event: &StableFileEvent,
+    backup_root: &Path,
+    max_versions: u32,
+) -> Result<Option<(Backup, SyncQueueItem)>> {
+    match event.kind {
+        StableFileEventKind::Created | StableFileEventKind::Modified => {}
+        StableFileEventKind::Removed => {
+            tracing::info!(
+                "Arquivo removido detectado: {} (save_location: {})",
+                event.path.display(),
+                event.save_location_id
+            );
+            return Ok(None);
+        }
+    }
+
+    if !event.path.exists() {
+        tracing::warn!("Arquivo não existe no disco: {}", event.path.display());
+        return Ok(None);
+    }
+
+    let hash = match hash_file(&event.path).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Falha ao calcular hash de {}: {}", event.path.display(), e);
+            return Err(e);
+        }
+    };
+
+    let (file_id, next_version) = {
+        let conn = db.lock().await;
+        match check_existing_and_next_version(&conn, &event.path, &hash)? {
+            Some(pair) => pair,
+            None => return Ok(None),
+        }
+    };
+
+    let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
+    let backup = snapshot_manager
+        .create_snapshot(file_id, &event.path, next_version)
+        .await?;
+
+    let item = {
+        let conn = db.lock().await;
+        persist_snapshot_and_sync(&conn, file_id, event, hash, &backup, max_versions)?
+    };
+
     Ok(Some((backup, item)))
 }
 
 /// Loop residente de processamento de eventos estáveis da aplicação.
+/// Recebe conexão compartilhada via `Arc<Mutex<Connection>>` para concorrência segura com Tokio.
 pub async fn run_pipeline(
-    conn: &Connection,
+    db: Arc<tokio::sync::Mutex<Connection>>,
     mut stable_rx: mpsc::Receiver<StableFileEvent>,
     backup_root: PathBuf,
     max_versions: u32,
@@ -148,8 +228,8 @@ pub async fn run_pipeline(
             event_opt = stable_rx.recv() => {
                 match event_opt {
                     Some(event) => {
-                        let res = handle_stable_event(
-                            conn,
+                        let res = process_file(
+                            &db,
                             &event,
                             &backup_root,
                             max_versions,
@@ -158,8 +238,9 @@ pub async fn run_pipeline(
                         match res {
                             Ok(Some((_backup, _queue_item))) => {
                                 if trigger_sync {
+                                    let conn = db.lock().await;
                                     if let Err(e) = savevault_sync::process_queue_google_drive(
-                                        conn,
+                                        &conn,
                                         backup_root.clone(),
                                     ).await {
                                         tracing::debug!("Sync em nuvem durante evento: {}", e);
@@ -187,12 +268,7 @@ pub async fn run_pipeline(
 
     // Drenagem final no encerramento limpo
     while let Ok(event) = stable_rx.try_recv() {
-        let _ = handle_stable_event(
-            conn,
-            &event,
-            &backup_root,
-            max_versions,
-        ).await;
+        let _ = process_file(&db, &event, &backup_root, max_versions).await;
     }
 
     Ok(())
