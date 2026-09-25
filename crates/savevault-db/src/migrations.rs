@@ -8,9 +8,11 @@ pub fn run(conn: &Connection) -> Result<()> {
 
     let applied: Vec<String> = {
         let mut stmt = conn.prepare("SELECT name FROM __migrations ORDER BY applied_at")?;
-        let result: Vec<String> = stmt.query_map([], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut result = Vec::new();
+        for r in rows {
+            result.push(r?);
+        }
         result
     };
 
@@ -40,6 +42,7 @@ const CREATE_MIGRATIONS_TABLE: &str = "
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001_initial_schema", MIGRATION_001),
     ("002_save_locations_unique_path", MIGRATION_002),
+    ("003_save_locations_nocase_index", MIGRATION_003),
 ];
 
 const MIGRATION_001: &str = "
@@ -100,7 +103,13 @@ WHERE id NOT IN (
 );
 
 -- Cria índice único para garantir idempotência em inserções futuras
-CREATE UNIQUE INDEX IF NOT EXISTS idx_save_locations_unique_path
+CREATE UNIQUE INDEX IF NOT EXISTS idx_save_locations_game_path
     ON save_locations(game_id, path);
 ";
 
+const MIGRATION_003: &str = "
+DROP INDEX IF EXISTS idx_save_locations_game_path;
+DROP INDEX IF EXISTS idx_save_locations_unique_path;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_save_locations_game_path
+    ON save_locations(game_id, path COLLATE NOCASE);
+";

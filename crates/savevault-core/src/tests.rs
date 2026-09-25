@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
 
     // ------------------------------------------------------------------
@@ -103,6 +104,21 @@ mod tests {
                 location_type: SaveLocationType::Directory,
             };
             assert_eq!(loc.location_type, SaveLocationType::Directory);
+            assert!(loc.is_directory());
+            assert!(!loc.is_file());
+        }
+
+        #[test]
+        fn save_location_new_constructor_sets_fields() {
+            let game_id = Uuid::new_v4();
+            let path = PathBuf::from(r"C:\Games\Save\file.sav");
+            let loc = SaveLocation::new(game_id, path.clone(), SaveLocationType::File);
+
+            assert_eq!(loc.game_id, game_id);
+            assert_eq!(loc.path, path);
+            assert_eq!(loc.location_type, SaveLocationType::File);
+            assert!(loc.is_file());
+            assert!(!loc.is_directory());
         }
     }
 }

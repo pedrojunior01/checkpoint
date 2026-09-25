@@ -3,6 +3,11 @@ pub mod generic;
 pub mod gog;
 pub mod manifest;
 pub mod steam;
+pub mod save_detector;
+pub mod ludusavi;
+
+pub use save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
+pub use ludusavi::LudusaviSaveDetector;
 
 use anyhow::Result;
 use savevault_core::models::{Game, SaveLocation, SaveLocationType};
@@ -115,6 +120,26 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     );
 
     Ok(DiscoveryResult { games, save_locations })
+}
+
+/// Conecta os jogos encontrados pelo Game Discovery ao Save Discovery,
+/// retornando todos os locais de save descobertos pelo detector fornecido.
+pub fn discover_saves_for_games<D: SaveDetector>(
+    games: &[Game],
+    detector: &D,
+) -> Vec<savevault_core::models::SaveLocation> {
+    let mut all_locations = Vec::new();
+    for game in games {
+        match detector.detect_save_locations(game) {
+            Ok(result) => {
+                all_locations.extend(result.into_locations());
+            }
+            Err(e) => {
+                tracing::warn!("Erro ao descobrir saves para '{}': {}", game.name, e);
+            }
+        }
+    }
+    all_locations
 }
 
 #[cfg(test)]

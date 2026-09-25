@@ -1,5 +1,5 @@
-/// scan_report.rs — Relatório visual dos jogos e saves detectados pelo SaveVault.
-/// Uso: cargo run --bin scan_report
+//! scan_report.rs — Relatório visual dos jogos e saves detectados pelo SaveVault.
+//! Uso: cargo run --bin scan_report
 
 use savevault_core::config::Config;
 use savevault_db::{

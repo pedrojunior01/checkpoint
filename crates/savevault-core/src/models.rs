@@ -76,7 +76,7 @@ impl Game {
 }
 
 /// Local de save associado a um jogo.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SaveLocation {
     pub id: Uuid,
     pub game_id: Uuid,
@@ -85,12 +85,44 @@ pub struct SaveLocation {
     pub location_type: SaveLocationType,
 }
 
+impl SaveLocation {
+    pub fn new(
+        game_id: Uuid,
+        path: impl Into<std::path::PathBuf>,
+        location_type: SaveLocationType,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            game_id,
+            path: path.into(),
+            location_type,
+        }
+    }
+
+    pub fn is_directory(&self) -> bool {
+        self.location_type == SaveLocationType::Directory
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.location_type == SaveLocationType::File
+    }
+
+    pub fn is_registry(&self) -> bool {
+        self.location_type == SaveLocationType::Registry
+    }
+
+    pub fn is_glob(&self) -> bool {
+        self.location_type == SaveLocationType::Glob
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SaveLocationType {
     File,
     Directory,
     Registry,
+    Glob,
 }
 
 /// Arquivo de save rastreado.

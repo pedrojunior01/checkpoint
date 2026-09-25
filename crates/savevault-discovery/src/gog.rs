@@ -10,6 +10,12 @@ pub struct GogDetector {
     gog_root: Option<PathBuf>,
 }
 
+impl Default for GogDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GogDetector {
     pub fn new() -> Self {
         Self {

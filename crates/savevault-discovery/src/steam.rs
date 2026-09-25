@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use savevault_core::models::{Confidence, Game, Platform};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 /// Informações completas de um jogo Steam detectado.
@@ -14,6 +14,12 @@ pub struct SteamGameInfo {
 
 pub struct SteamDetector {
     steam_root: Option<PathBuf>,
+}
+
+impl Default for SteamDetector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SteamDetector {
@@ -95,8 +101,9 @@ fn find_steam_root() -> Option<PathBuf> {
 }
 
 /// Parse simples do libraryfolders.vdf para extrair caminhos de bibliotecas.
-fn parse_library_folders(content: &str, steam_root: &PathBuf) -> Vec<PathBuf> {
-    let mut paths = vec![steam_root.clone()];
+/// Formato VDF (KeyValues): `"path"   "C:\\Games\\Steam"`
+fn parse_library_folders(content: &str, steam_root: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![steam_root.to_path_buf()];
 
     for line in content.lines() {
         let line = line.trim();
@@ -116,7 +123,7 @@ fn parse_library_folders(content: &str, steam_root: &PathBuf) -> Vec<PathBuf> {
 }
 
 /// Parse de um arquivo .acf para extrair nome, AppID e diretório de instalação.
-fn parse_acf(content: &str, library_path: &PathBuf) -> Option<SteamGameInfo> {
+fn parse_acf(content: &str, library_path: &Path) -> Option<SteamGameInfo> {
     let mut name: Option<String> = None;
     let mut app_id: Option<String> = None;
     let mut install_dir: Option<String> = None;

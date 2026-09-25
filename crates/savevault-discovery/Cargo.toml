@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 savevault-core = { path = "../savevault-core" }
 serde = { workspace = true }
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -14,7 +15,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
-serde_yaml = { workspace = true }
 glob = "0.3.4"
 
 [dev-dependencies]

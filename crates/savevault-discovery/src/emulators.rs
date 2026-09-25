@@ -6,6 +6,7 @@ use savevault_core::models::{Confidence, Game, Platform};
 use std::path::PathBuf;
 use tracing::debug;
 
+#[derive(Default)]
 pub struct EmulatorDetector;
 
 impl EmulatorDetector {

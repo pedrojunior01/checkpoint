@@ -1,0 +1,70 @@
+# Fixture de exemplo baseada no formato real do Ludusavi Manifest (schema.yaml)
+Stardew Valley:
+  files:
+    <winAppData>/StardewValley/Saves:
+      tags:
+        - save
+      when:
+        - os: windows
+  installDir:
+    "Stardew Valley": {}
+  steam:
+    id: 413150
+
+Celeste:
+  files:
+    <winDocuments>/My Games/Celeste/Saves:
+      tags:
+        - save
+      when:
+        - os: windows
+  installDir:
+    "Celeste": {}
+  steam:
+    id: 504230
+
+"The Witcher 3: Wild Hunt":
+  files:
+    <winDocuments>/The Witcher 3/gamesaves:
+      tags:
+        - save
+      when:
+        - os: windows
+    <winDocuments>/The Witcher 3/user.settings:
+      tags:
+        - config
+      when:
+        - os: windows
+  steam:
+    id: 292030
+  gog:
+    id: 1207664643
+
+Sample MultiLocation Game:
+  files:
+    <winAppData>/MultiGame/Saves:
+      tags:
+        - save
+      when:
+        - os: windows
+    <winDocuments>/MultiGame/profile.sav:
+      tags:
+        - save
+      when:
+        - os: windows
+
+Single File Save Game:
+  files:
+    <winLocalAppData>/SingleSaveGame/save.dat:
+      tags:
+        - save
+      when:
+        - os: windows
+
+Linux Only Game:
+  files:
+    <home>/.config/linux_game:
+      tags:
+        - save
+      when:
+        - os: linux

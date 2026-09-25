@@ -5,6 +5,7 @@
 use anyhow::Result;
 use savevault_core::models::Game;
 
+#[derive(Default)]
 pub struct GenericDetector;
 
 impl GenericDetector {

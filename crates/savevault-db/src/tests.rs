@@ -1,6 +1,8 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::Database;
+    use rusqlite::params;
     use crate::repositories::{GamesRepo, SaveLocationsRepo, FilesRepo, BackupsRepo, SyncQueueRepo};
     use savevault_core::models::{
         Confidence, Game, Platform, SaveLocation, SaveLocationType,
@@ -90,7 +92,7 @@ mod tests {
         let db = open_test_db();
         let repo = GamesRepo::new(&db.conn);
 
-        let platforms = vec![
+        let platforms = [
             Platform::Steam, Platform::Gog, Platform::Dolphin,
             Platform::Pcsx2, Platform::Ppsspp, Platform::RetroArch, Platform::Generic,
         ];
@@ -166,6 +168,304 @@ mod tests {
         games_repo.delete(game_id).unwrap();
         let remaining = loc_repo.list_by_game(game_id).unwrap();
         assert!(remaining.is_empty(), "ON DELETE CASCADE deve remover save locations");
+    }
+
+    #[test]
+    fn save_locations_find_by_id() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("FindById Test", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Saves\FindMe", SaveLocationType::Directory);
+        let loc_id = loc.id;
+        loc_repo.insert(&loc).unwrap();
+
+        let found = loc_repo.find_by_id(loc_id).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, loc_id);
+        assert_eq!(found.game_id, game.id);
+        assert_eq!(found.path, PathBuf::from(r"C:\Saves\FindMe"));
+        assert!(found.is_directory());
+
+        let missing = loc_repo.find_by_id(Uuid::new_v4()).unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn save_locations_find_by_game_and_path() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("GameAndPath Test", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let path = PathBuf::from(r"C:\Users\User\AppData\Local\Game\save.dat");
+        let loc = SaveLocation::new(game.id, path.clone(), SaveLocationType::File);
+        loc_repo.insert(&loc).unwrap();
+
+        let found = loc_repo.find_by_game_and_path(game.id, &path).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, loc.id);
+        assert!(found.is_file());
+
+        let nonexistent = loc_repo.find_by_game_and_path(game.id, &PathBuf::from(r"C:\Other\path")).unwrap();
+        assert!(nonexistent.is_none());
+    }
+
+    #[test]
+    fn save_locations_supports_multiple_locations_per_game() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Multi-Loc Game", Platform::Steam, Some("12345".into()), Confidence::High);
+        let game_id = game.id;
+        games_repo.insert(&game).unwrap();
+
+        // Um jogo pode ter um diretório principal de saves e um arquivo de configuração/save separado
+        let loc1 = SaveLocation::new(game_id, r"C:\AppData\Local\Game\Saves", SaveLocationType::Directory);
+        let loc2 = SaveLocation::new(game_id, r"C:\Documents\My Games\Game\profile.sav", SaveLocationType::File);
+
+        loc_repo.insert(&loc1).unwrap();
+        loc_repo.insert(&loc2).unwrap();
+
+        let locs = loc_repo.list_by_game(game_id).unwrap();
+        assert_eq!(locs.len(), 2, "Game deve suportar múltiplos SaveLocations");
+
+        let has_dir = locs.iter().any(|l| l.is_directory() && l.path == std::path::Path::new(r"C:\AppData\Local\Game\Saves"));
+        let has_file = locs.iter().any(|l| l.is_file() && l.path == std::path::Path::new(r"C:\Documents\My Games\Game\profile.sav"));
+        assert!(has_dir);
+        assert!(has_file);
+    }
+
+    #[test]
+    fn save_locations_unique_constraint_rejects_duplicate_path() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Unique Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let loc1 = SaveLocation::new(game.id, r"C:\Saves\SamePath", SaveLocationType::Directory);
+        loc_repo.insert(&loc1).unwrap();
+
+        // Tentar inserir outro SaveLocation com o mesmo (game_id, path) deve falhar pelo índice único
+        let loc2 = SaveLocation::new(game.id, r"C:\Saves\SamePath", SaveLocationType::Directory);
+        let res = loc_repo.insert(&loc2);
+        assert!(res.is_err(), "Índice único idx_save_locations_game_path deve rejeitar caminho duplicado para o mesmo jogo");
+
+        // Tentar inserir com case diferente também deve falhar pelo índice COLLATE NOCASE
+        let loc_case = SaveLocation::new(game.id, r"c:\saves\samepath", SaveLocationType::Directory);
+        let res_case = loc_repo.insert(&loc_case);
+        assert!(res_case.is_err(), "Índice único deve rejeitar caminho duplicado mesmo com casing diferente");
+    }
+
+    #[test]
+    fn save_locations_upsert_is_idempotent() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Idempotent Test", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Games\Save", SaveLocationType::Directory);
+
+        // Executar upsert 1 vez
+        let saved1 = loc_repo.upsert(&loc).unwrap();
+        assert_eq!(saved1.id, loc.id);
+
+        // Executar upsert 10 vezes com a mesma localização lógica
+        for _ in 0..10 {
+            let res = loc_repo.upsert(&loc).unwrap();
+            assert_eq!(res.id, loc.id, "ID original deve ser mantido em chamadas subsequentes");
+        }
+
+        // Deve existir apenas 1 registro no banco
+        let locs = loc_repo.list_by_game(game.id).unwrap();
+        assert_eq!(locs.len(), 1, "Persistência repetida não pode criar duplicatas");
+    }
+
+    #[test]
+    fn save_locations_upsert_preserves_existing_uuid() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Preserve UUID Test", Platform::Gog, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let original_id = Uuid::new_v4();
+        let loc1 = SaveLocation {
+            id: original_id,
+            game_id: game.id,
+            path: PathBuf::from(r"C:\Games\GogGame\Save"),
+            location_type: SaveLocationType::Directory,
+        };
+        let res1 = loc_repo.upsert(&loc1).unwrap();
+        assert_eq!(res1.id, original_id);
+
+        // Uma segunda descoberta gera um SaveLocation com novo UUID em memória
+        let new_generated_id = Uuid::new_v4();
+        assert_ne!(new_generated_id, original_id);
+
+        let loc2 = SaveLocation {
+            id: new_generated_id,
+            game_id: game.id,
+            path: PathBuf::from(r"c:\games\goggame\save\"),
+            location_type: SaveLocationType::Directory,
+        };
+
+        // O upsert deve reconhecer a mesma identidade lógica e PRESERVAR o UUID do banco
+        let res2 = loc_repo.upsert(&loc2).unwrap();
+        assert_eq!(res2.id, original_id, "O UUID retornado pelo upsert DEVE ser o original gravado no banco");
+
+        let in_db = loc_repo.find_by_id(original_id).unwrap();
+        assert!(in_db.is_some(), "Registro com o UUID original deve permanecer no banco");
+
+        let in_db_new = loc_repo.find_by_id(new_generated_id).unwrap();
+        assert!(in_db_new.is_none(), "Novo UUID efêmero não deve ser gravado");
+    }
+
+    #[test]
+    fn save_locations_case_insensitivity_prevents_duplicates() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Case Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let loc1 = SaveLocation::new(game.id, r"C:\Games\Save", SaveLocationType::Directory);
+        let loc2 = SaveLocation::new(game.id, r"c:\games\save", SaveLocationType::Directory);
+
+        loc_repo.upsert(&loc1).unwrap();
+        loc_repo.upsert(&loc2).unwrap();
+
+        let locs = loc_repo.list_by_game(game.id).unwrap();
+        assert_eq!(locs.len(), 1, "Variação de casing no Windows não deve produzir duas linhas");
+    }
+
+    #[test]
+    fn save_locations_separators_and_slashes_prevent_duplicates() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Separator Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let loc1 = SaveLocation::new(game.id, r"C:\Games\Save", SaveLocationType::Directory);
+        let loc2 = SaveLocation::new(game.id, "C:/Games/Save", SaveLocationType::Directory);
+        let loc3 = SaveLocation::new(game.id, r"C:\Games\Save\", SaveLocationType::Directory);
+        let loc4 = SaveLocation::new(game.id, r"C:\Games\\Save", SaveLocationType::Directory);
+
+        loc_repo.upsert(&loc1).unwrap();
+        loc_repo.upsert(&loc2).unwrap();
+        loc_repo.upsert(&loc3).unwrap();
+        loc_repo.upsert(&loc4).unwrap();
+
+        let locs = loc_repo.list_by_game(game.id).unwrap();
+        assert_eq!(locs.len(), 1, "Variação de separadores e trailing slashes não pode duplicar registro");
+    }
+
+    #[test]
+    fn save_locations_multiple_locations_persisted_individually() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Multi Loc Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let loc_a = SaveLocation::new(game.id, r"C:\SaveA", SaveLocationType::Directory);
+        let loc_b = SaveLocation::new(game.id, r"C:\SaveB", SaveLocationType::File);
+        let loc_c = SaveLocation::new(game.id, r"C:\SaveC", SaveLocationType::Directory);
+
+        loc_repo.upsert(&loc_a).unwrap();
+        loc_repo.upsert(&loc_b).unwrap();
+        loc_repo.upsert(&loc_c).unwrap();
+
+        let locs = loc_repo.list_by_game(game.id).unwrap();
+        assert_eq!(locs.len(), 3, "Três locais distintos para o mesmo jogo devem produzir 3 registros");
+
+        // Segunda execução completa
+        loc_repo.upsert(&loc_a).unwrap();
+        loc_repo.upsert(&loc_b).unwrap();
+        loc_repo.upsert(&loc_c).unwrap();
+
+        let locs_after = loc_repo.list_by_game(game.id).unwrap();
+        assert_eq!(locs_after.len(), 3, "Segunda execução deve continuar com 3 registros");
+    }
+
+    #[test]
+    fn save_locations_nonexistent_path_persisted_successfully() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("NonExistent Path Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let non_existing = PathBuf::from(r"C:\DefinitelyNonExistentGame12345\Save");
+        assert!(!non_existing.exists(), "Pré-condição: caminho não existe no disco");
+
+        let loc = SaveLocation::new(game.id, non_existing.clone(), SaveLocationType::Directory);
+        let saved = loc_repo.upsert(&loc).unwrap();
+
+        let found = loc_repo.find_by_game_and_path(game.id, &non_existing).unwrap();
+        assert!(found.is_some(), "Caminho inexistente fisicamente deve poder ser persistido e consultado com sucesso");
+        assert_eq!(saved.id, found.unwrap().id);
+    }
+
+    #[test]
+    fn save_locations_glob_persisted_with_semantics() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Glob Persist Test", Platform::Generic, None, Confidence::Medium);
+        games_repo.insert(&game).unwrap();
+
+        let glob_path = PathBuf::from(r"C:\MyGame\*.sav");
+        let loc = SaveLocation::new(game.id, glob_path.clone(), SaveLocationType::Glob);
+        assert!(loc.is_glob());
+
+        let saved = loc_repo.upsert(&loc).unwrap();
+        assert_eq!(saved.location_type, SaveLocationType::Glob);
+        assert!(saved.is_glob());
+
+        let found = loc_repo.find_by_game_and_path(game.id, &glob_path).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert!(found.is_glob());
+        assert_eq!(found.location_type, SaveLocationType::Glob);
+    }
+
+    #[test]
+    fn save_locations_corrupted_uuid_returns_error() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("Corrupt UUID Test", Platform::Generic, None, Confidence::Low);
+        games_repo.insert(&game).unwrap();
+
+        // Inserir manualmente linha com UUID corrompido
+        db.conn.execute(
+            "INSERT INTO save_locations (id, game_id, path, location_type) VALUES (?1, ?2, ?3, ?4)",
+            params!["not-a-valid-uuid", game.id.to_string(), r"C:\Saves\Bad", "directory"],
+        ).unwrap();
+
+        let res = loc_repo.list_by_game(game.id);
+        assert!(res.is_err(), "UUID corrompido deve propagar erro de conversão SQL em vez de fabricar UUID aleatório");
     }
 
     // ------------------------------------------------------------------

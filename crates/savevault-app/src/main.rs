@@ -68,9 +68,8 @@ async fn main() -> anyhow::Result<()> {
         if let Some(&real_id) = real_ids.get(&loc.game_id) {
             let mut loc_to_insert = loc.clone();
             loc_to_insert.game_id = real_id;
-            match locations_repo.insert(&loc_to_insert) {
-                Ok(_) => new_locations += 1,
-                Err(_) => {} // Já existe ou erro — ignorar silenciosamente
+            if locations_repo.insert(&loc_to_insert).is_ok() {
+                new_locations += 1;
             }
         }
     }

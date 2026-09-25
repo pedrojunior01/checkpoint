@@ -4,6 +4,7 @@
 use anyhow::Result;
 use tracing::info;
 
+#[derive(Default)]
 pub struct GoogleDriveProvider;
 
 impl GoogleDriveProvider {
