@@ -43,6 +43,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("001_initial_schema", MIGRATION_001),
     ("002_save_locations_unique_path", MIGRATION_002),
     ("003_save_locations_nocase_index", MIGRATION_003),
+    ("004_backups_drive_file_id", MIGRATION_004),
 ];
 
 const MIGRATION_001: &str = "
@@ -113,3 +114,9 @@ DROP INDEX IF EXISTS idx_save_locations_unique_path;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_save_locations_game_path
     ON save_locations(game_id, path COLLATE NOCASE);
 ";
+
+const MIGRATION_004: &str = "
+ALTER TABLE backups ADD COLUMN drive_file_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_backups_drive_file_id ON backups(drive_file_id);
+";
+

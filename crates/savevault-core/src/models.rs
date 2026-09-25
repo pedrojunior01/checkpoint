@@ -143,8 +143,10 @@ pub struct Backup {
     pub id: Uuid,
     pub file_id: Uuid,
     pub version: u32,
-    /// Caminho no storage em cloud (ex.: "saves/game-uuid/file-uuid/v3").
+    /// Caminho lógico no storage em cloud (ex.: "saves/game-uuid/file-uuid/v3").
     pub cloud_path: Option<String>,
+    /// Identificador único remoto retornado pelo Google Drive (File ID opaco).
+    pub drive_file_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub sync_status: SyncStatus,
 }

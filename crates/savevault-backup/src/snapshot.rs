@@ -48,6 +48,7 @@ impl SnapshotManager {
             file_id,
             version: next_version,
             cloud_path: None,
+            drive_file_id: None,
             sync_status: SyncStatus::Pending,
             created_at: Utc::now(),
         };

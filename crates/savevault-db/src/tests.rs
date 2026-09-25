@@ -579,7 +579,7 @@ mod tests {
         for v in 1..=3u32 {
             let b = Backup {
                 id: Uuid::new_v4(), file_id, version: v,
-                cloud_path: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
             };
             backups_repo.insert(&b).unwrap();
         }
@@ -618,7 +618,7 @@ mod tests {
         for v in 1..=10u32 {
             let b = Backup {
                 id: Uuid::new_v4(), file_id, version: v,
-                cloud_path: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
             };
             backups_repo.insert(&b).unwrap();
         }
@@ -658,7 +658,7 @@ mod tests {
 
         let backup = Backup {
             id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
         };
         let backup_id = backup.id;
         backups_repo.insert(&backup).unwrap();
@@ -696,7 +696,7 @@ mod tests {
         files_repo.upsert(&entry).unwrap();
         let backup = Backup {
             id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
         };
         let backup_id = backup.id;
         backups_repo.insert(&backup).unwrap();
@@ -739,7 +739,7 @@ mod tests {
         }).unwrap();
         let backup = Backup {
             id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
         };
         backups_repo.insert(&backup).unwrap();
 
@@ -754,5 +754,48 @@ mod tests {
         assert_eq!(queue_repo.list_pending().unwrap().len(), 1);
         queue_repo.delete(item_id).unwrap();
         assert_eq!(queue_repo.list_pending().unwrap().len(), 0);
+    }
+#[test]
+    fn backups_find_by_id() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new("FindBackupTest", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+        let loc = SaveLocation {
+            id: Uuid::new_v4(), game_id: game.id,
+            path: PathBuf::from(r"C:\FB"), location_type: SaveLocationType::Directory,
+        };
+        loc_repo.insert(&loc).unwrap();
+        let file_id = Uuid::new_v4();
+        let entry = FileEntry {
+            id: file_id, save_location_id: loc.id,
+            path: PathBuf::from(r"C:\FB\s.dat"), hash: "h".into(),
+            size_bytes: 1, modified_at: Utc::now(),
+        };
+        files_repo.upsert(&entry).unwrap();
+
+        let backup = Backup {
+            id: Uuid::new_v4(), file_id, version: 1,
+            cloud_path: Some("cloud/path/v1".into()),
+            drive_file_id: Some("drive_id_abc123".into()),
+            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+        };
+        backups_repo.insert(&backup).unwrap();
+
+        let found = backups_repo.find_by_id(backup.id).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, backup.id);
+        assert_eq!(found.file_id, file_id);
+        assert_eq!(found.version, 1);
+        assert_eq!(found.cloud_path, Some("cloud/path/v1".into()));
+        assert_eq!(found.drive_file_id, Some("drive_id_abc123".into()));
+
+        let missing = backups_repo.find_by_id(Uuid::new_v4()).unwrap();
+        assert!(missing.is_none());
     }
 }
