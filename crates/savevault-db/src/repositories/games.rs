@@ -15,7 +15,7 @@ impl<'a> GamesRepo<'a> {
 
     pub fn insert(&self, game: &Game) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO games (id, name, platform, platform_id, confidence, created_at)
+            "INSERT OR IGNORE INTO games (id, name, platform, platform_id, confidence, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 game.id.to_string(),

@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS games (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     platform     TEXT NOT NULL,
-    platform_id  TEXT,
+    platform_id  TEXT UNIQUE,
     confidence   TEXT NOT NULL DEFAULT 'medium',
     created_at   TEXT NOT NULL
 );

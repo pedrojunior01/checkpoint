@@ -117,7 +117,7 @@ fn parse_acf(content: &str) -> Option<Game> {
             continue;
         }
         let key = parts[1].to_lowercase();
-        let value = parts[3];
+        let value = parts[3].trim_end_matches('"');
         match key.as_str() {
             "name" => name = Some(value.to_string()),
             "appid" => app_id = Some(value.to_string()),

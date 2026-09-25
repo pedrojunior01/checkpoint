@@ -7,6 +7,10 @@ edition.workspace = true
 name = "savevault"
 path = "src/main.rs"
 
+[[bin]]
+name = "scan_report"
+path = "src/bin/scan_report.rs"
+
 [dependencies]
 savevault-core = { path = "../savevault-core" }
 savevault-db = { path = "../savevault-db" }
