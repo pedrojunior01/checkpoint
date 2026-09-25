@@ -12,14 +12,16 @@
 #   cargo build
 #   cargo run --bin savevault
 
-[build]
-# Redireciona o diretório de build para um caminho sem caracteres especiais.
-# Necessário porque o ld.exe do MinGW não suporta paths com acentos (ex: "Programação").
-target-dir = "C:/svt"
-
-# Define a toolchain GNU como padrão para este projeto.
-rustflags = []
+# Configuração portátil do Cargo para o projeto SaveVault.
+#
+# Para builds no Windows com a toolchain GNU (x86_64-pc-windows-gnu),
+# utiliza o linker gcc/ar disponíveis no PATH do sistema.
+#
+# Configurações específicas de máquina (como target-dir customizado ou
+# caminhos absolutos de toolchain) devem ser definidas via variáveis
+# de ambiente (ex: CARGO_TARGET_DIR) ou em configuração local do usuário.
 
 [target.x86_64-pc-windows-gnu]
-linker = "C:/msys64/mingw64/bin/gcc.exe"
-ar     = "C:/msys64/mingw64/bin/ar.exe"
+linker = "gcc"
+ar     = "ar"
+
