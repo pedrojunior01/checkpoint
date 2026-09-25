@@ -13,17 +13,18 @@ pub mod google_drive;
 #[async_trait::async_trait]
 pub trait CloudProvider: Send + Sync {
     /// Faz upload de um arquivo local para o provedor de cloud.
-    async fn upload(&self, local_path: &std::path::Path, cloud_path: &str) -> anyhow::Result<()>;
+    /// Retorna o identificador remoto único gerado pelo provedor (ex.: Google Drive File ID).
+    async fn upload(&self, local_path: &std::path::Path, cloud_path: &str) -> anyhow::Result<String>;
 
-    /// Faz download de um arquivo do provedor de cloud para o disco local.
+    /// Faz download de um arquivo do provedor de cloud para o disco local usando o ID remoto.
     async fn download(
         &self,
-        cloud_path: &str,
+        remote_file_id: &str,
         local_path: &std::path::Path,
     ) -> anyhow::Result<()>;
 
-    /// Remove um arquivo do provedor de cloud.
-    async fn delete(&self, cloud_path: &str) -> anyhow::Result<()>;
+    /// Remove um arquivo do provedor de cloud usando o ID remoto.
+    async fn delete(&self, remote_file_id: &str) -> anyhow::Result<()>;
 }
 
 // Re-exports de conveniência

@@ -12,10 +12,62 @@
 use anyhow::{anyhow, Result};
 use reqwest::header::AUTHORIZATION;
 use std::path::Path;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::auth::AuthService;
 use crate::CloudProvider;
+
+/// Timeout padrão para estabelecimento de conexão TCP/TLS (DNS + Handshake).
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout padrão por requisição HTTP para operações com o Google Drive.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn build_default_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+        .timeout(DEFAULT_REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// Valida se um `remote_file_id` é um identificador remoto opaco seguro.
+///
+/// Invariante de Segurança (SEC-01):
+/// - Rejeita caracteres de caminho (`/`, `\`), prevenindo path traversal;
+/// - Rejeita componentes relativos (`..`, `...`, ou strings compostas unicamente por pontos);
+/// - Rejeita delimitadores de URL (`?`, `#`, `&`), prevenindo query/fragment injection;
+/// - Rejeita caracteres de controle ASCII (`c.is_control()`) e espaços em branco;
+/// - Rejeita identificador vazio.
+///
+/// Não utiliza uma whitelist artificial para não quebrar compatibilidade com IDs
+/// opacos válidos gerados pela Google Drive API.
+pub fn validate_drive_file_id(remote_file_id: &str) -> Result<()> {
+    let trimmed = remote_file_id.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("Identificador remoto não pode ser vazio"));
+    }
+    if remote_file_id.contains('/')
+        || remote_file_id.contains('\\')
+        || remote_file_id.contains('?')
+        || remote_file_id.contains('#')
+        || remote_file_id.contains('&')
+        || remote_file_id.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(anyhow!(
+            "Identificador remoto inválido: '{}'. Esperado Google Drive File ID opaco, não caminho ou parâmetros de URL.",
+            remote_file_id
+        ));
+    }
+    // Rejeita tentativas de path traversal puramente relativas como '.', '..', '...', etc.
+    if remote_file_id.chars().all(|c| c == '.') {
+        return Err(anyhow!(
+            "Identificador remoto inválido: '{}'. Tentativa de path traversal detectada.",
+            remote_file_id
+        ));
+    }
+    Ok(())
+}
 
 /// Nome da pasta raiz criada no Google Drive do usuário.
 const DRIVE_ROOT_FOLDER: &str = "SaveVault";
@@ -32,19 +84,41 @@ const DRIVE_UPLOAD_BASE: &str = "https://www.googleapis.com/upload/drive/v3";
 pub struct GoogleDriveProvider {
     auth: AuthService,
     client: reqwest::Client,
+    api_base: String,
+    upload_base: String,
 }
 
 impl GoogleDriveProvider {
     /// Cria um novo provider usando as credenciais do Google Cloud Console.
-    ///
-    /// As credenciais (`client_id`, `client_secret`) devem vir das variáveis
-    /// de ambiente `SAVEVAULT_GOOGLE_CLIENT_ID` e `SAVEVAULT_GOOGLE_CLIENT_SECRET`,
-    /// ou serem lidas de um arquivo de credenciais local (não versionado).
     pub fn new(client_id: String, client_secret: String) -> Self {
         Self {
             auth: AuthService::new(client_id, client_secret),
-            client: reqwest::Client::new(),
+            client: build_default_http_client(),
+            api_base: DRIVE_API_BASE.to_string(),
+            upload_base: DRIVE_UPLOAD_BASE.to_string(),
         }
+    }
+
+    /// Cria um provider para testes apontando para endpoints mockados.
+    #[doc(hidden)]
+    pub fn with_custom_endpoints(
+        auth: AuthService,
+        api_base: String,
+        upload_base: String,
+    ) -> Self {
+        Self {
+            auth,
+            client: build_default_http_client(),
+            api_base,
+            upload_base,
+        }
+    }
+
+    /// Permite injetar um cliente HTTP configurado especificamente (ex: com timeouts reduzidos para testes).
+    #[doc(hidden)]
+    pub fn with_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
     }
 
     /// Tenta criar um provider a partir das variáveis de ambiente.
@@ -84,14 +158,22 @@ impl GoogleDriveProvider {
             .await?;
 
         let status = res.status();
-        let body: serde_json::Value = res.json().await?;
+        let text = res.text().await.unwrap_or_default();
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
+            let error_msg = body["error"]["message"]
+                .as_str()
+                .unwrap_or(if text.is_empty() { "desconhecido" } else { &text });
             return Err(anyhow!(
                 "Drive API GET erro {}: {}",
                 status,
-                body["error"]["message"].as_str().unwrap_or("desconhecido")
+                error_msg
             ));
+        }
+
+        if body.is_null() && !text.is_empty() {
+            return Err(anyhow!("Resposta JSON inválida da Drive API: {}", text));
         }
 
         Ok(body)
@@ -117,7 +199,7 @@ impl GoogleDriveProvider {
 
         let url = format!(
             "{}/files?q={}&fields=files(id,name)&spaces=drive",
-            DRIVE_API_BASE,
+            self.api_base,
             urlencoding_query(&query),
         );
 
@@ -144,20 +226,25 @@ impl GoogleDriveProvider {
 
         let res = self
             .client
-            .post(format!("{}/files", DRIVE_API_BASE))
+            .post(format!("{}/files", self.api_base))
             .header(AUTHORIZATION, format!("Bearer {}", token))
             .json(&metadata)
             .send()
             .await?;
 
         let status = res.status();
-        let body: serde_json::Value = res.json().await?;
+        let text = res.text().await.unwrap_or_default();
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
+            let error_msg = body["error"]["message"]
+                .as_str()
+                .unwrap_or(if text.is_empty() { "erro desconhecido" } else { &text });
             return Err(anyhow!(
-                "Falha ao criar pasta '{}': {}",
+                "Falha ao criar pasta '{}': HTTP {}: {}",
                 name,
-                body["error"]["message"].as_str().unwrap_or("erro desconhecido")
+                status,
+                error_msg
             ));
         }
 
@@ -194,6 +281,40 @@ impl GoogleDriveProvider {
 
         Ok(file_id)
     }
+
+    /// Constrói com segurança a URL para uma operação em `/files/{drive_file_id}`
+    /// utilizando `reqwest::Url` e manipulação segura de segmentos de caminho.
+    pub fn build_file_url(
+        &self,
+        remote_file_id: &str,
+        query: Option<&[(&str, &str)]>,
+    ) -> Result<reqwest::Url> {
+        validate_drive_file_id(remote_file_id)?;
+
+        let mut url = reqwest::Url::parse(&self.api_base)
+            .map_err(|e| anyhow!("Base URL da API inválida '{}': {}", self.api_base, e))?;
+
+        {
+            let mut segments = url
+                .path_segments_mut()
+                .map_err(|_| anyhow!("Não é possível manipular segmentos de caminho na URL base: {}", self.api_base))?;
+            segments.pop_if_empty().push("files").push(remote_file_id);
+        }
+
+        if let Some(params) = query {
+            url.query_pairs_mut().extend_pairs(params.iter().copied());
+        }
+
+        Ok(url)
+    }
+}
+
+/// Estrutura tipada de resposta de upload/metadados da Google Drive API.
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct DriveUploadResponse {
+    pub id: String,
+    pub name: Option<String>,
+    pub size: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -205,8 +326,12 @@ impl CloudProvider for GoogleDriveProvider {
     /// Faz o upload de um arquivo local para o Google Drive.
     ///
     /// `cloud_path` deve ter o formato: `<game_uuid>/<file_uuid>/<filename>`
-    /// Ex: `"a1b2c3/d4e5f6/save.dat_v3"`
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> Result<()> {
+    /// Retorna o `drive_file_id` remoto (Google Drive File ID alfanumérico opaco).
+    ///
+    /// Idempotência: antes de fazer o upload, verifica se o arquivo já existe na pasta
+    /// de destino do Drive (por exemplo, após falha do processo logo após upload anterior).
+    /// Se já existir, reutiliza o ID existente sem criar duplicatas remotas.
+    async fn upload(&self, local_path: &Path, cloud_path: &str) -> Result<String> {
         let token = self.auth.get_fresh_access_token().await?;
 
         // Decompõe o cloud_path em partes
@@ -224,6 +349,32 @@ impl CloudProvider for GoogleDriveProvider {
         let folder_id = self
             .ensure_backup_path(&token, game_uuid, file_uuid)
             .await?;
+
+        // Verificação de idempotência: se o arquivo já existe no Drive na mesma pasta, reutiliza o ID
+        let check_query = format!(
+            "name='{}' and '{}' in parents and trashed=false",
+            filename, folder_id
+        );
+        let check_url = format!(
+            "{}/files?q={}&fields=files(id,name,size)&spaces=drive",
+            self.api_base,
+            urlencoding_query(&check_query)
+        );
+        if let Ok(existing_resp) = self.get_json(&check_url, &token).await {
+            if let Some(files) = existing_resp["files"].as_array() {
+                if let Some(first) = files.first() {
+                    if let Some(id) = first["id"].as_str() {
+                        if !id.trim().is_empty() {
+                            info!(
+                                "Arquivo '{}' já existente no Drive (id: {}). Reutilizando ID remoto com garantia de idempotência.",
+                                filename, id
+                            );
+                            return Ok(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
 
         let file_bytes = tokio::fs::read(local_path).await.map_err(|e| {
             anyhow!(
@@ -258,7 +409,7 @@ impl CloudProvider for GoogleDriveProvider {
             .client
             .post(format!(
                 "{}/files?uploadType=multipart&fields=id,name,size",
-                DRIVE_UPLOAD_BASE
+                self.upload_base
             ))
             .header(AUTHORIZATION, format!("Bearer {}", token))
             .multipart(form)
@@ -266,37 +417,49 @@ impl CloudProvider for GoogleDriveProvider {
             .await?;
 
         let status = res.status();
-        let body: serde_json::Value = res.json().await?;
+        let text = res.text().await.unwrap_or_default();
 
         if !status.is_success() {
+            let error_msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| if text.is_empty() { "erro desconhecido".to_string() } else { text });
             return Err(anyhow!(
-                "Falha no upload de '{}' para o Drive: {}",
+                "Falha no upload de '{}' para o Drive: HTTP {}: {}",
                 filename,
-                body["error"]["message"].as_str().unwrap_or("erro desconhecido")
+                status,
+                error_msg
             ));
         }
 
+        let upload_resp: DriveUploadResponse = serde_json::from_str(&text)
+            .map_err(|e| anyhow!("Resposta de upload inválida do Google Drive: {}. Body: {}", e, text))?;
+
+        if upload_resp.id.trim().is_empty() {
+            return Err(anyhow!("Google Drive retornou upload com campo 'id' vazio"));
+        }
+
         info!(
-            "Upload concluído: '{}' → Drive/{} (id: {})",
+            "Upload concluído: '{}' → Drive/{} (drive_file_id: {})",
             local_path.display(),
             cloud_path,
-            body["id"].as_str().unwrap_or("?")
+            upload_resp.id
         );
 
-        Ok(())
+        Ok(upload_resp.id)
     }
 
     /// Faz o download de um arquivo do Google Drive para o disco local.
     ///
-    /// `cloud_path` aqui deve ser o **Drive File ID** do arquivo.
-    async fn download(&self, cloud_file_id: &str, local_path: &Path) -> Result<()> {
-        let token = self.auth.get_fresh_access_token().await?;
+    /// `remote_file_id` deve ser o **Google Drive File ID** opaco alfanumérico.
+    async fn download(&self, remote_file_id: &str, local_path: &Path) -> Result<()> {
+        let url = self.build_file_url(remote_file_id, Some(&[("alt", "media")]))?;
 
-        let url = format!("{}/files/{}?alt=media", DRIVE_API_BASE, cloud_file_id);
+        let token = self.auth.get_fresh_access_token().await?;
 
         let res = self
             .client
-            .get(&url)
+            .get(url)
             .header(AUTHORIZATION, format!("Bearer {}", token))
             .send()
             .await?;
@@ -305,7 +468,7 @@ impl CloudProvider for GoogleDriveProvider {
         if !status.is_success() {
             return Err(anyhow!(
                 "Falha ao baixar arquivo do Drive (id: {}): HTTP {}",
-                cloud_file_id,
+                remote_file_id,
                 status
             ));
         }
@@ -320,7 +483,7 @@ impl CloudProvider for GoogleDriveProvider {
 
         info!(
             "Download concluído: Drive/{} → '{}'",
-            cloud_file_id,
+            remote_file_id,
             local_path.display()
         );
 
@@ -328,12 +491,14 @@ impl CloudProvider for GoogleDriveProvider {
     }
 
     /// Remove um arquivo do Google Drive pelo seu File ID.
-    async fn delete(&self, cloud_file_id: &str) -> Result<()> {
+    async fn delete(&self, remote_file_id: &str) -> Result<()> {
+        let url = self.build_file_url(remote_file_id, None)?;
+
         let token = self.auth.get_fresh_access_token().await?;
 
         let res = self
             .client
-            .delete(format!("{}/files/{}", DRIVE_API_BASE, cloud_file_id))
+            .delete(url)
             .header(AUTHORIZATION, format!("Bearer {}", token))
             .send()
             .await?;
@@ -345,17 +510,17 @@ impl CloudProvider for GoogleDriveProvider {
             if status.as_u16() == 404 {
                 warn!(
                     "Arquivo Drive/{} não encontrado (já foi deletado?)",
-                    cloud_file_id
+                    remote_file_id
                 );
             } else {
-                info!("Arquivo Drive/{} removido.", cloud_file_id);
+                info!("Arquivo Drive/{} removido.", remote_file_id);
             }
             return Ok(());
         }
 
         Err(anyhow!(
             "Falha ao deletar arquivo Drive/{}: HTTP {}",
-            cloud_file_id,
+            remote_file_id,
             status
         ))
     }

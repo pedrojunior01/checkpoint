@@ -13,9 +13,23 @@ use anyhow::{anyhow, Result};
 use keyring::Entry;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
+
+/// Timeout padrão para handshake de conexão OAuth.
+pub const AUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout padrão para requisição de token OAuth.
+pub const AUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn build_auth_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(AUTH_CONNECT_TIMEOUT)
+        .timeout(AUTH_REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 /// Nome do serviço registrado no Windows Credential Manager.
 const KEYRING_SERVICE: &str = "SaveVault";
@@ -48,6 +62,9 @@ pub struct AuthService {
     client_id: String,
     client_secret: String,
     http: reqwest::Client,
+    token_url: String,
+    fixed_token: Option<String>,
+    mock_refresh_token: Option<String>,
 }
 
 impl AuthService {
@@ -56,13 +73,49 @@ impl AuthService {
         Self {
             client_id,
             client_secret,
-            http: reqwest::Client::new(),
+            http: build_auth_http_client(),
+            token_url: "https://oauth2.googleapis.com/token".to_string(),
+            fixed_token: None,
+            mock_refresh_token: None,
         }
     }
 
-    /// Verifica se já existe um refresh token salvo (ou seja, se o usuário já
-    /// fez login antes).
+    /// Cria uma instância para testes com token fixo injetado.
+    #[doc(hidden)]
+    pub fn with_fixed_token(token: String) -> Self {
+        Self {
+            client_id: "test-client".to_string(),
+            client_secret: "test-secret".to_string(),
+            http: build_auth_http_client(),
+            token_url: "https://oauth2.googleapis.com/token".to_string(),
+            fixed_token: Some(token),
+            mock_refresh_token: None,
+        }
+    }
+
+    /// Cria uma instância para testes de refresh contra um endpoint customizado.
+    #[doc(hidden)]
+    pub fn with_mock_refresh(
+        client_id: String,
+        client_secret: String,
+        token_url: String,
+        refresh_token: String,
+    ) -> Self {
+        Self {
+            client_id,
+            client_secret,
+            http: build_auth_http_client(),
+            token_url,
+            fixed_token: None,
+            mock_refresh_token: Some(refresh_token),
+        }
+    }
+
+    /// Verifica se já existe um refresh token salvo (ou se foi injetado para testes).
     pub fn is_authenticated(&self) -> bool {
+        if self.fixed_token.is_some() || self.mock_refresh_token.is_some() {
+            return true;
+        }
         Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
             .and_then(|e| e.get_password())
             .is_ok()
@@ -184,15 +237,23 @@ impl AuthService {
     /// Obtém um access_token válido renovando via refresh_token armazenado.
     /// Deve ser chamado antes de qualquer operação na API do Google Drive.
     pub async fn get_fresh_access_token(&self) -> Result<String> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
-            .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
+        if let Some(ref fixed) = self.fixed_token {
+            return Ok(fixed.clone());
+        }
 
-        let refresh_token = entry.get_password().map_err(|_| {
-            anyhow!(
-                "SaveVault não está autenticado no Google Drive.\n\
-                Execute: cargo run --bin savevault -- auth login"
-            )
-        })?;
+        let refresh_token = if let Some(ref rt) = self.mock_refresh_token {
+            rt.clone()
+        } else {
+            let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
+                .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
+
+            entry.get_password().map_err(|_| {
+                anyhow!(
+                    "SaveVault não está autenticado no Google Drive.\n\
+                    Execute: cargo run --bin savevault -- auth login"
+                )
+            })?
+        };
 
         let mut params = HashMap::new();
         params.insert("client_id", self.client_id.as_str());
@@ -202,13 +263,13 @@ impl AuthService {
 
         let res = self
             .http
-            .post("https://oauth2.googleapis.com/token")
+            .post(&self.token_url)
             .form(&params)
             .send()
             .await?;
 
         if !res.status().is_success() {
-            let body = res.text().await?;
+            let body = res.text().await.unwrap_or_default();
             return Err(anyhow!("Falha ao renovar access token: {}", body));
         }
 
