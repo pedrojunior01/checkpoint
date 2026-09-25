@@ -293,17 +293,25 @@ pub fn validate_snapshot_security(
 /// 7. Escreve os dados atomicamente através de um arquivo temporário de staging;
 /// 8. Valida o hash pós-escrita no destino;
 /// 9. Atualiza o registro em `files` para refletir o hash e estado restaurados.
-pub async fn restore_snapshot(
+///
+/// Metadados necessários para autorização e execução da restauração.
+pub struct RestoreMetadata {
+    pub backup: savevault_core::models::Backup,
+    pub file_entry: FileEntry,
+    pub save_location: SaveLocation,
+}
+
+/// Carrega e valida os metadados do snapshot a partir da conexão SQLite.
+pub fn load_restore_metadata(
     conn: &Connection,
-    backup_root: &Path,
-    request: &RestoreRequest,
-) -> Result<RestoreReport, RestoreError> {
+    snapshot_id: Uuid,
+) -> Result<RestoreMetadata, RestoreError> {
     // 1. Localiza metadados do snapshot
     let backups_repo = BackupsRepo::new(conn);
     let backup = backups_repo
-        .find_by_id(request.snapshot_id)
+        .find_by_id(snapshot_id)
         .map_err(|e| RestoreError::Other(e.to_string()))?
-        .ok_or(RestoreError::SnapshotNotFound(request.snapshot_id))?;
+        .ok_or(RestoreError::SnapshotNotFound(snapshot_id))?;
 
     // 2. Localiza metadados do arquivo original
     let files_repo = FilesRepo::new(conn);
@@ -321,10 +329,43 @@ pub async fn restore_snapshot(
             file_entry.save_location_id,
         ))?;
 
-    let dest_path = &file_entry.path;
+    Ok(RestoreMetadata {
+        backup,
+        file_entry,
+        save_location,
+    })
+}
+
+/// Atualiza o registro do arquivo após uma restauração bem-sucedida.
+pub fn update_restored_file_entry(
+    conn: &Connection,
+    file_entry: &FileEntry,
+    restored_hash: &str,
+    bytes_restored: u64,
+) -> Result<(), RestoreError> {
+    let updated_file_entry = FileEntry {
+        id: file_entry.id,
+        save_location_id: file_entry.save_location_id,
+        path: file_entry.path.clone(),
+        hash: restored_hash.to_string(),
+        size_bytes: bytes_restored,
+        modified_at: Utc::now(),
+    };
+    let files_repo = FilesRepo::new(conn);
+    let _ = files_repo.upsert(&updated_file_entry);
+    Ok(())
+}
+
+/// Executa os passos de filesystem para restauração de um snapshot.
+pub async fn execute_restore_filesystem(
+    backup_root: &Path,
+    metadata: &RestoreMetadata,
+    request: &RestoreRequest,
+) -> Result<RestoreReport, RestoreError> {
+    let dest_path = &metadata.file_entry.path;
 
     // 4. Validação de segurança contra path traversal
-    validate_destination_security(dest_path, &save_location)?;
+    validate_destination_security(dest_path, &metadata.save_location)?;
 
     let filename = dest_path
         .file_name()
@@ -336,8 +377,12 @@ pub async fn restore_snapshot(
             ))
         })?;
 
-    let source_path =
-        validate_snapshot_security(backup_root, backup.file_id, backup.version, filename)?;
+    let source_path = validate_snapshot_security(
+        backup_root,
+        metadata.backup.file_id,
+        metadata.backup.version,
+        filename,
+    )?;
 
     // 5. Validação da existência do snapshot físico no disco
     if !source_path.exists() {
@@ -456,24 +501,13 @@ pub async fn restore_snapshot(
         return Err(RestoreError::PostWriteValidationFailed(dest_path.clone()));
     }
 
-    let metadata = tokio::fs::metadata(dest_path).await?;
-    let bytes_restored = metadata.len();
-
-    // 10. Atualiza o registro do arquivo no SQLite com o novo hash e timestamp
-    let updated_file_entry = FileEntry {
-        id: file_entry.id,
-        save_location_id: file_entry.save_location_id,
-        path: file_entry.path.clone(),
-        hash: dest_hash.clone(),
-        size_bytes: bytes_restored,
-        modified_at: Utc::now(),
-    };
-    let _ = files_repo.upsert(&updated_file_entry);
+    let metadata_fs = tokio::fs::metadata(dest_path).await?;
+    let bytes_restored = metadata_fs.len();
 
     let report = RestoreReport {
-        snapshot_id: backup.id,
-        file_id: file_entry.id,
-        version: backup.version,
+        snapshot_id: metadata.backup.id,
+        file_id: metadata.file_entry.id,
+        version: metadata.backup.version,
         source_path,
         dest_path: dest_path.clone(),
         safety_backup_path,
@@ -489,6 +523,47 @@ pub async fn restore_snapshot(
         report.restored_hash
     );
 
+    Ok(report)
+}
+
+/// Restaura um snapshot para o local de save original de forma segura e atômica.
+pub async fn restore_snapshot(
+    conn: &Connection,
+    backup_root: &Path,
+    request: &RestoreRequest,
+) -> Result<RestoreReport, RestoreError> {
+    let metadata = load_restore_metadata(conn, request.snapshot_id)?;
+    let report = execute_restore_filesystem(backup_root, &metadata, request).await?;
+    update_restored_file_entry(
+        conn,
+        &metadata.file_entry,
+        &report.restored_hash,
+        report.bytes_restored,
+    )?;
+    Ok(report)
+}
+
+/// Restaura um snapshot para o local de save original utilizando um Mutex compartilhado de conexão SQLite,
+/// liberando o lock durante as operações assíncronas de I/O de arquivos.
+pub async fn restore_snapshot_with_db(
+    db: &tokio::sync::Mutex<Connection>,
+    backup_root: &Path,
+    request: &RestoreRequest,
+) -> Result<RestoreReport, RestoreError> {
+    let metadata = {
+        let conn = db.lock().await;
+        load_restore_metadata(&conn, request.snapshot_id)?
+    };
+    let report = execute_restore_filesystem(backup_root, &metadata, request).await?;
+    {
+        let conn = db.lock().await;
+        update_restored_file_entry(
+            &conn,
+            &metadata.file_entry,
+            &report.restored_hash,
+            report.bytes_restored,
+        )?;
+    }
     Ok(report)
 }
 

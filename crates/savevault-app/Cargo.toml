@@ -2,6 +2,7 @@
 name = "savevault-app"
 version.workspace = true
 edition.workspace = true
+default-run = "savevault"
 
 [lib]
 path = "src/lib.rs"
@@ -33,6 +34,7 @@ toml = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+serde_json = { workspace = true }
 
 
 [dev-dependencies]

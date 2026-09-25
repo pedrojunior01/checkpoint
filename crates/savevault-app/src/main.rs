@@ -39,6 +39,12 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load(&config_path).unwrap_or_default();
     config.save(&config_path)?;
 
+    // Roteia modo DEV-UI se solicitado
+    if args.iter().any(|a| a == "--ui" || a == "ui") {
+        handle_ui_command(&config).await?;
+        return Ok(());
+    }
+
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
         // ----------------------------------------------------------------
@@ -508,4 +514,112 @@ fn print_restore_help() {
     println!("  savevault restore 550e8400-e29b-41d4-a716-446655440000");
     println!("  savevault restore --snapshot 550e8400-e29b-41d4-a716-446655440000");
     println!("  savevault restore list");
+}
+
+async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
+    println!("================================================================================");
+    println!("               SaveVault DEV-UI-01 — Modo de Teste Provisório                   ");
+    println!("================================================================================");
+    println!("  Banco de dados: {}", config.paths.database_path.display());
+    println!("  Cofre backups:  {}", config.paths.backup_dir.display());
+    println!("--------------------------------------------------------------------------------");
+
+    let db = Database::open(&config.paths.database_path)?;
+    let locations_repo = SaveLocationsRepo::new(&db.conn);
+    let all_locations = locations_repo.list_all().unwrap_or_default();
+    let db_conn = std::sync::Arc::new(tokio::sync::Mutex::new(db.conn));
+
+    let reconciler_config = savevault_app::ReconciliationConfig::new(
+        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+    );
+    let reconciler = std::sync::Arc::new(savevault_app::Reconciler::new(
+        db_conn.clone(),
+        config.paths.backup_dir.clone(),
+        config.general.max_versions,
+    ));
+
+    let state = std::sync::Arc::new(savevault_app::DevUiState::new(
+        db_conn.clone(),
+        config.paths.database_path.clone(),
+        config.paths.backup_dir.clone(),
+        Some(reconciler.clone()),
+        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+    ));
+
+    let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
+    let recon_shutdown_rx = shutdown_tx.subscribe();
+
+    // Inicia reconciliador em background
+    let reconciler_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
+        reconciler.clone(),
+        reconciler_config,
+        recon_shutdown_rx,
+    ));
+
+    // Prepara watcher se houver locais
+    let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
+    let watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+    let mut watcher_opt = if !all_locations.is_empty() {
+        match savevault_monitor::watcher::SaveWatcherService::start(
+            watcher_config,
+            all_locations,
+            file_access,
+        ) {
+            Ok((watcher, stable_rx)) => Some((watcher, stable_rx)),
+            Err(e) => {
+                tracing::warn!("Não foi possível iniciar watcher em modo DEV-UI: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let server_shutdown_rx = shutdown_tx.subscribe();
+    let (addr, server_handle) =
+        savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
+
+    let ui_url = format!("http://{}", addr);
+    println!("  DEV-UI ativa em: {}", ui_url);
+    println!("  Abrindo navegador... (Pressione Ctrl+C para encerrar)");
+    println!("================================================================================");
+
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", &ui_url])
+            .spawn();
+    }
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\nSinal de encerramento (Ctrl+C). Encerrando DEV-UI...");
+        }
+        res = async {
+            if let Some((_w, rx)) = watcher_opt.take() {
+                savevault_app::pipeline::run_pipeline(
+                    db_conn.clone(),
+                    rx,
+                    config.paths.backup_dir.clone(),
+                    config.general.max_versions,
+                    pipeline_shutdown_rx,
+                    false,
+                )
+                .await
+            } else {
+                std::future::pending::<anyhow::Result<()>>().await
+            }
+        } => {
+            if let Err(e) = res {
+                tracing::warn!("Pipeline finalizado: {}", e);
+            }
+        }
+    }
+
+    let _ = shutdown_tx.send(true);
+    let _ = reconciler_handle.await;
+    let _ = server_handle.await;
+
+    println!("DEV-UI encerrada com sucesso.");
+    Ok(())
 }
