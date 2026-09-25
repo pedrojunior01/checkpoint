@@ -27,10 +27,10 @@ impl PathContext {
     }
 }
 
-/// Resolve um template de caminho do Ludusavi Manifest em um PathBuf concreto.
+/// Resolve um template de caminho do Ludusavi Manifest em um ou mais PathBufs concretos.
 ///
-/// Retorna `None` se o template contiver placeholders que não puderam ser resolvidos.
-pub fn resolve_path(template: &str, ctx: &PathContext) -> Option<PathBuf> {
+/// Retorna `vec![]` se o template contiver placeholders não resolvidos.
+pub fn resolve_paths(template: &str, ctx: &PathContext) -> Vec<PathBuf> {
     let mut path = template.to_string();
 
     // Substituições diretas de variáveis de ambiente
@@ -45,33 +45,50 @@ pub fn resolve_path(template: &str, ctx: &PathContext) -> Option<PathBuf> {
         path = path.replace("<base>", install);
     }
 
+    // IDs dinâmicos: substituímos por curinga (*) para buscar no disco
+    path = path.replace("<storeUserId>", "*");
+    path = path.replace("<osUserName>", "*");
+
     // Ignorar placeholders específicos de outras plataformas
     if path.contains("<xdg")
         || path.contains("<mac")
         || path.contains("<linux")
     {
-        return None;
+        return vec![];
     }
 
     // Se ainda restam placeholders não resolvidos, descartar
     if path.contains('<') && path.contains('>') {
-        return None;
+        return vec![];
     }
 
     if path.is_empty() {
-        return None;
+        return vec![];
     }
 
     // Normalizar separadores para Windows
     let path = path.replace('/', "\\");
 
-    // Remover wildcards — queremos o diretório pai
+    // Remover wildcards finais de arquivos (queremos o diretório pai para monitorar)
     let path = path
         .trim_end_matches("\\**")
         .trim_end_matches("\\*")
         .to_string();
 
-    Some(PathBuf::from(path))
+    // Se não há curingas dinâmicos, retorna o caminho (mesmo que não exista, para mostrar como Ausente)
+    if !path.contains('*') && !path.contains('?') {
+        return vec![PathBuf::from(path)];
+    }
+
+    // Se há curingas (ex: <storeUserId>), buscar correspondências no disco
+    let mut results = Vec::new();
+    if let Ok(entries) = glob::glob(&path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            results.push(entry);
+        }
+    }
+
+    results
 }
 
 #[cfg(test)]
@@ -91,9 +108,10 @@ mod tests {
     #[test]
     fn resolves_appdata_placeholder() {
         let ctx = dummy_ctx();
-        let result = resolve_path("<winAppData>/StardewValley/Saves", &ctx).unwrap();
+        let result = resolve_paths("<winAppData>/StardewValley/Saves", &ctx);
+        assert_eq!(result.len(), 1);
         assert_eq!(
-            result,
+            result[0],
             PathBuf::from(r"C:\Users\pedro\AppData\Roaming\StardewValley\Saves")
         );
     }
@@ -101,16 +119,18 @@ mod tests {
     #[test]
     fn resolves_root_placeholder() {
         let ctx = dummy_ctx();
-        let result = resolve_path("<root>/saves", &ctx).unwrap();
-        assert_eq!(result, PathBuf::from(r"C:\Games\Stardew Valley\saves"));
+        let result = resolve_paths("<root>/saves", &ctx);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], PathBuf::from(r"C:\Games\Stardew Valley\saves"));
     }
 
     #[test]
     fn strips_wildcards() {
         let ctx = dummy_ctx();
-        let result = resolve_path("<winAppData>/Game/saves/**", &ctx).unwrap();
+        let result = resolve_paths("<winAppData>/Game/saves/**", &ctx);
+        assert_eq!(result.len(), 1);
         assert!(
-            !result.to_string_lossy().contains("**"),
+            !result[0].to_string_lossy().contains("**"),
             "Wildcards devem ser removidos"
         );
     }
@@ -121,14 +141,14 @@ mod tests {
             game_install_path: None,
             ..dummy_ctx()
         };
-        let result = resolve_path("<root>/saves", &ctx);
-        assert!(result.is_none(), "Sem install path, <root> deve retornar None");
+        let result = resolve_paths("<root>/saves", &ctx);
+        assert!(result.is_empty(), "Sem install path, <root> deve retornar vazio");
     }
 
     #[test]
     fn returns_none_for_linux_placeholder() {
         let ctx = dummy_ctx();
-        let result = resolve_path("<xdgData>/game/saves", &ctx);
-        assert!(result.is_none(), "Placeholders Linux devem retornar None");
+        let result = resolve_paths("<xdgData>/game/saves", &ctx);
+        assert!(result.is_empty(), "Placeholders Linux devem retornar vazio");
     }
 }

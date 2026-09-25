@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tracing::{info, debug};
 use super::types::GameEntry;
-use super::resolver::{PathContext, resolve_path};
+use super::resolver::{PathContext, resolve_paths};
 
 /// Detector de saves via Ludusavi Manifest.
 pub struct ManifestDetector {
@@ -79,7 +79,8 @@ impl ManifestDetector {
             if !file_entry.is_applicable_windows_steam() {
                 continue;
             }
-            if let Some(resolved) = resolve_path(template, ctx) {
+            let resolved_list = resolve_paths(template, ctx);
+            for resolved in resolved_list {
                 debug!(
                     "[{}] {} → {}",
                     game_name,
