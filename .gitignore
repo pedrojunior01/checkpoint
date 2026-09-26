@@ -8,5 +8,4 @@ Cargo.lock
 # .cargo/config.toml é versionado intencionalmente (configuração do projeto)
 
 .vs/
-
-.vs/
+**/gen/

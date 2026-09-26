@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaveVault — DEV-UI-01</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <div class="logo-icon">🛡️</div>
+          <div class="logo-text">
+            <span class="brand-name">SaveVault</span>
+            <span class="badge badge-dev">DEV-UI-01</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="status-indicators">
+          <div class="indicator" id="ind-watcher">
+            <span class="status-dot dot-active"></span>
+            <span class="ind-label">Watcher:</span>
+            <span class="ind-value" id="val-watcher">Ativo</span>
+          </div>
+          <div class="indicator" id="ind-reconciler">
+            <span class="status-dot dot-active"></span>
+            <span class="ind-label">Reconciliação:</span>
+            <span class="ind-value" id="val-reconciler">Ativa (30s)</span>
+          </div>
+          <div class="indicator" id="ind-db">
+            <span class="status-dot dot-active"></span>
+            <span class="ind-label">SQLite:</span>
+            <span class="ind-value" id="val-db">Conectado</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button id="btn-header-discovery" class="btn btn-secondary btn-sm" title="Executar detecção de novos jogos e saves">
+          🔄 Atualizar Descoberta
+        </button>
+        <button id="btn-header-reconcile" class="btn btn-primary btn-sm" title="Executar ciclo de reconciliação agora">
+          ⚡ Reconciliar Agora
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="app-body">
+      <!-- Sidebar Navigation -->
+      <nav class="sidebar">
+        <div class="nav-section-title">PRINCIPAL</div>
+        <button class="nav-item active" data-tab="tab-games" id="nav-games">
+          <span class="nav-icon">🎮</span>
+          <span class="nav-label">Jogos</span>
+          <span class="nav-badge" id="badge-games-count">0</span>
+        </button>
+        <button class="nav-item" data-tab="tab-dashboard" id="nav-dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Dashboard</span>
+        </button>
+
+        <div class="nav-section-title">COFRE & OPERAÇÕES</div>
+        <button class="nav-item" data-tab="tab-locations" id="nav-locations">
+          <span class="nav-icon">📁</span>
+          <span class="nav-label">Save Locations</span>
+        </button>
+        <button class="nav-item" data-tab="tab-snapshots" id="nav-snapshots">
+          <span class="nav-icon">📸</span>
+          <span class="nav-label">Snapshots</span>
+        </button>
+        <button class="nav-item" data-tab="tab-safety" id="nav-safety">
+          <span class="nav-icon">🛡️</span>
+          <span class="nav-label">Safety Backups</span>
+        </button>
+        <button class="nav-item" data-tab="tab-reconcile" id="nav-reconcile">
+          <span class="nav-icon">🔄</span>
+          <span class="nav-label">Reconciliação</span>
+        </button>
+        <button class="nav-item" data-tab="tab-sync" id="nav-sync">
+          <span class="nav-icon">☁️</span>
+          <span class="nav-label">Sync Queue</span>
+          <span class="nav-badge badge-warning" id="badge-sync-count" style="display: none;">0</span>
+        </button>
+        <button class="nav-item" data-tab="tab-events" id="nav-events">
+          <span class="nav-icon">📜</span>
+          <span class="nav-label">Eventos</span>
+        </button>
+
+        <div class="sidebar-footer">
+          <div class="footer-note">
+            <span>Tauri Native IPC</span>
+            <span class="badge badge-subtle">Sem HTTP</span>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Content Area -->
+      <main class="content-area">
+        <!-- Notification Toast -->
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- TAB 1: JOGOS (TELA PRINCIPAL) -->
+        <section id="tab-games" class="tab-pane active">
+          <!-- View A: Games List -->
+          <div id="games-list-view">
+            <div class="view-header">
+              <div>
+                <h1 class="view-title">Jogos Mapeados</h1>
+                <p class="view-subtitle">Lista de todos os jogos e emuladores detectados com locais de save monitorados.</p>
+              </div>
+              <div class="view-actions">
+                <input type="text" id="games-search" class="search-input" placeholder="Buscar jogo pelo nome ou AppID...">
+                <button id="btn-refresh-games" class="btn btn-secondary">
+                  🔄 Atualizar
+                </button>
+              </div>
+            </div>
+
+            <!-- Games Grid -->
+            <div id="games-grid" class="games-grid">
+              <!-- Loaded via JavaScript -->
+            </div>
+
+            <!-- Empty State for Games -->
+            <div id="games-empty" class="empty-state" style="display: none;">
+              <div class="empty-icon">🎮</div>
+              <h3 class="empty-title">Nenhum jogo mapeado</h3>
+              <p class="empty-desc">O SaveVault ainda não encontrou jogos com Save Locations configurados no sistema.</p>
+              <button id="btn-empty-discovery" class="btn btn-primary">
+                🔄 Atualizar Descoberta
+              </button>
+            </div>
+          </div>
+
+          <!-- View B: Single Game Details -->
+          <div id="game-detail-view" style="display: none;">
+            <div class="detail-top-nav">
+              <button id="btn-back-to-games" class="btn btn-secondary btn-sm">
+                ← Voltar para todos os jogos
+              </button>
+            </div>
+
+            <div class="game-hero-card" id="game-hero">
+              <!-- Game hero details inserted via JavaScript -->
+            </div>
+
+            <div class="game-detail-sections">
+              <!-- Save Locations Section -->
+              <div class="card detail-section">
+                <div class="card-header">
+                  <div class="card-title">📁 Save Locations deste Jogo</div>
+                  <div class="card-badge" id="game-locations-count">0 locais</div>
+                </div>
+                <div class="table-container">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>TIPO</th>
+                        <th>CAMINHO NO DISCO</th>
+                        <th>STATUS</th>
+                        <th>ARQUIVOS</th>
+                      </tr>
+                    </thead>
+                    <tbody id="game-locations-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Snapshots Section -->
+              <div class="card detail-section">
+                <div class="card-header">
+                  <div class="card-title">📸 Snapshots Disponíveis</div>
+                  <div class="card-badge" id="game-snapshots-count">0 snapshots</div>
+                </div>
+                <div class="table-container">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>ARQUIVO</th>
+                        <th>VERSÃO</th>
+                        <th>DATA / HORA</th>
+                        <th>TAMANHO</th>
+                        <th>HASH (BLAKE3)</th>
+                        <th>AÇÃO</th>
+                      </tr>
+                    </thead>
+                    <tbody id="game-snapshots-tbody"></tbody>
+                  </table>
+                </div>
+                <div id="game-snapshots-empty" class="empty-substate" style="display: none;">
+                  <p>Nenhum snapshot disponível para este jogo.</p>
+                </div>
+              </div>
+
+              <!-- Recent Activity Section -->
+              <div class="card detail-section">
+                <div class="card-header">
+                  <div class="card-title">⏱️ Atividade Recente do Jogo</div>
+                </div>
+                <div class="table-container">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>HORA</th>
+                        <th>STATUS</th>
+                        <th>EVENTO</th>
+                      </tr>
+                    </thead>
+                    <tbody id="game-activity-tbody"></tbody>
+                  </table>
+                </div>
+                <div id="game-activity-empty" class="empty-substate" style="display: none;">
+                  <p>Nenhuma atividade recente registrada para este jogo.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: DASHBOARD (SECUNDÁRIO) -->
+        <section id="tab-dashboard" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Dashboard do Sistema</h1>
+              <p class="view-subtitle">Métricas em tempo real, integridade do banco e status dos serviços de monitoramento.</p>
+            </div>
+            <button id="btn-refresh-dashboard" class="btn btn-secondary">
+              🔄 Atualizar Métricas
+            </button>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-icon">🎮</div>
+              <div class="metric-content">
+                <div class="metric-label">Jogos Mapeados</div>
+                <div class="metric-value" id="dash-games">0</div>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon">📁</div>
+              <div class="metric-content">
+                <div class="metric-label">Save Locations</div>
+                <div class="metric-value" id="dash-locations">0</div>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon">📄</div>
+              <div class="metric-content">
+                <div class="metric-label">Arquivos Monitorados</div>
+                <div class="metric-value" id="dash-files">0</div>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon">📸</div>
+              <div class="metric-content">
+                <div class="metric-label">Snapshots no Cofre</div>
+                <div class="metric-value" id="dash-snapshots">0</div>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon">☁️</div>
+              <div class="metric-content">
+                <div class="metric-label">Pendentes na Cloud</div>
+                <div class="metric-value" id="dash-sync">0</div>
+              </div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-icon">⏱️</div>
+              <div class="metric-content">
+                <div class="metric-label">Próxima Reconciliação</div>
+                <div class="metric-value metric-small" id="dash-next-recon">—</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dashboard-details-grid">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">⚙️ Informações de Infraestrutura</div>
+              </div>
+              <div class="key-value-list">
+                <div class="kv-item">
+                  <span class="kv-key">Banco de Dados:</span>
+                  <span class="kv-val code-text" id="dash-db-path">—</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Cofre de Backups:</span>
+                  <span class="kv-val code-text" id="dash-backup-root">—</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Status do File Watcher:</span>
+                  <span class="kv-val" id="dash-watcher-state">Ativo</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Status do Reconciliador:</span>
+                  <span class="kv-val" id="dash-reconciler-state">Ativo</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📜 Último Evento Registrado</div>
+              </div>
+              <div id="dash-last-event-box" class="event-callout">
+                <div class="callout-header">
+                  <span class="badge" id="dash-last-event-level">INFO</span>
+                  <span class="callout-time" id="dash-last-event-time">—</span>
+                </div>
+                <div class="callout-body" id="dash-last-event-msg">Nenhum evento registrado ainda.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: SAVE LOCATIONS -->
+        <section id="tab-locations" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Save Locations</h1>
+              <p class="view-subtitle">Diretórios e caminhos monitorados com verificação de integridade no disco.</p>
+            </div>
+            <button id="btn-refresh-locations" class="btn btn-secondary">
+              🔄 Atualizar
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>JOGO</th>
+                    <th>PLATAFORMA</th>
+                    <th>TIPO</th>
+                    <th>CAMINHO MONITORADO</th>
+                    <th>NO DISCO</th>
+                    <th>ARQUIVOS</th>
+                    <th>AÇÃO</th>
+                  </tr>
+                </thead>
+                <tbody id="locations-tbody"></tbody>
+              </table>
+            </div>
+            <div id="locations-empty" class="empty-substate" style="display: none;">
+              <p>Nenhuma localização de save encontrada.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: SNAPSHOTS GLOBAIS -->
+        <section id="tab-snapshots" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Snapshots Locais</h1>
+              <p class="view-subtitle">Histórico consolidado de todos os pontos de restauração armazenados no cofre.</p>
+            </div>
+            <div class="view-actions">
+              <input type="text" id="snapshots-search" class="search-input" placeholder="Filtrar por jogo ou arquivo...">
+              <button id="btn-refresh-snapshots" class="btn btn-secondary">
+                🔄 Atualizar
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>JOGO</th>
+                    <th>ARQUIVO</th>
+                    <th>VERSÃO</th>
+                    <th>DATA DE CRIAÇÃO</th>
+                    <th>TAMANHO</th>
+                    <th>HASH (BLAKE3)</th>
+                    <th>STATUS FISICO</th>
+                    <th>AÇÃO</th>
+                  </tr>
+                </thead>
+                <tbody id="snapshots-tbody"></tbody>
+              </table>
+            </div>
+            <div id="snapshots-empty" class="empty-substate" style="display: none;">
+              <p>Nenhum snapshot cadastrado no cofre.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 5: SAFETY BACKUPS -->
+        <section id="tab-safety" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Safety Backups Preventivos</h1>
+              <p class="view-subtitle">Backups automáticos preservados antes de qualquer operação de substituição/restauração.</p>
+            </div>
+            <button id="btn-refresh-safety" class="btn btn-secondary">
+              🔄 Atualizar
+            </button>
+          </div>
+
+          <div id="safety-groups-container">
+            <!-- Populated via JavaScript -->
+          </div>
+          <div id="safety-empty" class="empty-state" style="display: none;">
+            <div class="empty-icon">🛡️</div>
+            <h3 class="empty-title">Nenhum Safety Backup gerado</h3>
+            <p class="empty-desc">Os Safety Backups são criados compulsoriamente antes de você restaurar um save existente no disco.</p>
+          </div>
+        </section>
+
+        <!-- TAB 6: RECONCILIAÇÃO -->
+        <section id="tab-reconcile" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Motor de Reconciliação Periódica</h1>
+              <p class="view-subtitle">Garante a detecção de alterações mesmo em caso de suspensão do sistema operacional ou saturação de eventos.</p>
+            </div>
+            <button id="btn-trigger-reconcile" class="btn btn-primary">
+              ⚡ Executar Agora
+            </button>
+          </div>
+
+          <div class="reconciliation-panel">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📊 Estatísticas da Última Execução</div>
+              </div>
+              <div class="metrics-grid recon-metrics">
+                <div class="metric-card">
+                  <div class="metric-label">Locais Varredura</div>
+                  <div class="metric-value" id="recon-locs">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Arquivos Analisados</div>
+                  <div class="metric-value" id="recon-seen">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Saves Novos</div>
+                  <div class="metric-value" id="recon-added">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Saves Alterados</div>
+                  <div class="metric-value" id="recon-changed">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Erros de Leitura</div>
+                  <div class="metric-value" id="recon-errors">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Duração</div>
+                  <div class="metric-value metric-small" id="recon-duration">0 ms</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">⚙️ Parâmetros do Loop Assíncrono</div>
+              </div>
+              <div class="key-value-list">
+                <div class="kv-item">
+                  <span class="kv-key">Status Atual:</span>
+                  <span class="kv-val" id="recon-status">● Ativo</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Intervalo entre ciclos:</span>
+                  <span class="kv-val" id="recon-interval">30 segundos</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Última execução:</span>
+                  <span class="kv-val" id="recon-last-run">—</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Próxima execução:</span>
+                  <span class="kv-val" id="recon-next-run">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 7: SYNC QUEUE -->
+        <section id="tab-sync" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Fila de Sincronização em Nuvem</h1>
+              <p class="view-subtitle">Visualização transacional dos backups agendados para envio ao Google Drive.</p>
+            </div>
+            <button id="btn-refresh-sync" class="btn btn-secondary">
+              🔄 Atualizar Fila
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ARQUIVO</th>
+                    <th>JOGO</th>
+                    <th>OPERAÇÃO</th>
+                    <th>STATUS</th>
+                    <th>TENTATIVAS</th>
+                    <th>ENFILEIRADO EM</th>
+                    <th>ÚLTIMO ERRO</th>
+                  </tr>
+                </thead>
+                <tbody id="sync-tbody"></tbody>
+              </table>
+            </div>
+            <div id="sync-empty" class="empty-substate" style="display: none;">
+              <p>Fila de sincronização vazia. Todos os snapshots estão atualizados.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 8: EVENTOS -->
+        <section id="tab-events" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Registro de Eventos em Tempo Real</h1>
+              <p class="view-subtitle">Log de operações internas do SaveVault, detecções, snapshots e reconciliação.</p>
+            </div>
+            <button id="btn-refresh-events" class="btn btn-secondary">
+              🔄 Atualizar Log
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>HORA</th>
+                    <th>NÍVEL</th>
+                    <th>MENSAGEM</th>
+                    <th>DETALHES</th>
+                  </tr>
+                </thead>
+                <tbody id="events-tbody"></tbody>
+              </table>
+            </div>
+            <div id="events-empty" class="empty-substate" style="display: none;">
+              <p>Nenhum evento registrado ainda.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- MODAL DE RESTAURAÇÃO SEGURA (CONFIRMAÇÃO E RESULTADO) -->
+    <div id="restore-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-dialog">
+        <!-- Step 1: Confirmation -->
+        <div id="modal-step-confirm">
+          <div class="modal-header">
+            <h3 class="modal-title">Restaurar Snapshot</h3>
+            <button class="modal-close-btn" id="btn-modal-cancel-x">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="restore-details-box">
+              <div class="restore-game-title" id="modal-game-name">Cyberpunk 2077</div>
+              <div class="restore-file-version" id="modal-file-version">save.dat · v42</div>
+            </div>
+
+            <div class="restore-dest-section">
+              <div class="dest-label">Destino da Restauração:</div>
+              <div class="dest-path-box" id="modal-dest-path">C:\Users\...\save.dat</div>
+            </div>
+
+            <div class="safety-warning-banner">
+              <div class="safety-icon">🛡️</div>
+              <div class="safety-text">
+                <strong>Safety Backup Automático:</strong> O arquivo atual presente no disco será preservado com segurança antes de qualquer modificação.
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-modal-cancel" class="btn btn-secondary">Cancelar</button>
+            <button id="btn-modal-confirm" class="btn btn-primary">Restaurar</button>
+          </div>
+        </div>
+
+        <!-- Step 2: Result -->
+        <div id="modal-step-result" style="display: none;">
+          <div class="modal-header">
+            <h3 class="modal-title" id="modal-result-title">Resultado da Restauração</h3>
+            <button class="modal-close-btn" id="btn-modal-done-x">&times;</button>
+          </div>
+          <div class="modal-body" id="modal-result-body">
+            <!-- Injected via JavaScript -->
+          </div>
+          <div class="modal-footer">
+            <button id="btn-modal-done" class="btn btn-primary">Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL DE SCAN LOCATION -->
+    <div id="scan-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-dialog modal-large">
+        <div class="modal-header">
+          <h3 class="modal-title">Arquivos Encontrados no Local</h3>
+          <button class="modal-close-btn" id="btn-scan-modal-close-x">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ARQUIVO</th>
+                  <th>CAMINHO</th>
+                  <th>TAMANHO</th>
+                  <th>MODIFICADO EM</th>
+                </tr>
+              </thead>
+              <tbody id="scan-modal-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-scan-modal-close" class="btn btn-primary">Fechar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

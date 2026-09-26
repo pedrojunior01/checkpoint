@@ -3,12 +3,15 @@
 pub mod assets;
 pub mod server;
 pub mod state;
+pub mod tauri_app;
 
 pub use state::{
-    DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView, LocationView,
-    ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SafetyBackupItem,
-    ScanLocationResult, SnapshotView,
+    DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView,
+    DiscoverySummaryView, GameCardView, GameDetailView, LocationView, ReconciliationView,
+    RestoreApiResponse, SafetyBackupGroup, SafetyBackupItem, ScanLocationResult, SnapshotView,
+    SyncQueueItemView,
 };
+pub use tauri_app::run_tauri_app;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

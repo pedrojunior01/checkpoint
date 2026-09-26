@@ -61,3 +61,7 @@ tempfile = "3"
 
 # Secure secrets storage (Windows Credential Manager)
 keyring = "3"
+
+# Desktop UI (Tauri 2)
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-build = { version = "2", features = [] }

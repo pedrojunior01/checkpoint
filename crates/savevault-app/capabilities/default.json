@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities and permissions for SaveVault DEV-UI",
+  "windows": ["main", "*"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

@@ -39,8 +39,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load(&config_path).unwrap_or_default();
     config.save(&config_path)?;
 
-    // Roteia modo DEV-UI se solicitado
-    if args.iter().any(|a| a == "--ui" || a == "ui") {
+    // Roteia modo DEV-UI se solicitado ou por padrão sem subcomandos
+    if args.is_empty() || args.iter().any(|a| a == "--ui" || a == "ui") {
         handle_ui_command(&config).await?;
         return Ok(());
     }
@@ -518,10 +518,11 @@ fn print_restore_help() {
 
 async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     println!("================================================================================");
-    println!("               SaveVault DEV-UI-01 — Modo de Teste Provisório                   ");
+    println!("               SaveVault DEV-UI-01 — Interface Gráfica Nativa (Tauri)           ");
     println!("================================================================================");
     println!("  Banco de dados: {}", config.paths.database_path.display());
     println!("  Cofre backups:  {}", config.paths.backup_dir.display());
+    println!("  Comunicação:    Tauri IPC Nativo (sem HTTP / sem localhost)");
     println!("--------------------------------------------------------------------------------");
 
     let db = Database::open(&config.paths.database_path)?;
@@ -559,7 +560,7 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     // Prepara watcher se houver locais
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
     let watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
-    let mut watcher_opt = if !all_locations.is_empty() {
+    let watcher_opt = if !all_locations.is_empty() {
         match savevault_monitor::watcher::SaveWatcherService::start(
             watcher_config,
             all_locations,
@@ -575,51 +576,56 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
         None
     };
 
-    let server_shutdown_rx = shutdown_tx.subscribe();
-    let (addr, server_handle) =
-        savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
+    let backup_dir_clone = config.paths.backup_dir.clone();
+    let max_versions = config.general.max_versions;
+    let pipeline_db = db_conn.clone();
+    let pipeline_thread = std::thread::spawn(move || {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Falha ao criar runtime da thread de pipeline: {}", e);
+                return;
+            }
+        };
 
-    let ui_url = format!("http://{}", addr);
-    println!("  DEV-UI ativa em: {}", ui_url);
-    println!("  Abrindo navegador... (Pressione Ctrl+C para encerrar)");
-    println!("================================================================================");
-
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", &ui_url])
-            .spawn();
-    }
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            println!("\nSinal de encerramento (Ctrl+C). Encerrando DEV-UI...");
-        }
-        res = async {
-            if let Some((_w, rx)) = watcher_opt.take() {
-                savevault_app::pipeline::run_pipeline(
-                    db_conn.clone(),
+        rt.block_on(async move {
+            if let Some((_w, rx)) = watcher_opt {
+                if let Err(e) = savevault_app::pipeline::run_pipeline(
+                    pipeline_db,
                     rx,
-                    config.paths.backup_dir.clone(),
-                    config.general.max_versions,
+                    backup_dir_clone,
+                    max_versions,
                     pipeline_shutdown_rx,
                     false,
                 )
                 .await
-            } else {
-                std::future::pending::<anyhow::Result<()>>().await
+                {
+                    tracing::warn!("Pipeline de eventos finalizado: {}", e);
+                }
             }
-        } => {
-            if let Err(e) = res {
-                tracing::warn!("Pipeline finalizado: {}", e);
-            }
-        }
-    }
+        });
+    });
+
+    println!("  Iniciando janela nativa Tauri...");
+    println!("  (Ao fechar a janela, o SaveVault continuará residente na bandeja do sistema)");
+    println!("================================================================================");
+
+    // Executa o runtime gráfico do Tauri 2 na thread atual
+    let tauri_state = state.clone();
+    let res = tokio::task::block_in_place(|| savevault_app::run_tauri_app(tauri_state));
 
     let _ = shutdown_tx.send(true);
     let _ = reconciler_handle.await;
-    let _ = server_handle.await;
+    let _ = pipeline_thread.join();
 
-    println!("DEV-UI encerrada com sucesso.");
+    if let Err(e) = res {
+        eprintln!("Erro na interface Tauri: {}", e);
+        return Err(e);
+    }
+
+    println!("SaveVault encerrado com sucesso.");
     Ok(())
 }

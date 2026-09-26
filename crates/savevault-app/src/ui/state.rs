@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use savevault_core::models::Platform;
 use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo};
 use savevault_monitor::scanner::SaveScanner;
 
@@ -60,6 +61,56 @@ pub struct DashboardSummary {
     pub next_reconciliation_time: Option<String>,
     pub last_event: Option<DevUiEvent>,
     pub last_error: Option<String>,
+}
+
+/// Card resumido de um Jogo para a tela principal da DEV-UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameCardView {
+    pub id: Uuid,
+    pub name: String,
+    pub platform: String,
+    pub platform_id: Option<String>,
+    pub steam_app_id: Option<String>,
+    pub gog_id: Option<String>,
+    pub save_locations_count: usize,
+    pub files_count: usize,
+    pub snapshots_count: usize,
+    pub monitoring_status: String,
+    pub last_activity: Option<String>,
+    pub last_error: Option<String>,
+    pub sync_status: String,
+}
+
+/// Detalhes completos de um jogo para exibição e gerenciamento na UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameDetailView {
+    pub game: GameCardView,
+    pub locations: Vec<LocationView>,
+    pub snapshots: Vec<SnapshotView>,
+    pub recent_activity: Vec<DevUiEvent>,
+}
+
+/// Item da fila de sincronização com metadados para a DEV-UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncQueueItemView {
+    pub id: i64,
+    pub backup_id: Uuid,
+    pub operation: String,
+    pub status: String,
+    pub attempts: u32,
+    pub file_name: String,
+    pub game_name: String,
+    pub created_at: String,
+    pub last_error: Option<String>,
+}
+
+/// Resumo do resultado da execução do Discovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverySummaryView {
+    pub games_found: usize,
+    pub locations_found: usize,
+    pub new_games: usize,
+    pub new_locations: usize,
 }
 
 /// Visão de um SaveLocation cadastrado.
@@ -168,6 +219,7 @@ pub struct RestoreApiResponse {
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
     pub db_path: PathBuf,
+    pub config_dir: PathBuf,
     pub backup_root: PathBuf,
     pub reconciler: Option<Arc<Reconciler>>,
     pub reconciliation_interval: Duration,
@@ -188,9 +240,15 @@ impl DevUiState {
         reconciler: Option<Arc<Reconciler>>,
         reconciliation_interval: Duration,
     ) -> Self {
+        let config_dir = db_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+
         Self {
             db,
             db_path,
+            config_dir,
             backup_root,
             reconciler,
             reconciliation_interval,
@@ -329,6 +387,269 @@ impl DevUiState {
             next_reconciliation_time: next_recon_str,
             last_event,
             last_error,
+        })
+    }
+
+    /// Retorna a lista de todos os Jogos mapeados com métricas e status para a DEV-UI.
+    pub async fn get_games(&self) -> Result<Vec<GameCardView>> {
+        let conn = self.db.lock().await;
+        let games_repo = GamesRepo::new(&conn);
+        let loc_repo = SaveLocationsRepo::new(&conn);
+        let files_repo = FilesRepo::new(&conn);
+
+        let games = games_repo.list_all()?;
+        let mut views = Vec::new();
+
+        for game in games {
+            let locations = loc_repo.list_by_game(game.id).unwrap_or_default();
+            let locations_count = locations.len();
+
+            let mut files_count = 0usize;
+            let mut has_existing_loc = false;
+            for loc in &locations {
+                if loc.path.exists() {
+                    has_existing_loc = true;
+                }
+                let files = files_repo.list_by_location(loc.id).unwrap_or_default();
+                files_count += files.len();
+            }
+
+            // Total de snapshots do jogo
+            let snapshots_count: usize = conn
+                .query_row(
+                    "SELECT COUNT(b.id)
+                     FROM backups b
+                     JOIN files f ON b.file_id = f.id
+                     JOIN save_locations sl ON f.save_location_id = sl.id
+                     WHERE sl.game_id = ?1",
+                    rusqlite::params![game.id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            // Última atividade do jogo
+            let last_activity: Option<String> = conn
+                .query_row(
+                    "SELECT b.created_at
+                     FROM backups b
+                     JOIN files f ON b.file_id = f.id
+                     JOIN save_locations sl ON f.save_location_id = sl.id
+                     WHERE sl.game_id = ?1
+                     ORDER BY b.created_at DESC
+                     LIMIT 1",
+                    rusqlite::params![game.id.to_string()],
+                    |r| r.get(0),
+                )
+                .ok()
+                .or_else(|| Some(game.created_at.format("%Y-%m-%d %H:%M:%S").to_string()));
+
+            // Status de sync do jogo
+            let pending_sync: usize = conn
+                .query_row(
+                    "SELECT COUNT(sq.id)
+                     FROM sync_queue sq
+                     JOIN backups b ON sq.backup_id = b.id
+                     JOIN files f ON b.file_id = f.id
+                     JOIN save_locations sl ON f.save_location_id = sl.id
+                     WHERE sl.game_id = ?1 AND sq.status = 'pending'",
+                    rusqlite::params![game.id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            let sync_status = if pending_sync > 0 {
+                format!("Pendente ({})", pending_sync)
+            } else if snapshots_count > 0 {
+                "Sincronizado".to_string()
+            } else {
+                "—".to_string()
+            };
+
+            let monitoring_status = if locations_count == 0 {
+                "Sem locais".to_string()
+            } else if has_existing_loc {
+                "Monitorando".to_string()
+            } else {
+                "Aguardando".to_string()
+            };
+
+            let steam_app_id = if game.platform == Platform::Steam {
+                game.platform_id.clone()
+            } else {
+                None
+            };
+
+            let gog_id = if game.platform == Platform::Gog {
+                game.platform_id.clone()
+            } else {
+                None
+            };
+
+            views.push(GameCardView {
+                id: game.id,
+                name: game.name,
+                platform: format!("{:?}", game.platform),
+                platform_id: game.platform_id,
+                steam_app_id,
+                gog_id,
+                save_locations_count: locations_count,
+                files_count,
+                snapshots_count,
+                monitoring_status,
+                last_activity,
+                last_error: None,
+                sync_status,
+            });
+        }
+
+        Ok(views)
+    }
+
+    /// Retorna detalhes completos de um jogo, incluindo save locations, snapshots e atividade recente.
+    pub async fn get_game_details(&self, game_id: Uuid) -> Result<GameDetailView> {
+        let games = self.get_games().await?;
+        let game = games
+            .into_iter()
+            .find(|g| g.id == game_id)
+            .ok_or_else(|| anyhow::anyhow!("Jogo '{}' não encontrado", game_id))?;
+
+        let all_locations = self.get_locations().await?;
+        let locations = all_locations
+            .into_iter()
+            .filter(|l| l.game_id == game_id)
+            .collect();
+
+        let all_snapshots = self.get_snapshots().await?;
+        let snapshots = all_snapshots
+            .into_iter()
+            .filter(|s| s.game_name == game.name)
+            .collect();
+
+        let all_events = self.get_events().await;
+        let recent_activity = all_events
+            .into_iter()
+            .filter(|e| {
+                e.message.contains(&game.name)
+                    || e.details.as_deref().unwrap_or("").contains(&game.name)
+            })
+            .take(15)
+            .collect();
+
+        Ok(GameDetailView {
+            game,
+            locations,
+            snapshots,
+            recent_activity,
+        })
+    }
+
+    /// Retorna itens da fila de sincronização com metadados para a DEV-UI.
+    pub async fn get_sync_queue(&self) -> Result<Vec<SyncQueueItemView>> {
+        let conn = self.db.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT sq.id, sq.backup_id, sq.operation, sq.status, sq.retry_count, sq.created_at, sq.last_error,
+                    f.path, g.name
+             FROM sync_queue sq
+             JOIN backups b ON sq.backup_id = b.id
+             JOIN files f ON b.file_id = f.id
+             JOIN save_locations sl ON f.save_location_id = sl.id
+             JOIN games g ON sl.game_id = g.id
+             ORDER BY sq.created_at DESC
+             LIMIT 100",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let b_id: String = row.get(1)?;
+            let op: String = row.get(2)?;
+            let status: String = row.get(3)?;
+            let attempts: u32 = row.get(4)?;
+            let created_at: String = row.get(5)?;
+            let last_error: Option<String> = row.get(6)?;
+            let file_path: String = row.get(7)?;
+            let game_name: String = row.get(8)?;
+
+            let file_name = std::path::Path::new(&file_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(file_path);
+
+            Ok(SyncQueueItemView {
+                id,
+                backup_id: Uuid::parse_str(&b_id).unwrap_or_default(),
+                operation: op,
+                status,
+                attempts,
+                file_name,
+                game_name,
+                created_at,
+                last_error,
+            })
+        })?;
+
+        let mut views = Vec::new();
+        for r in rows {
+            views.push(r?);
+        }
+        Ok(views)
+    }
+
+    /// Dispara a descoberta de jogos e save locations sob demanda e persiste no banco.
+    pub async fn trigger_discovery(&self) -> Result<DiscoverySummaryView> {
+        let result = savevault_discovery::run_all(&self.config_dir).await?;
+        let mut new_games = 0usize;
+        let mut new_locations = 0usize;
+
+        {
+            let conn = self.db.lock().await;
+            let games_repo = GamesRepo::new(&conn);
+            let locations_repo = SaveLocationsRepo::new(&conn);
+
+            let mut real_ids = std::collections::HashMap::new();
+            for game in &result.games {
+                let mut real_id = game.id;
+                if let Some(ref platform_id) = game.platform_id {
+                    if let Ok(Some(existing)) =
+                        games_repo.find_by_platform_id(&game.platform, platform_id)
+                    {
+                        real_id = existing.id;
+                    } else if games_repo.insert(game).is_ok() {
+                        new_games += 1;
+                    }
+                } else if games_repo.insert(game).is_ok() {
+                    new_games += 1;
+                }
+                real_ids.insert(game.id, real_id);
+            }
+
+            for loc in &result.save_locations {
+                if let Some(&real_id) = real_ids.get(&loc.game_id) {
+                    let mut loc_to_insert = loc.clone();
+                    loc_to_insert.game_id = real_id;
+                    if locations_repo.insert(&loc_to_insert).is_ok() {
+                        new_locations += 1;
+                    }
+                }
+            }
+        }
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Descoberta executada: {} jogos encontrados ({} novos), {} locais detectados ({} novos)",
+                result.games.len(),
+                new_games,
+                result.save_locations.len(),
+                new_locations
+            ),
+            None,
+        ).await;
+
+        Ok(DiscoverySummaryView {
+            games_found: result.games.len(),
+            locations_found: result.save_locations.len(),
+            new_games,
+            new_locations,
         })
     }
 

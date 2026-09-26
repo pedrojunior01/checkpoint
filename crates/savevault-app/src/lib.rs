@@ -18,4 +18,4 @@ pub use restore::{
     restore_by_id, restore_snapshot, restore_snapshot_with_db, RestoreError, RestoreReport,
     RestoreRequest,
 };
-pub use ui::{start_dev_ui_server, DevUiState};
+pub use ui::{run_tauri_app, start_dev_ui_server, DevUiState};
