@@ -28,13 +28,19 @@ pub struct DiscoveryResult {
 pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     let mut games: Vec<Game> = Vec::new();
     let mut save_locations: Vec<SaveLocation> = Vec::new();
+    let mut known_install_paths: Vec<std::path::PathBuf> = Vec::new();
 
     // ------------------------------------------------------------------
-    // Steam — com caminhos de instalação para resolução de saves
+    // 1. Steam — com caminhos de instalação para resolução de saves
     // ------------------------------------------------------------------
     let steam_infos = match steam::SteamDetector::new().detect_with_paths().await {
         Ok(infos) => {
             tracing::info!("Steam: {} jogo(s) encontrado(s)", infos.len());
+            for info in &infos {
+                if let Some(ref p) = info.install_path {
+                    known_install_paths.push(p.clone());
+                }
+            }
             infos
         }
         Err(e) => {
@@ -44,18 +50,26 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     };
 
     // ------------------------------------------------------------------
-    // GOG (stub — v0.4 completo via registry)
+    // 2. GOG Galaxy — via Registro do Windows ou fallback em pasta
     // ------------------------------------------------------------------
-    match gog::GogDetector::new().detect().await {
-        Ok(mut found) => {
-            tracing::info!("GOG: {} jogo(s) encontrado(s)", found.len());
-            games.append(&mut found);
+    let gog_infos = match gog::GogDetector::new().detect_with_paths().await {
+        Ok(infos) => {
+            tracing::info!("GOG: {} jogo(s) encontrado(s)", infos.len());
+            for info in &infos {
+                if let Some(ref p) = info.install_path {
+                    known_install_paths.push(p.clone());
+                }
+            }
+            infos
         }
-        Err(e) => tracing::warn!("GOG detector falhou: {}", e),
-    }
+        Err(e) => {
+            tracing::warn!("GOG detector falhou: {}", e);
+            vec![]
+        }
+    };
 
     // ------------------------------------------------------------------
-    // Emuladores
+    // 3. Emuladores (Dolphin, PCSX2, PPSSPP, RetroArch)
     // ------------------------------------------------------------------
     match emulators::EmulatorDetector::new().detect().await {
         Ok(mut found) => {
@@ -66,24 +80,65 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     }
 
     // ------------------------------------------------------------------
-    // Ludusavi Manifest — detecção de saves para jogos Steam
+    // 4. Detector Genérico / Heurístico (jogos fora de lojas ou DRM-free)
+    // ------------------------------------------------------------------
+    let generic_detector = generic::GenericDetector::with_known_paths(known_install_paths);
+    let generic_infos = match generic_detector.detect_with_locations().await {
+        Ok(infos) => {
+            tracing::info!("Generic: {} jogo(s)/pasta(s) encontrado(s)", infos.len());
+            infos
+        }
+        Err(e) => {
+            tracing::warn!("Generic detector falhou: {}", e);
+            vec![]
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // 5. Ludusavi Manifest — detecção e resolução de saves
     // ------------------------------------------------------------------
     match manifest::get_manifest_path(cache_dir).await {
         Ok(manifest_path) => {
             match manifest::ManifestDetector::load(&manifest_path) {
                 Ok(detector) => {
+                    // Resolução de saves para Steam
                     for info in &steam_infos {
                         let game = &info.game;
-                        let app_id = match game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok()) {
-                            Some(id) => id,
-                            None => {
-                                games.push(game.clone());
-                                continue;
-                            }
+                        let app_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
+                        let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
+
+                        let paths = if let Some(id) = app_id {
+                            detector.find_save_paths(id, &ctx)
+                        } else {
+                            detector.find_save_paths_by_title(&game.name, &ctx)
                         };
 
+                        for path in paths {
+                            save_locations.push(SaveLocation {
+                                id: Uuid::new_v4(),
+                                game_id: game.id,
+                                path,
+                                location_type: SaveLocationType::Directory,
+                            });
+                        }
+
+                        games.push(game.clone());
+                    }
+
+                    // Resolução de saves para GOG
+                    for info in &gog_infos {
+                        let game = &info.game;
+                        let gog_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
-                        let paths = detector.find_save_paths(app_id, &ctx);
+
+                        let mut paths = detector.find_save_paths_gog(gog_id, &game.name, &ctx);
+
+                        // Se o manifest não encontrou, usa os saves locais detectados pelo registry/pasta do GOG
+                        if paths.is_empty() {
+                            for loc in &info.save_paths {
+                                paths.push(loc.path.clone());
+                            }
+                        }
 
                         for path in paths {
                             save_locations.push(SaveLocation {
@@ -98,19 +153,35 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Falha ao carregar manifest: {}. Saves não serão detectados.", e);
+                    tracing::warn!("Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.", e);
                     for info in &steam_infos {
+                        games.push(info.game.clone());
+                    }
+                    for info in &gog_infos {
+                        save_locations.extend(info.save_paths.clone());
                         games.push(info.game.clone());
                     }
                 }
             }
         }
         Err(e) => {
-            tracing::warn!("Manifest indisponível: {}. Saves não serão detectados.", e);
+            tracing::warn!("Manifest indisponível: {}. Saves serão detectados apenas localmente.", e);
             for info in &steam_infos {
                 games.push(info.game.clone());
             }
+            for info in &gog_infos {
+                save_locations.extend(info.save_paths.clone());
+                games.push(info.game.clone());
+            }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 6. Adiciona jogos e locais do Detector Genérico
+    // ------------------------------------------------------------------
+    for info in generic_infos {
+        save_locations.extend(info.save_locations);
+        games.push(info.game);
     }
 
     tracing::info!(

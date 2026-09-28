@@ -9,6 +9,8 @@ use super::resolver::{PathContext, resolve_paths};
 pub struct ManifestDetector {
     /// Índice: steam_app_id → nome do jogo no manifest.
     steam_index: HashMap<u64, String>,
+    /// Índice: gog_id → nome do jogo no manifest.
+    gog_index: HashMap<u64, String>,
     /// Jogos do manifest, indexados pelo nome.
     games: HashMap<String, GameEntry>,
 }
@@ -26,6 +28,7 @@ impl ManifestDetector {
 
         let mut games: HashMap<String, GameEntry> = HashMap::new();
         let mut steam_index: HashMap<u64, String> = HashMap::new();
+        let mut gog_index: HashMap<u64, String> = HashMap::new();
         let mut skipped = 0usize;
 
         for (name, value) in raw {
@@ -34,6 +37,10 @@ impl ManifestDetector {
                     // Indexar pelo Steam AppID se disponível
                     if let Some(steam_id) = entry.steam.as_ref().and_then(|s| s.id) {
                         steam_index.insert(steam_id, name.clone());
+                    }
+                    // Indexar pelo GOG ID se disponível
+                    if let Some(gog_id) = entry.gog.as_ref().and_then(|g| g.id) {
+                        gog_index.insert(gog_id, name.clone());
                     }
                     games.insert(name, entry);
                 }
@@ -45,20 +52,17 @@ impl ManifestDetector {
         }
 
         info!(
-            "Manifest carregado: {} jogos indexados ({} com Steam AppID, {} ignorados).",
+            "Manifest carregado: {} jogos indexados ({} Steam, {} GOG, {} ignorados).",
             games.len(),
             steam_index.len(),
+            gog_index.len(),
             skipped
         );
 
-        Ok(Self { steam_index, games })
+        Ok(Self { steam_index, gog_index, games })
     }
 
     /// Retorna os caminhos de save para um jogo Steam, resolvendo placeholders.
-    ///
-    /// Apenas inclui caminhos com tag "save" que se aplicam a Windows + Steam.
-    /// Caminhos que não existem no sistema são incluídos mesmo assim (o jogo
-    /// pode não ter saves ainda).
     pub fn find_save_paths(&self, steam_app_id: u64, ctx: &PathContext) -> Vec<PathBuf> {
         let game_name = match self.steam_index.get(&steam_app_id) {
             Some(n) => n,
@@ -101,6 +105,86 @@ impl ManifestDetector {
         }
 
         paths
+    }
+
+    /// Retorna os caminhos de save para um jogo GOG, resolvendo placeholders.
+    pub fn find_save_paths_gog(&self, gog_id: Option<u64>, title: &str, ctx: &PathContext) -> Vec<PathBuf> {
+        // Tenta achar por GOG ID primeiro
+        let game_entry = gog_id
+            .and_then(|id| self.gog_index.get(&id))
+            .and_then(|name| self.games.get(name))
+            .or_else(|| self.find_entry_by_title(title));
+
+        let entry = match game_entry {
+            Some(e) => e,
+            None => return vec![],
+        };
+
+        let mut paths = Vec::new();
+
+        for (template, file_entry) in &entry.files {
+            if !file_entry.has_save_tag() {
+                continue;
+            }
+            if !file_entry.is_applicable_windows_gog() && !file_entry.is_applicable_windows() {
+                continue;
+            }
+            let resolved_list = resolve_paths(template, ctx);
+            for resolved in resolved_list {
+                debug!(
+                    "[GOG: {}] {} → {}",
+                    title,
+                    template,
+                    resolved.display()
+                );
+                paths.push(resolved);
+            }
+        }
+
+        if !paths.is_empty() {
+            info!(
+                "Manifest: {} caminho(s) de save para GOG '{}'.",
+                paths.len(),
+                title
+            );
+        }
+
+        paths
+    }
+
+    /// Busca saves no manifest pelo título do jogo (para jogos genéricos ou sem AppID).
+    pub fn find_save_paths_by_title(&self, title: &str, ctx: &PathContext) -> Vec<PathBuf> {
+        let entry = match self.find_entry_by_title(title) {
+            Some(e) => e,
+            None => return vec![],
+        };
+
+        let mut paths = Vec::new();
+
+        for (template, file_entry) in &entry.files {
+            if !file_entry.has_save_tag() || !file_entry.is_applicable_windows() {
+                continue;
+            }
+            let resolved_list = resolve_paths(template, ctx);
+            for resolved in resolved_list {
+                paths.push(resolved);
+            }
+        }
+
+        paths
+    }
+
+    fn find_entry_by_title(&self, query: &str) -> Option<&GameEntry> {
+        if let Some(e) = self.games.get(query) {
+            return Some(e);
+        }
+        self.games.iter().find_map(|(name, entry)| {
+            if name.eq_ignore_ascii_case(query) {
+                Some(entry)
+            } else {
+                None
+            }
+        })
     }
 
     /// Retorna o número de jogos com Steam AppID indexados.

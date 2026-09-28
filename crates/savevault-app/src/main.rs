@@ -5,6 +5,8 @@
 //! savevault                    # Executa o discovery e persiste no banco
 //! savevault restore <id>       # Restaura snapshot com safety backup e escrita atômica
 //! savevault restore list       # Lista os snapshots disponíveis
+//! savevault add <nome> <caminho> # Adiciona um jogo e local de save manualmente
+//! savevault list                # Lista todos os jogos cadastrados no banco
 //! savevault auth login         # Autentica no Google Drive via navegador
 //! savevault auth logout        # Remove as credenciais salvas
 //! savevault auth status        # Verifica se está autenticado
@@ -18,31 +20,64 @@ use savevault_db::{
 };
 use std::path::PathBuf;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     // Parseia os argumentos da linha de comando
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Roteia subcomandos imediatos / help sem precisar subir runtime assíncrono
+    match args.as_slice() {
+        [restore_cmd, help_flag]
+            if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h") =>
+        {
+            print_restore_help();
+            return Ok(());
+        }
+        [restore_cmd] if restore_cmd == "restore" => {
+            print_restore_help();
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    // Executa o runtime assíncrono em thread com stack de 16MB para evitar
+    // estouro do stack padrão de 1MB da thread primária do Windows sob GCC/MinGW
+    let handle = std::thread::Builder::new()
+        .name("savevault-runner".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(8 * 1024 * 1024)
+                .build()?;
+            rt.block_on(run_async(args))
+        })?;
+
+    match handle.join() {
+        Ok(res) => res,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     // Inicializa o tracing
     let log_level = std::env::var("SAVEVAULT_LOG").unwrap_or_else(|_| "info".into());
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level)),
         )
-        .init();
+        .try_init();
 
     // Carrega configuração e banco
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
     let config_dir = PathBuf::from(&appdata).join("SaveVault");
     let config_path = config_dir.join("config.toml");
     let config = Config::load(&config_path).unwrap_or_default();
-    config.save(&config_path)?;
+    let _ = config.save(&config_path);
 
     // Roteia modo DEV-UI se solicitado
     if args.iter().any(|a| a == "--ui" || a == "ui") {
-        handle_ui_command(&config).await?;
-        return Ok(());
+        return handle_ui_command(&config).await;
     }
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
@@ -80,13 +115,6 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        [restore_cmd, help_flag]
-            if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h") =>
-        {
-            print_restore_help();
-            return Ok(());
-        }
-
         [restore_cmd, id_str, flag, hash_str]
             if restore_cmd == "restore" && (flag == "--expected-hash" || flag == "-e") =>
         {
@@ -106,16 +134,33 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        [restore_cmd] if restore_cmd == "restore" => {
-            print_restore_help();
+        // ----------------------------------------------------------------
+        // savevault add / add-game — cadastro manual de jogo e local de save
+        // ----------------------------------------------------------------
+        [cmd, name, path_str] if cmd == "add" || cmd == "add-game" => {
+            handle_add_game(&config, name, path_str)?;
             return Ok(());
         }
 
         // ----------------------------------------------------------------
-        // Comportamento padrão: discovery + persistência
+        // savevault list / games — lista jogos e locais monitorados
         // ----------------------------------------------------------------
+        [cmd] if cmd == "list" || cmd == "list-games" || cmd == "games" => {
+            handle_list_games(&config)?;
+            return Ok(());
+        }
+
         _ => {}
     }
+
+    run_resident_daemon(&config, config_dir, &args).await
+}
+
+async fn run_resident_daemon(
+    config: &Config,
+    config_dir: PathBuf,
+    args: &[String],
+) -> anyhow::Result<()> {
 
     tracing::info!("SaveVault iniciando...");
 
@@ -138,18 +183,27 @@ async fn main() -> anyhow::Result<()> {
     // Persiste jogos
     let mut real_ids = std::collections::HashMap::new();
     for game in &result.games {
-        let mut real_id = game.id;
+        let mut existing_opt = None;
 
         if let Some(ref platform_id) = game.platform_id {
-            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id)
-            {
-                real_id = existing.id;
-            } else {
-                games_repo.insert(game)?;
+            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id) {
+                existing_opt = Some(existing);
             }
-        } else {
-            games_repo.insert(game)?;
         }
+
+        if existing_opt.is_none() {
+            if let Ok(Some(existing)) = games_repo.find_by_name_and_platform(&game.name, &game.platform) {
+                existing_opt = Some(existing);
+            }
+        }
+
+        let real_id = match existing_opt {
+            Some(existing) => existing.id,
+            None => {
+                games_repo.insert(game)?;
+                game.id
+            }
+        };
 
         real_ids.insert(game.id, real_id);
     }
@@ -160,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
         if let Some(&real_id) = real_ids.get(&loc.game_id) {
             let mut loc_to_insert = loc.clone();
             loc_to_insert.game_id = real_id;
-            if locations_repo.insert(&loc_to_insert).is_ok() {
+            if locations_repo.upsert(&loc_to_insert).is_ok() {
                 new_locations += 1;
             }
         }
@@ -209,7 +263,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
-    let watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+    let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
 
     let (watcher, stable_rx) = match savevault_monitor::watcher::SaveWatcherService::start(
         watcher_config,
@@ -323,6 +378,73 @@ async fn handle_auth_command(sub: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+fn handle_add_game(config: &Config, name: &str, path_str: &str) -> anyhow::Result<()> {
+    let raw_path = std::path::PathBuf::from(path_str);
+    let location_type = if raw_path.is_file() {
+        savevault_core::models::SaveLocationType::File
+    } else {
+        savevault_core::models::SaveLocationType::Directory
+    };
+
+    let db = Database::open(&config.paths.database_path)?;
+    let games_repo = GamesRepo::new(&db.conn);
+    let locations_repo = SaveLocationsRepo::new(&db.conn);
+
+    let game_id = if let Ok(Some(existing)) =
+        games_repo.find_by_name_and_platform(name, &savevault_core::models::Platform::Generic)
+    {
+        existing.id
+    } else {
+        let game = savevault_core::models::Game::new(
+            name,
+            savevault_core::models::Platform::Generic,
+            None,
+            savevault_core::models::Confidence::High,
+        );
+        games_repo.insert(&game)?;
+        game.id
+    };
+
+    let loc = savevault_core::models::SaveLocation::new(game_id, raw_path.clone(), location_type);
+    locations_repo.upsert(&loc)?;
+
+    println!("✅ Jogo '{}' adicionado com sucesso!", name);
+    println!("   ID: {}", game_id);
+    println!("   Local de save: {}", raw_path.display());
+    println!("   Monitoramento ativo na próxima execução do SaveVault.");
+    Ok(())
+}
+
+fn handle_list_games(config: &Config) -> anyhow::Result<()> {
+    let db = Database::open(&config.paths.database_path)?;
+    let games_repo = GamesRepo::new(&db.conn);
+    let locations_repo = SaveLocationsRepo::new(&db.conn);
+
+    let games = games_repo.list_all()?;
+    if games.is_empty() {
+        println!("Nenhum jogo cadastrado no banco de dados.");
+        println!("Dica: execute 'savevault --once' para rodar o discovery automático ou 'savevault add <nome> <caminho>' para adicionar manualmente.");
+        return Ok(());
+    }
+
+    println!("\nJogos registrados (total: {}):", games.len());
+    println!("{:-<70}", "");
+    for g in games {
+        let locs = locations_repo.list_by_game(g.id).unwrap_or_default();
+        println!("• {} [{:?}] (id: {})", g.name, g.platform, g.id);
+        if locs.is_empty() {
+            println!("    (sem locais de save mapeados)");
+        } else {
+            for l in locs {
+                println!("    📁 {}", l.path.display());
+            }
+        }
+    }
+    println!("{:-<70}\n", "");
+    Ok(())
+}
+
 
 async fn handle_restore_command(
     config: &Config,
@@ -558,7 +680,8 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
 
     // Prepara watcher se houver locais
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
-    let watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+    let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
     let mut watcher_opt = if !all_locations.is_empty() {
         match savevault_monitor::watcher::SaveWatcherService::start(
             watcher_config,

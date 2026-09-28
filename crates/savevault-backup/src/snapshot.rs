@@ -145,4 +145,18 @@ impl SnapshotManager {
         info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
         Ok(safety_path)
     }
+
+    /// Remove o diretório físico do snapshot correspondente à versão.
+    /// Ex.: `backup_root/file_id/v{version}`
+    pub async fn remove_snapshot_version(&self, file_id: Uuid, version: u32) -> Result<()> {
+        let version_dir = self.backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version));
+
+        if version_dir.exists() {
+            tokio::fs::remove_dir_all(&version_dir).await?;
+            debug!("Diretório de snapshot físico removido: {}", version_dir.display());
+        }
+        Ok(())
+    }
 }

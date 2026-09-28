@@ -53,7 +53,7 @@ pub fn persist_snapshot_and_sync(
     hash: String,
     backup: &Backup,
     max_versions: u32,
-) -> Result<SyncQueueItem> {
+) -> Result<(SyncQueueItem, Vec<Backup>)> {
     let files_repo = FilesRepo::new(conn);
     let file_entry = FileEntry {
         id: file_id,
@@ -68,13 +68,17 @@ pub fn persist_snapshot_and_sync(
     let backups_repo = BackupsRepo::new(conn);
     backups_repo.insert(backup)?;
 
+    let mut pruned_backups = Vec::new();
     if max_versions > 0 {
-        if let Err(e) = backups_repo.prune_old_versions(file_id, max_versions) {
-            tracing::warn!(
-                "Falha ao podar versões antigas do arquivo {}: {}",
-                file_id,
-                e
-            );
+        match backups_repo.prune_old_versions(file_id, max_versions) {
+            Ok(pruned) => pruned_backups = pruned,
+            Err(e) => {
+                tracing::warn!(
+                    "Falha ao podar versões antigas do arquivo {}: {}",
+                    file_id,
+                    e
+                );
+            }
         }
     }
 
@@ -97,7 +101,7 @@ pub fn persist_snapshot_and_sync(
         item.id
     );
 
-    Ok(item)
+    Ok((item, pruned_backups))
 }
 
 /// Processa um único `StableFileEvent`, garantindo o ciclo completo:
@@ -148,7 +152,19 @@ pub async fn handle_stable_event(
         .create_snapshot(file_id, &event.path, next_version)
         .await?;
 
-    let item = persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
+    let (item, pruned_backups) =
+        persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
+
+    for pruned in pruned_backups {
+        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, pruned.version).await {
+            tracing::warn!(
+                "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
+                pruned.version,
+                file_id,
+                e
+            );
+        }
+    }
 
     Ok(Some((backup, item)))
 }
@@ -199,10 +215,21 @@ pub async fn process_file(
         .create_snapshot(file_id, &event.path, next_version)
         .await?;
 
-    let item = {
+    let (item, pruned_backups) = {
         let conn = db.lock().await;
         persist_snapshot_and_sync(&conn, file_id, event, hash, &backup, max_versions)?
     };
+
+    for pruned in pruned_backups {
+        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, pruned.version).await {
+            tracing::warn!(
+                "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
+                pruned.version,
+                file_id,
+                e
+            );
+        }
+    }
 
     Ok(Some((backup, item)))
 }
