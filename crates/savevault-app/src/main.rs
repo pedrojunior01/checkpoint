@@ -26,6 +26,14 @@ fn main() -> anyhow::Result<()> {
 
     // Roteia subcomandos imediatos / help sem precisar subir runtime assíncrono
     match args.as_slice() {
+        [flag] if flag == "--help" || flag == "-h" => {
+            print_global_help();
+            return Ok(());
+        }
+        [flag] if flag == "--version" || flag == "-V" => {
+            println!("SaveVault v0.6.0");
+            return Ok(());
+        }
         [restore_cmd, help_flag]
             if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h") =>
         {
@@ -613,6 +621,23 @@ fn handle_restore_list(config: &Config) -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+fn print_global_help() {
+    println!("SaveVault — Sistema de Proteção e Sincronização de Saves");
+    println!();
+    println!("USO:");
+    println!("  savevault                       Inicia o daemon de monitoramento contínuo");
+    println!("  savevault --once                Executa descoberta e persiste sem manter ativo");
+    println!("  savevault add <nome> <caminho>  Cadastra manualmente um jogo e pasta de save");
+    println!("  savevault list                  Lista todos os jogos e diretórios monitorados");
+    println!("  savevault restore <backup_id>   Restaura snapshot com safety backup");
+    println!("  savevault restore list          Lista snapshots históricos disponíveis");
+    println!("  savevault auth login|status     Gerencia login com Google Drive");
+    println!("  savevault sync                  Processa a fila de sincronização");
+    println!("  savevault --ui                  Inicia a interface de testes DEV-UI (porta 4040)");
+    println!("  savevault --help                Exibe esta ajuda");
+    println!("  savevault --version             Exibe a versão do SaveVault");
 }
 
 fn print_restore_help() {
