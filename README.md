@@ -1,77 +1,173 @@
 # SaveVault
 
-SaveVault é uma solução em Rust desenvolvida para automatizar a identificação, o backup e a sincronização de arquivos de salvamento (saves) de jogos no Windows. O sistema opera em segundo plano, garantindo a proteção e o versionamento dos dados sem interromper a experiência do usuário.
+> **Você joga. O SaveVault encontra, versiona e protege seus saves automaticamente.**
 
-## Funcionalidades Principais
+---
 
-- Detecção automática de jogos e plataformas (Steam, emuladores e executáveis genéricos).
-- Monitoramento continuo de arquivos de save com prevenção de backups prematuros durante gravações.
-- Hashing com algoritmo BLAKE3 para detecção de alterações reais nos arquivos.
-- Versionamento local de snapshots com suporte a restauração segura.
-- Persistência de estado e histórico utilizando banco de dados SQLite.
+## 🎮 O que é o SaveVault?
 
-## Requisitos do Sistema
+O **SaveVault** é uma ferramenta moderna, leve e autônoma desenvolvida em **Rust** para **Windows (10 e 11 x64)**, criada com um propósito muito claro: **ser uma rede de segurança invisível e automática para os arquivos de save dos seus jogos**.
 
-- Sistema Operacional: Windows 10 ou 11 (64-bit).
-- Rust SDK (versão 1.80 ou superior com Cargo) instalado para compilação a partir do código-fonte.
+Quantas vezes um jogador já perdeu dezenas ou centenas de horas de progresso porque:
+- O jogo crashou durante um salvamento automático (*autosave*) e **corrompeu o único arquivo de save**?
+- O jogo **não tem suporte a nuvem** (jogos antigos, títulos independentes, versões DRM-free do GOG ou emuladores)?
+- O computador precisou ser formatado e os saves estavam **espalhados em pastas ocultas e obscuras** do sistema (`%APPDATA%`, `%LOCALAPPDATA%`, `Saved Games`, `Documents` ou chaves de registro)?
+- O serviço de nuvem tradicional sincronizou um arquivo corrompido por cima do progresso válido?
 
-## Instalação e Compilação
+O SaveVault resolve esse problema de ponta a ponta. Ele opera em segundo plano com **consumo mínimo de CPU e memória**, descobre onde os seus jogos guardam seus saves, monitora modificações em tempo real enquanto você joga, cria **snapshots locais versionados** com garantia criptográfica (**BLAKE3**) e sincroniza tudo com a sua própria nuvem (**Google Drive**).
 
-1. Clone o repositório para o seu ambiente local:
+---
 
-```powershell
-git clone https://github.com/pedrojunior01/Savevalt.git
-cd Savevalt
+## 🚫 O que o SaveVault NÃO é
+
+Para evitar qualquer confusão sobre o escopo do projeto:
+
+- ❌ **Não é um launcher de jogos**: O SaveVault não gerencia inicialização de jogos, amigos ou loja (como Steam, Epic ou GOG Galaxy).
+- ❌ **Não faz backup de jogos instalados**: Ele não armazena os 50GB–100GB de executáveis, texturas ou áudio de jogos instalados.
+- ❌ **Não é gerenciador de mods**: Não sincroniza pastas de mods, shaders, screenshots ou vídeos gravados.
+- ❌ **Não depende de servidores de terceiros**: O SaveVault se conecta diretamente entre o seu computador e a sua conta pessoal da nuvem (Google Drive), garantindo 100% de privacidade dos seus dados.
+
+> **Foco Absoluto**: O SaveVault é especializado única e exclusivamente na **proteção, versionamento, integridade e restauração de dados de progresso (saves)**.
+
+---
+
+## 💡 Como Funciona (O Ciclo de Vida do SaveVault)
+
+```mermaid
+flowchart TD
+    A[🎮 Usuário joga] --> B[💾 Jogo grava o Save no disco]
+    B --> C[👁️ SaveVault detecta alteração via Watcher]
+    C --> D{⏳ StabilityChecker: gravação terminou?}
+    D -- Não (Arquivo travado/em escrita) --> D
+    D -- Sim (Arquivo liberado) --> E[🔑 Calcula hash BLAKE3]
+    E --> F{Save realmente mudou?}
+    F -- Não (Falso positivo) --> Z[Ignora]
+    F -- Sim --> G[📦 Cria Snapshot Versionado local v1, v2...]
+    G --> H[☁️ Enfileira para o Google Drive]
+    H --> I[📤 Sincronização em nuvem segura]
 ```
 
-2. Realize a verificação das dependências e compilação do projeto:
+1. **Descoberta Inteligente**: Ao iniciar, o SaveVault rastreia seus discos para localizar jogos instalados e mapear exatamente onde os saves de cada um ficam gravados.
+2. **Monitoramento por Eventos (Sem Polling)**: Em vez de ficar lendo o HD continuamente (o que causaria lentidão e consumo de disco), o SaveVault usa APIs nativas do Windows (`ReadDirectoryChangesW` via crate `notify`) para ser acordado apenas quando um arquivo for realmente tocado.
+3. **Proteção Contra Saves Incompletos (*StabilityChecker*)**: Jogos costumam manter arquivos abertos e bloqueados durante a escrita. Se um backup tentar ler esse arquivo imediatamente, ele geraria um save corrompido ou cortado pela metade. O SaveVault detecta códigos nativos de travamento do Windows (`ERROR_SHARING_VIOLATION` 32 e 33) e aguarda o jogo fechar o arquivo antes de agir.
+4. **Histórico Versionado**: Cada alteração gera uma versão histórica (`v1`, `v2`, `v3`...). Se um save quebrar, você pode voltar no tempo para o estado de 10 minutos atrás ou do dia anterior.
+5. **Restauração com Cinto de Segurança**: Antes de restaurar qualquer versão antiga por cima do save atual, o SaveVault gera automaticamente um arquivo de segurança (`.savevault_safety_bak`). Nada é sobrescrito sem volta.
+6. **Sincronização em Nuvem Tolerante a Falhas**: Os snapshots são enviados para a sua conta do Google Drive via fila assíncrona. Se você estiver sem internet, o SaveVault guarda os backups localmente e sincroniza tudo de forma transparente assim que a conexão retornar.
+
+---
+
+## ⚡ Diferenciais do SaveVault
+
+| Recurso | Steam Cloud | Ludusavi | GameSave Manager | **SaveVault** |
+|:---|:---:|:---:|:---:|:---:|
+| **Monitoramento em Background em Tempo Real** | ❌ (Apenas ao fechar o jogo) | ❌ (Manual ou por script) | ❌ (Manual/Agendado) | ✅ **Sim (Contínuo e Automático)** |
+| **Jogos Fora da Steam (GOG, Emuladores, Indústria)** | ❌ Não | ✅ Sim | ✅ Sim | ✅ **Sim (Multi-plataforma)** |
+| **Múltiplas Versões Históricas (Rollback)** | ❌ (Apenas última versão) | ✅ Sim | ✅ Sim | ✅ **Sim (Configurável)** |
+| **Proteção Contra Escrita Incompleta (Lock Win32)** | ❌ | ❌ | ❌ | ✅ **Sim (StabilityChecker nativo)** |
+| **Sincronização Direta com Nuvem Pessoal** | ❌ (Apenas nuvem Steam) | ⚠️ (Requer Rclone ou cloud tools) | ⚠️ (Upload manual via FTP/Dropbox antigo) | ✅ **Nativo (Google Drive via OAuth)** |
+| **Segurança de Credenciais** | Própria | N/A | Texto plano | ✅ **Windows Credential Manager** |
+| **Consumo de Recursos** | Baixo | Médio | Alto | ✅ **Mínimo (100% Rust nativo)** |
+
+---
+
+## 🔍 Cobertura de Descoberta de Jogos
+
+O SaveVault combina múltiplos motores de descoberta para garantir que nenhum jogo passe despercebido:
+
+- **Steam**: Lê os arquivos de configuração multi-bibliotecas (`libraryfolders.vdf`) e realiza o parsing nativo dos manifestos `.acf`.
+- **GOG Galaxy**: Varre diretamente as chaves do Registro do Windows (`HKLM\SOFTWARE\GOG.com\Games` em 32 e 64-bit), suportando identificadores numéricos (DWORD) e strings.
+- **Emuladores Dedicados**: Suporte estruturado e perfis pré-configurados para **Dolphin** (GameCube/Wii), **PCSX2** (PS2), **PPSSPP** (PSP) e **RetroArch**.
+- **Catálogo Oficial Ludusavi**: Integração com a base de conhecimento de mais de **53.000 jogos**, resolvendo dinamicamente variáveis do Windows (`<winAppData>`, `<winDocuments>`, `<storeUserId>`, etc.).
+- **Heurística Genérica Inteligente (`generic.rs`)**: Detecta jogos independentes e avulsos em `%APPDATA%`, `%LOCALAPPDATA%`, `Saved Games` e `Documents`, utilizando algoritmos de pontuação e listas estritas de exclusão para **eliminar falsos-positivos** (pastas do sistema, navegadores, Discord, etc.).
+- **Cadastro Manual**: Caso tenha algum jogo personalizado ou pasta específica, você pode registrá-lo com um único comando na CLI.
+
+---
+
+## 🏛️ Arquitetura do Sistema (Workspace Modular)
+
+O projeto é composto por 8 *crates* desacoplados, seguindo rigorosos padrões de concorrência e integridade:
+
+```
+crates/
+├── savevault-core/       # Modelos de dados universais, configuração e normalização Win32
+├── savevault-db/         # Banco SQLite local (rusqlite bundled) com migrações 001 a 005
+├── savevault-discovery/  # Detectores: Steam, GOG, Emuladores, Heurística e Ludusavi
+├── savevault-monitor/    # Watcher assíncrono (notify), Debouncer e StabilityChecker Win32
+├── savevault-backup/     # Assinaturas BLAKE3, gerenciamento de snapshots locais e pruning físico
+├── savevault-cloud/      # Integração Google Drive, OAuth 2.0 PKCE e Windows Credential Manager
+├── savevault-sync/       # Fila transacional de sincronização com retentativas exponenciais
+└── savevault-app/        # CLI, orquestrador do daemon de monitoramento contínuo e DEV-UI
+```
+
+---
+
+## 💻 Requisitos do Sistema
+
+- **Sistema Operacional**: Windows 10 ou Windows 11 (64-bit).
+- **Rust Toolchain**: Rust 1.80+ (compatível com `stable-x86_64-pc-windows-gnu` / MinGW e `stable-x86_64-pc-windows-msvc`).
+- **Conta Google**: Apenas caso deseje sincronizar com o Google Drive (opcional; o backup e versionamento local funcionam 100% offline).
+
+---
+
+## 🛠️ Como Instalar e Compilar
 
 ```powershell
+# 1. Clonar o repositório
+git clone https://github.com/pedrojunior01/Savevalt.git
+cd Savevalt
+
+# 2. Configurar variáveis para Google Drive (Opcional)
+copy .env.example .env
+# Preencha GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env caso vá usar a sincronização em nuvem
+
+# 3. Compilar em modo release
 cargo build --release
 ```
 
-O executável final será gerado no diretório `target/release/savevault.exe`.
+O executável otimizado estará disponível em: `target/release/savevault.exe`.
 
-## Como Usar
+---
 
-### Execução Direta via Cargo
+## 📖 Como Usar a CLI
 
-Para iniciar o aplicativo em modo de desenvolvimento ou uso direto:
+O SaveVault pode ser executado como um daemon contínuo ou utilizado através de comandos pontuais:
 
-```powershell
-cargo run -p savevault-app
-```
+| Comando | Descrição |
+|:---|:---|
+| `savevault` | Inicia o **daemon residente**: varre os jogos instalados e entra no loop contínuo de monitoramento em tempo real com reconciliação periódica offline. |
+| `savevault --once` | Executa a varredura e descoberta de jogos uma única vez, salva os locais no banco de dados e encerra imediatamente. |
+| `savevault add <nome> <caminho>` | Cadastra manualmente um jogo e uma pasta de save específica para monitoramento. |
+| `savevault list` | Lista todos os jogos e diretórios atualmente monitorados e registrados no banco SQLite. |
+| `savevault restore list` | Exibe a lista de todos os snapshots históricos disponíveis para restauração. |
+| `savevault restore <BACKUP_ID>` | Restaura um snapshot específico no disco com criação prévia de *safety backup*. |
+| `savevault auth login` | Abre o navegador padrão e autentica o SaveVault na sua conta do Google Drive via OAuth 2.0 com PKCE. |
+| `savevault auth status` | Informa se o usuário está autenticado na nuvem e o status das credenciais. |
+| `savevault auth logout` | Remove os tokens de acesso e purga as credenciais do Windows Credential Manager. |
+| `savevault sync` | Força o processamento imediato de todos os uploads pendentes na fila de nuvem. |
+| `savevault --ui` | Inicia a **DEV-UI**: servidor HTTP local em `http://127.0.0.1:4040` para inspecionar jogos, status e fila no navegador. |
 
-### Execução do Binário Compilado
+---
 
-Após realizar o build em modo release, você pode executar o aplicativo diretamente ou configurá-lo para inicialização com o sistema:
+## 🧪 Qualidade de Código & Testes Automatizados (QA)
 
-```powershell
-.\target\release\savevault.exe
-```
-
-Ao ser executado pela primeira vez, o SaveVault realizará as seguintes etapas automatizadas:
-
-1. Criação do arquivo de configuração padrão em `%APPDATA%\SaveVault\config.toml`.
-2. Inicialização do banco de dados SQLite em `%APPDATA%\SaveVault\savevault.db`.
-3. Escaneamento e registro automático dos jogos instalados e seus respectivos diretórios de save.
-
-### Configuração
-
-As opções de retenção de versões e caminhos de armazenamento podem ser ajustadas editando o arquivo de configuração localizado em:
-
-```text
-%APPDATA%\SaveVault\config.toml
-```
-
-## Execução de Testes Automáticos
-
-Para validar a integridade dos módulos e executar a suíte de testes de garantia de qualidade:
+A confiabilidade dos seus saves é o princípio inegociável do SaveVault. Toda a base de código é coberta por testes automatizados estritos:
 
 ```powershell
 cargo test --workspace
 ```
 
-## Licença
+São **213 testes automatizados (100% de aprovação)**:
+- **`savevault-discovery` (46 testes)**: Parsing de manifestos Steam ACF, leitura do Registro do Windows para GOG (String e DWORD), isolamento de detector e heurística genérica.
+- **`savevault-db` (37 testes)**: Idempotência de migrações (001 a 005), integridade referencial `ON DELETE CASCADE`, deduplicação de jogos e CRUD de repositórios.
+- **`savevault-app` (36 testes)**: Testes E2E do pipeline de monitoramento, DEV-UI, reconciliação periódica e restauração atômica com rollback.
+- **`savevault-monitor` (30 testes)**: Coalescência de debouncing, limites de memória, recuperação de sharing violation (locks do Windows 32/33) e deleção de arquivos.
+- **`savevault-cloud` (23 testes)**: Mocks do Google Drive, upload multipart, token refresh, validação de `state` anti-CSRF e cofre de chaves.
+- **`savevault-core` (18 testes)**: Normalização de paths Win32 (remoção de prefixos estendidos `\\?\`), arquivos internos e modelos.
+- **`savevault-sync` (12 testes)**: Consumo da fila, retentativas com backoff exponencial e transações atômicas de sync.
+- **`savevault-backup` (11 testes)**: Hashing BLAKE3 em streaming, integridade de snapshots versionados, pruning físico de disco e safety backups.
 
-Este projeto é distribuído sob a licença MIT. Para mais detalhes, consulte o arquivo LICENSE.
+---
+
+## 📄 Licença
+
+Distribuído sob a licença **MIT**. Consulte o arquivo [LICENSE](LICENSE) para obter detalhes.
