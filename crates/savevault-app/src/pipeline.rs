@@ -255,11 +255,33 @@ pub async fn process_file(
 /// Recebe conexão compartilhada via `Arc<Mutex<Connection>>` para concorrência segura com Tokio.
 pub async fn run_pipeline(
     db: Arc<tokio::sync::Mutex<Connection>>,
+    stable_rx: mpsc::Receiver<StableFileEvent>,
+    backup_root: PathBuf,
+    max_versions: u32,
+    shutdown_rx: watch::Receiver<bool>,
+    trigger_sync: bool,
+) -> Result<()> {
+    run_pipeline_with_provider(
+        db,
+        stable_rx,
+        backup_root,
+        max_versions,
+        shutdown_rx,
+        trigger_sync,
+        "google_drive",
+    )
+    .await
+}
+
+/// Loop residente de processamento de eventos estáveis permitindo especificar o provedor de nuvem ativo.
+pub async fn run_pipeline_with_provider(
+    db: Arc<tokio::sync::Mutex<Connection>>,
     mut stable_rx: mpsc::Receiver<StableFileEvent>,
     backup_root: PathBuf,
     max_versions: u32,
     mut shutdown_rx: watch::Receiver<bool>,
     trigger_sync: bool,
+    cloud_provider: &str,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -283,11 +305,12 @@ pub async fn run_pipeline(
                             Ok(Some((_backup, _queue_item))) => {
                                 if trigger_sync {
                                     let conn = db.lock().await;
-                                    if let Err(e) = savevault_sync::process_queue_google_drive(
+                                    if let Err(e) = savevault_sync::process_queue_active_provider(
                                         &conn,
                                         backup_root.clone(),
+                                        cloud_provider,
                                     ).await {
-                                        tracing::debug!("Sync em nuvem durante evento: {}", e);
+                                        tracing::debug!("Sync em nuvem ({}) durante evento: {}", cloud_provider, e);
                                     }
                                 }
                             }

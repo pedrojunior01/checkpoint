@@ -34,7 +34,7 @@ fn build_auth_http_client() -> reqwest::Client {
 }
 
 /// Nome do serviço registrado no Windows Credential Manager.
-const KEYRING_SERVICE: &str = "SaveVault";
+pub(crate) const KEYRING_SERVICE: &str = "SaveVault";
 /// Chave do refresh token do Google Drive.
 const KEYRING_GOOGLE_REFRESH: &str = "google_drive_refresh_token";
 /// Escopo de acesso: apenas arquivos criados pelo próprio SaveVault.
@@ -360,7 +360,7 @@ impl AuthService {
 // ---------------------------------------------------------------------------
 
 /// Abre uma URL no navegador padrão do Windows.
-fn open_url_windows(url: &str) {
+pub(crate) fn open_url_windows(url: &str) {
     let _ = std::process::Command::new("cmd")
         .args(["/C", "start", "", url])
         .spawn();
@@ -368,7 +368,7 @@ fn open_url_windows(url: &str) {
 
 /// Extrai o valor de um parâmetro de query string de um request HTTP cru.
 /// Ex: extrai "abc" de "GET /oauth/callback?code=abc&state=... HTTP/1.1"
-fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
+pub(crate) fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
     let first_line = raw_request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split('?').nth(1)?;
@@ -387,7 +387,7 @@ fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
 
 /// Encoding mínimo de URL (apenas os caracteres que a RFC exige para query params).
 /// Otimizado com buffer único pré-alocado para evitar alocações por caractere.
-fn urlencoding_simple(s: &str) -> String {
+pub(crate) fn urlencoding_simple(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         match c {
@@ -404,7 +404,7 @@ fn urlencoding_simple(s: &str) -> String {
 }
 
 /// Decodificação simples de percent-encoding (%XX → char).
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

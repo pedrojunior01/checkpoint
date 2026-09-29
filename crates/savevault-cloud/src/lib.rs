@@ -4,6 +4,8 @@
 
 pub mod auth;
 pub mod google_drive;
+pub mod onedrive;
+pub mod onedrive_auth;
 
 /// Interface comum para provedores de cloud.
 ///
@@ -30,3 +32,6 @@ pub trait CloudProvider: Send + Sync {
 // Re-exports de conveniência
 pub use auth::AuthService;
 pub use google_drive::GoogleDriveProvider;
+pub use onedrive::OneDriveProvider;
+pub use onedrive_auth::OneDriveAuthService;
+

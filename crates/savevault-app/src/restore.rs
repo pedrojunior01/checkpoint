@@ -251,7 +251,7 @@ pub fn validate_destination_security(
 pub fn validate_snapshot_security(
     backup_root: &Path,
     game_name: &str,
-    _version: u32,
+    version: u32,
     filename: &str,
 ) -> Result<PathBuf, RestoreError> {
     if filename.is_empty()
@@ -268,10 +268,30 @@ pub fn validate_snapshot_security(
 
     let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
 
-    let version_dir = backup_root
+    let explicit_version = backup_root
         .join(&safe_game_name)
-        .join("latest");
-    let source_path = version_dir.join(filename);
+        .join(format!("v{}", version))
+        .join(filename);
+
+    let latest_source = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    let daily_source = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(filename);
+
+    let source_path = if explicit_version.exists() {
+        explicit_version
+    } else if latest_source.exists() {
+        latest_source
+    } else if daily_source.exists() {
+        daily_source
+    } else {
+        latest_source
+    };
 
     if !source_path.starts_with(backup_root) {
         return Err(RestoreError::PathSecurityViolation(format!(
@@ -886,7 +906,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_restore_consecutive_restores_create_distinct_safety_backups() {
         let conn = setup_test_db();
         let dir = tempdir().unwrap();
@@ -919,7 +938,7 @@ mod tests {
             .unwrap();
 
         // Snapshots v1 e v2
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "dados_versao_1").unwrap();
         let b1 = Backup {
@@ -933,7 +952,7 @@ mod tests {
         };
         backups_repo.insert(&b1).unwrap();
 
-        let v2_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v2_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v2");
         std::fs::create_dir_all(&v2_dir).unwrap();
         std::fs::write(v2_dir.join("save.dat"), "dados_versao_2").unwrap();
         let b2 = Backup {

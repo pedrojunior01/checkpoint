@@ -51,13 +51,11 @@ impl SnapshotManager {
 
         let dest_daily = daily_dir.join(filename);
         let mut update_daily = true;
-        if dest_daily.exists() {
-            if let Ok(meta) = tokio::fs::metadata(&dest_daily).await {
-                if let Ok(mod_time) = meta.modified() {
-                    let mod_dt: chrono::DateTime<chrono::Local> = mod_time.into();
-                    if mod_dt.date_naive() == chrono::Local::now().date_naive() {
-                        update_daily = false;
-                    }
+        if let Ok(meta) = tokio::fs::metadata(&dest_daily).await {
+            if let Ok(mod_time) = meta.modified() {
+                let mod_dt: chrono::DateTime<chrono::Local> = mod_time.into();
+                if mod_dt.date_naive() == chrono::Local::now().date_naive() {
+                    update_daily = false;
                 }
             }
         }
@@ -103,25 +101,45 @@ impl SnapshotManager {
 
         let safe_game_name = sanitize_name(game_name);
 
-        // Validação antecipada da versão de origem (nunca alterar o disco se a versão não existir)
-        let version_dir = self.backup_root
+        // Validação antecipada da versão de origem:
+        // 1. Versão explícita por pasta: backup_root/<safe_game_name>/v<version>/<filename>
+        // 2. Versão legada por UUID: backup_root/<file_id>/v<version>/<filename>
+        // 3. Versão mais recente (latest): backup_root/<safe_game_name>/latest/<filename>
+        // 4. Versão diária de segurança (daily): backup_root/<safe_game_name>/daily/<filename>
+        let explicit_version = self.backup_root
             .join(&safe_game_name)
-            .join("latest");
+            .join(format!("v{}", version))
+            .join(filename);
 
-        let mut source = version_dir.join(filename);
-        if !source.exists() {
-            let daily_source = self.backup_root.join(&safe_game_name).join("daily").join(filename);
-            if daily_source.exists() {
-                source = daily_source;
-            }
-        }
+        let legacy_version = self.backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version))
+            .join(filename);
 
-        if !source.exists() {
+        let latest_source = self.backup_root
+            .join(&safe_game_name)
+            .join("latest")
+            .join(filename);
+
+        let daily_source = self.backup_root
+            .join(&safe_game_name)
+            .join("daily")
+            .join(filename);
+
+        let source = if explicit_version.exists() {
+            explicit_version
+        } else if legacy_version.exists() {
+            legacy_version
+        } else if latest_source.exists() {
+            latest_source
+        } else if daily_source.exists() {
+            daily_source
+        } else {
             anyhow::bail!(
                 "Versão {} do arquivo {} não encontrada em {}",
-                version, file_id, version_dir.display()
+                version, file_id, self.backup_root.join(&safe_game_name).display()
             );
-        }
+        };
 
         if source.is_dir() {
             anyhow::bail!(
@@ -179,11 +197,28 @@ impl SnapshotManager {
         Ok(safety_path)
     }
 
-    /// Remove o diretório físico do snapshot correspondente à versão.
-    /// Ex.: `backup_root/file_id/v{version}`
-    pub async fn remove_snapshot_version(&self, _file_id: Uuid, _game_name: &str, _version: u32) -> Result<()> {
-        // O novo design não usa pastas v{}, usa apenas `latest` e `daily` que se sobrescrevem.
-        // A nuvem gerencia as versões. Nada a deletar localmente.
+    /// Remove o diretório físico do snapshot versionado correspondente, se existir.
+    /// Ex.: `backup_root/<game_name>/v{version}` ou legado `backup_root/<file_id>/v{version}`
+    pub async fn remove_snapshot_version(&self, file_id: Uuid, game_name: &str, version: u32) -> Result<()> {
+        let safe_game_name = sanitize_name(game_name);
+        let version_dir = self.backup_root
+            .join(&safe_game_name)
+            .join(format!("v{}", version));
+
+        if version_dir.exists() {
+            tokio::fs::remove_dir_all(&version_dir).await?;
+            debug!("Diretório de snapshot físico versionado removido: {}", version_dir.display());
+        }
+
+        let legacy_dir = self.backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version));
+
+        if legacy_dir.exists() {
+            tokio::fs::remove_dir_all(&legacy_dir).await?;
+            debug!("Diretório de snapshot legado removido: {}", legacy_dir.display());
+        }
+
         Ok(())
     }
 }

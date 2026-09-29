@@ -17,9 +17,10 @@
 //! - Tentativas > MAX_ATTEMPTS: marcado como `failed` permanentemente
 
 use anyhow::{anyhow, Result};
+use std::path::PathBuf;
 use savevault_cloud::CloudProvider;
 use savevault_core::models::{SyncOperation, SyncStatus};
-use savevault_db::repositories::{BackupsRepo, FilesRepo, SyncQueueRepo};
+use savevault_db::repositories::{BackupsRepo, SyncQueueRepo};
 use rusqlite::Connection;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -198,22 +199,13 @@ impl<P: CloudProvider> SyncEngine<P> {
                             Ok(_) => {
                                 info!("Arquivo removido do Drive (File ID: {})", drive_file_id);
                                 // Verifica se o snapshot local ainda existe em disco
-                                let filename = {
-                                    let files_repo = FilesRepo::new(conn);
-                                    files_repo
-                                        .find_by_id(backup.file_id)?
-                                        .and_then(|f| {
-                                            f.path.file_name().map(|n| n.to_string_lossy().to_string())
-                                        })
-                                        .unwrap_or_else(|| "save.dat".to_string())
+                                let local_snapshot_exists = match self.resolve_local_snapshot_path(backup.file_id, backup.version, conn) {
+                                    Ok((path, _, _)) => path.exists(),
+                                    Err(_) => false,
                                 };
-                                let local_snapshot = self.backup_root
-                                    .join(backup.file_id.to_string())
-                                    .join("latest")
-                                    .join(&filename);
 
                                 let tx = conn.unchecked_transaction()?;
-                                if local_snapshot.exists() {
+                                if local_snapshot_exists {
                                     // Backup local ainda existe: limpa os metadados remotos e marca status local
                                     tx.execute(
                                         "UPDATE backups SET cloud_path = NULL, drive_file_id = NULL, sync_status = 'pending_offline' WHERE id = ?1",
@@ -242,7 +234,7 @@ impl<P: CloudProvider> SyncEngine<P> {
                                     item.id,
                                     &SyncStatus::Failed,
                                     item.attempts + 1,
-                                )?;
+                                    )?;
                             }
                         }
                     } else {
@@ -261,22 +253,20 @@ impl<P: CloudProvider> SyncEngine<P> {
         Ok(synced_count)
     }
 
-    /// Localiza o arquivo de snapshot local e executa o upload para o Drive.
-    ///
-    /// Retorna tupla `(cloud_path, drive_file_id)`:
-    /// - `cloud_path`: identidade lógica formatada como `<save_location_id>/<file_id>/<filename>`.
-    /// - `drive_file_id`: identidade remota opaca retornada pela API do Google Drive.
-    async fn perform_upload(
+    /// Localiza o arquivo físico do snapshot local no disco, suportando:
+    /// 1. Novo padrão: `<backup_root>/<game_name>/latest/<filename>`
+    /// 2. Versão pontual: `<backup_root>/<game_name>/v<version>/<filename>`
+    /// 3. Versão legada por ID: `<backup_root>/<file_id>/v<version>/<filename>`
+    /// 4. Legado por ID latest: `<backup_root>/<file_id>/latest/<filename>`
+    fn resolve_local_snapshot_path(
         &self,
         file_id: Uuid,
         version: u32,
         conn: &Connection,
-    ) -> Result<(String, String)> {
-        use savevault_db::repositories::FilesRepo;
+    ) -> Result<(PathBuf, String, Uuid)> {
+        use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo};
 
         let files_repo = FilesRepo::new(conn);
-
-        // Busca o FileEntry real para obter o nome e o save_location_id
         let (filename_owned, save_location_id) = match files_repo.find_by_id(file_id)? {
             Some(entry) => {
                 let name = entry
@@ -294,11 +284,9 @@ impl<P: CloudProvider> SyncEngine<P> {
             }
         };
 
-        let filename = filename_owned.as_str();
-
         let game_name = {
-            let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
-            let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+            let loc_repo = SaveLocationsRepo::new(conn);
+            let games_repo = GamesRepo::new(conn);
             if let Ok(Some(loc)) = loc_repo.find_by_id(save_location_id) {
                 if let Ok(Some(game)) = games_repo.find_by_id(loc.game_id) {
                     game.name
@@ -312,12 +300,58 @@ impl<P: CloudProvider> SyncEngine<P> {
 
         let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
 
-        // Caminho local do snapshot: <backup_root>/<game_name>/v<version>/<filename>
-        let local_path = self
+        let candidate_latest = self
             .backup_root
             .join(&safe_game_name)
             .join("latest")
-            .join(filename);
+            .join(&filename_owned);
+
+        let candidate_versioned = self
+            .backup_root
+            .join(&safe_game_name)
+            .join(format!("v{}", version))
+            .join(&filename_owned);
+
+        let legacy_versioned = self
+            .backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version))
+            .join(&filename_owned);
+
+        let legacy_latest = self
+            .backup_root
+            .join(file_id.to_string())
+            .join("latest")
+            .join(&filename_owned);
+
+        let local_path = if candidate_latest.exists() {
+            candidate_latest
+        } else if candidate_versioned.exists() {
+            candidate_versioned
+        } else if legacy_versioned.exists() {
+            legacy_versioned
+        } else if legacy_latest.exists() {
+            legacy_latest
+        } else {
+            candidate_latest
+        };
+
+        Ok((local_path, filename_owned, save_location_id))
+    }
+
+    /// Localiza o arquivo de snapshot local e executa o upload para o Drive.
+    ///
+    /// Retorna tupla `(cloud_path, drive_file_id)`:
+    /// - `cloud_path`: identidade lógica formatada como `<save_location_id>/<file_id>/<filename>`.
+    /// - `drive_file_id`: identidade remota opaca retornada pela API do Google Drive.
+    async fn perform_upload(
+        &self,
+        file_id: Uuid,
+        version: u32,
+        conn: &Connection,
+    ) -> Result<(String, String)> {
+        let (local_path, filename_owned, save_location_id) =
+            self.resolve_local_snapshot_path(file_id, version, conn)?;
 
         if !local_path.exists() {
             return Err(anyhow!(
@@ -325,6 +359,8 @@ impl<P: CloudProvider> SyncEngine<P> {
                 local_path.display()
             ));
         }
+
+        let filename = filename_owned.as_str();
 
         // Nome no Drive inclui versão para facilitar identificação visual
         let drive_filename = format!("v{}_{}", version, filename);
@@ -392,6 +428,61 @@ pub async fn process_queue_google_drive(
 
     let engine = SyncEngine::new(provider, backup_root);
     engine.process_queue(conn).await
+}
+
+/// Processa a fila de sync com o provedor Microsoft OneDrive.
+///
+/// Lê as credenciais das variáveis de ambiente:
+/// - `SAVEVAULT_ONEDRIVE_CLIENT_ID`
+/// - `SAVEVAULT_ONEDRIVE_CLIENT_SECRET` (opcional para clientes públicos nativos)
+///
+/// Se as variáveis não estiverem definidas ou o usuário não estiver autenticado,
+/// a função registra um aviso e retorna `Ok(0)` sem falhar — permitindo que o
+/// SaveVault funcione normalmente em modo offline.
+pub async fn process_queue_onedrive(
+    conn: &Connection,
+    backup_root: std::path::PathBuf,
+) -> Result<usize> {
+    let provider = match savevault_cloud::OneDriveProvider::from_env() {
+        Some(p) => p,
+        None => {
+            warn!(
+                "Credenciais do OneDrive não encontradas (env vars ausentes). \
+                Sincronização desativada."
+            );
+            return Ok(0);
+        }
+    };
+
+    if !provider.is_authenticated() {
+        warn!(
+            "Usuário não autenticado no OneDrive. \
+            Execute: cargo run --bin savevault -- auth login onedrive"
+        );
+        return Ok(0);
+    }
+
+    let engine = SyncEngine::new(provider, backup_root);
+    engine.process_queue(conn).await
+}
+
+/// Processa a fila de sync usando o provedor de nuvem configurado ("google_drive", "onedrive").
+pub async fn process_queue_active_provider(
+    conn: &Connection,
+    backup_root: std::path::PathBuf,
+    provider_name: &str,
+) -> Result<usize> {
+    match provider_name.to_lowercase().as_str() {
+        "onedrive" => process_queue_onedrive(conn, backup_root).await,
+        "google_drive" | "google" | "drive" => process_queue_google_drive(conn, backup_root).await,
+        other => {
+            warn!(
+                "Provedor de nuvem '{}' não reconhecido ou não suportado. Provedores válidos: 'google_drive', 'onedrive'.",
+                other
+            );
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]

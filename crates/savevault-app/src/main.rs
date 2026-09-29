@@ -81,7 +81,36 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
+        // ----------------------------------------------------------------
+        // savevault auth — login, logout, status OAuth 2.0 (Google Drive / OneDrive)
+        // ----------------------------------------------------------------
+        [cmd, sub, provider] if cmd == "auth" => {
+            handle_auth_command(sub, Some(provider), &config.cloud.provider).await?;
+            return Ok(());
+        }
 
+        [cmd, sub] if cmd == "auth" => {
+            handle_auth_command(sub, None, &config.cloud.provider).await?;
+            return Ok(());
+        }
+
+        [cmd] if cmd == "auth" => {
+            eprintln!("Uso: savevault auth <login | logout | status> [google | onedrive]");
+            return Ok(());
+        }
+
+        // ----------------------------------------------------------------
+        // savevault sync — processamento manual da fila
+        // ----------------------------------------------------------------
+        [cmd, provider] if cmd == "sync" => {
+            handle_sync_command(&config, Some(provider)).await?;
+            return Ok(());
+        }
+
+        [cmd] if cmd == "sync" => {
+            handle_sync_command(&config, None).await?;
+            return Ok(());
+        }
 
         // ----------------------------------------------------------------
         // savevault restore — restaura um snapshot para o save original
@@ -279,13 +308,14 @@ async fn run_resident_daemon(
             let _ = reconciler_handle.await;
             tracing::info!("Serviços de monitoramento e reconciliação encerrados com sucesso.");
         }
-        res = savevault_app::pipeline::run_pipeline(
+        res = savevault_app::pipeline::run_pipeline_with_provider(
             db_conn.clone(),
             stable_rx,
             config.paths.backup_dir.clone(),
             config.general.max_versions,
             pipeline_shutdown_rx,
             true,
+            &config.cloud.provider,
         ) => {
             if let Err(e) = res {
                 tracing::error!("Erro no pipeline de eventos: {}", e);
@@ -303,6 +333,166 @@ async fn run_resident_daemon(
 // ---------------------------------------------------------------------------
 // Handlers de subcomandos
 // ---------------------------------------------------------------------------
+
+async fn handle_auth_command(
+    sub: &str,
+    provider_arg: Option<&str>,
+    configured_provider: &str,
+) -> anyhow::Result<()> {
+    if sub == "status" && provider_arg.is_none() {
+        println!("==================================================");
+        println!("           SaveVault — Status da Nuvem            ");
+        println!("==================================================");
+        let google_auth = savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
+        let google_status = if google_auth {
+            "✅ Autenticado"
+        } else if savevault_cloud::GoogleDriveProvider::from_env().is_some() {
+            "❌ Não autenticado (execute: savevault auth login google)"
+        } else {
+            "⚠️  Variáveis de ambiente ausentes"
+        };
+        println!("  Google Drive:       {}", google_status);
+
+        let onedrive_auth = savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
+        let onedrive_status = if onedrive_auth {
+            "✅ Autenticado"
+        } else if savevault_cloud::OneDriveProvider::from_env().is_some() {
+            "❌ Não autenticado (execute: savevault auth login onedrive)"
+        } else {
+            "⚠️  Variáveis de ambiente ausentes"
+        };
+        println!("  Microsoft OneDrive: {}", onedrive_status);
+        println!("  Provedor Ativo:     {}", configured_provider);
+        println!("==================================================");
+        return Ok(());
+    }
+
+    let target = provider_arg.unwrap_or(configured_provider).to_lowercase();
+    match target.as_str() {
+        "onedrive" => handle_auth_onedrive(sub).await,
+        "google_drive" | "google" | "drive" => handle_auth_google(sub).await,
+        other => {
+            eprintln!(
+                "Provedor de nuvem '{}' não reconhecido. Use: 'google' ou 'onedrive'.",
+                other
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn handle_auth_onedrive(sub: &str) -> anyhow::Result<()> {
+    match sub {
+        "login" => {
+            let provider = match savevault_cloud::OneDriveProvider::from_env() {
+                Some(p) => p,
+                None => {
+                    eprintln!(
+                        "Erro: variáveis de ambiente para o OneDrive não definidas.\n\
+                        Configure:\n  \
+                        SAVEVAULT_ONEDRIVE_CLIENT_ID=<seu_client_id>\n  \
+                        SAVEVAULT_ONEDRIVE_CLIENT_SECRET=<seu_client_secret> (opcional para clientes públicos)\n\n\
+                        Obtenha as credenciais em: https://portal.azure.com/ -> Entra ID -> App Registrations"
+                    );
+                    return Err(anyhow::anyhow!("Credenciais do OneDrive não configuradas"));
+                }
+            };
+
+            if provider.is_authenticated() {
+                println!("Já autenticado no OneDrive. Use 'savevault auth logout onedrive' primeiro para reconectar.");
+                return Ok(());
+            }
+            provider.login().await?;
+            println!("✅ Login realizado com sucesso! Suas saves serão sincronizadas com o Microsoft OneDrive.");
+        }
+        "logout" => {
+            let auth = savevault_cloud::OneDriveAuthService::new("".into(), None);
+            auth.logout()?;
+            println!("✅ Credenciais removidas. Microsoft OneDrive desvinculado.");
+        }
+        "status" => {
+            let is_auth = savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
+            if is_auth {
+                println!("✅ Autenticado no Microsoft OneDrive.");
+            } else {
+                println!("❌ Não autenticado no Microsoft OneDrive. Execute: savevault auth login onedrive");
+            }
+        }
+        other => {
+            eprintln!(
+                "Subcomando desconhecido: 'auth {} onedrive'. Use: login | logout | status",
+                other
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn handle_auth_google(sub: &str) -> anyhow::Result<()> {
+    match sub {
+        "login" => {
+            let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
+                Some(p) => p,
+                None => {
+                    eprintln!(
+                        "Erro: variáveis de ambiente não definidas.\n\
+                        Configure:\n  \
+                        SAVEVAULT_GOOGLE_CLIENT_ID=<seu_client_id>\n  \
+                        SAVEVAULT_GOOGLE_CLIENT_SECRET=<seu_client_secret>\n\n\
+                        Obtenha as credenciais em: https://console.cloud.google.com/"
+                    );
+                    return Err(anyhow::anyhow!("Credenciais não configuradas"));
+                }
+            };
+
+            if provider.is_authenticated() {
+                println!("Já autenticado no Google Drive. Use 'savevault auth logout google' primeiro para reconectar.");
+                return Ok(());
+            }
+            provider.login().await?;
+            println!("✅ Login realizado com sucesso! Suas saves serão sincronizadas com o Google Drive.");
+        }
+        "logout" => {
+            let auth = savevault_cloud::AuthService::new("".into(), "".into());
+            auth.logout()?;
+            println!("✅ Credenciais removidas. Google Drive desvinculado.");
+        }
+        "status" => {
+            let is_auth = savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
+            if is_auth {
+                println!("✅ Autenticado no Google Drive.");
+            } else {
+                println!("❌ Não autenticado no Google Drive. Execute: savevault auth login google");
+            }
+        }
+        other => {
+            eprintln!(
+                "Subcomando desconhecido: 'auth {} google'. Use: login | logout | status",
+                other
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn handle_sync_command(config: &Config, provider_arg: Option<&str>) -> anyhow::Result<()> {
+    let db = Database::open(&config.paths.database_path)?;
+    let provider = provider_arg.unwrap_or(&config.cloud.provider);
+    println!("Sincronizando backups na nuvem (provedor: {})...", provider);
+    match savevault_sync::process_queue_active_provider(
+        &db.conn,
+        config.paths.backup_dir.clone(),
+        provider,
+    ).await {
+        Ok(count) => {
+            println!("✅ Sincronização concluída: {} backup(s) processado(s).", count);
+        }
+        Err(e) => {
+            eprintln!("❌ Falha na sincronização: {}", e);
+        }
+    }
+    Ok(())
+}
 
 
 
