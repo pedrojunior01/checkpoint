@@ -75,18 +75,36 @@ pub async fn run_dev_ui_server(
 
 /// Processa uma única conexão HTTP/1.1.
 async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> anyhow::Result<()> {
-    let mut buffer = vec![0u8; 16384];
-    let mut total_read = 0;
+    // Lê os dados da requisição até encontrar o fim dos headers (\r\n\r\n)
+    let mut buffer = Vec::with_capacity(4096);
+    let mut header_end = None;
 
-    // Lê os dados iniciais da requisição
-    let n = stream.read(&mut buffer).await?;
-    if n == 0 {
-        return Ok(());
+    loop {
+        let mut chunk = [0u8; 4096];
+        let n = stream.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..n]);
+
+        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            header_end = Some(pos);
+            break;
+        }
+
+        if buffer.len() > 65536 {
+            // Headers excessivamente grandes -> rejeita
+            return Ok(());
+        }
     }
-    total_read += n;
 
-    let req_str = String::from_utf8_lossy(&buffer[..total_read]);
-    let mut lines = req_str.lines();
+    let header_end_pos = match header_end {
+        Some(pos) => pos,
+        None => return Ok(()),
+    };
+
+    let header_str = String::from_utf8_lossy(&buffer[..header_end_pos]).into_owned();
+    let mut lines = header_str.lines();
     let request_line = match lines.next() {
         Some(l) => l,
         None => return Ok(()),
@@ -96,23 +114,86 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
     let method = parts.next().unwrap_or("GET");
     let uri = parts.next().unwrap_or("/");
 
+    // Extrai e valida headers (Host, Origin, Content-Length)
+    let mut content_length = 0usize;
+    let mut origin_valid = true;
+
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            let k = k.trim().to_ascii_lowercase();
+            let v = v.trim();
+            if k == "content-length" {
+                content_length = v.parse::<usize>().unwrap_or(0);
+            } else if k == "origin" {
+                // Origem permitida apenas de localhost/127.0.0.1
+                if !v.is_empty() {
+                    let v_lower = v.to_ascii_lowercase();
+                    if !v_lower.starts_with("http://127.0.0.1") && !v_lower.starts_with("http://localhost") {
+                        origin_valid = false;
+                    }
+                }
+            }
+        }
+    }
+
+    if !origin_valid {
+        warn!("Tentativa de requisição com Origin externa bloqueada por segurança");
+        send_response(
+            &mut stream,
+            403,
+            "Forbidden",
+            "application/json",
+            r#"{"error":"Forbidden Origin"}"#,
+        )
+        .await?;
+        return Ok(());
+    }
+
     // Suporte a OPTIONS (CORS preflight)
     if method == "OPTIONS" {
         send_response(&mut stream, 204, "No Content", "text/plain", "").await?;
         return Ok(());
     }
 
+    // Lê o restante do corpo até atingir content_length (limite máximo de 2MB para evitar DoS)
+    let body_start = header_end_pos + 4;
+    let max_body_size = 2 * 1024 * 1024;
+    if content_length > max_body_size {
+        send_response(
+            &mut stream,
+            413,
+            "Payload Too Large",
+            "application/json",
+            r#"{"error":"Payload too large"}"#,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    while buffer.len() < body_start + content_length {
+        let mut chunk = [0u8; 4096];
+        let n = stream.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..n]);
+    }
+
+    let body_bytes = if buffer.len() >= body_start {
+        let available = buffer.len() - body_start;
+        let to_take = available.min(content_length);
+        &buffer[body_start..body_start + to_take]
+    } else {
+        &[]
+    };
+
+    let body_owned = String::from_utf8_lossy(body_bytes);
+    let body = body_owned.as_ref();
+
     // Separa path de query string
     let (path, query) = match uri.split_once('?') {
         Some((p, q)) => (p, Some(q)),
         None => (uri, None),
-    };
-
-    // Extrai o corpo da requisição se houver
-    let body = if let Some(idx) = req_str.find("\r\n\r\n") {
-        &req_str[idx + 4..]
-    } else {
-        ""
     };
 
     // Roteamento dos endpoints da DEV-UI
@@ -391,7 +472,7 @@ async fn send_response(
         "HTTP/1.1 {} {}\r\n\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Origin: http://127.0.0.1:4040\r\n\
          Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
          Access-Control-Allow-Headers: Content-Type\r\n\
          Connection: close\r\n\

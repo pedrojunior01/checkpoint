@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Timeout padrão para handshake de conexão OAuth.
 pub const AUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -139,6 +139,7 @@ impl AuthService {
     /// - Salva o refresh token de forma segura.
     pub async fn login_interactive(&self) -> Result<()> {
         let redirect_uri = format!("http://127.0.0.1:{}/oauth/callback", REDIRECT_PORT);
+        let oauth_state = uuid::Uuid::new_v4().to_string();
         let auth_url = format!(
             "https://accounts.google.com/o/oauth2/v2/auth\
             ?client_id={}\
@@ -146,10 +147,12 @@ impl AuthService {
             &response_type=code\
             &scope={}\
             &access_type=offline\
-            &prompt=consent",
+            &prompt=consent\
+            &state={}",
             self.client_id,
             urlencoding_simple(&redirect_uri),
             urlencoding_simple(DRIVE_SCOPE),
+            oauth_state,
         );
 
         // Inicia o listener antes de abrir o navegador para não perder o callback
@@ -174,6 +177,23 @@ impl AuthService {
         let mut buffer = vec![0u8; 4096];
         let n = socket.read(&mut buffer).await?;
         let request = String::from_utf8_lossy(&buffer[..n]);
+
+        // Valida o parâmetro state para prevenir ataques CSRF
+        let received_state = extract_query_param(&request, "state");
+        if received_state.as_deref() != Some(&oauth_state) {
+            let error_html = concat!(
+                "HTTP/1.1 400 Bad Request\r\n",
+                "Content-Type: text/html; charset=utf-8\r\n",
+                "Connection: close\r\n\r\n",
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+                "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                "<h2>❌ Falha de segurança na autenticação</h2>",
+                "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
+                "</body></html>",
+            );
+            let _ = socket.write_all(error_html.as_bytes()).await;
+            return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
+        }
 
         // Extrai o parâmetro `code` ou `error` do request HTTP
         let code = extract_query_param(&request, "code")
@@ -235,11 +255,17 @@ impl AuthService {
                 info!("Refresh token salvo com segurança no Windows Credential Manager.");
             }
             None => {
-                warn!(
-                    "Google não retornou refresh_token. \
-                    Isso pode ocorrer se o usuário já havia autorizado antes. \
-                    Tente revogar o acesso em myaccount.google.com/permissions e refaça o login."
-                );
+                let has_existing = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
+                    .and_then(|e| e.get_password())
+                    .is_ok();
+                if !has_existing {
+                    return Err(anyhow!(
+                        "Google não retornou refresh_token e nenhum token prévio foi encontrado no cofre do sistema. \
+                        Por favor, acesse https://myaccount.google.com/permissions, revogue o acesso do SaveVault e tente novamente."
+                    ));
+                } else {
+                    info!("Google não retornou novo refresh_token; mantido o refresh token existente no cofre.");
+                }
             }
         }
 

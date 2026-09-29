@@ -1094,5 +1094,46 @@ mod tests {
         let all = loc_repo.list_all().unwrap();
         assert_eq!(all.len(), 2);
     }
+
+    #[test]
+    fn games_find_by_name_and_platform_case_insensitive() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+
+        let g = Game::new("Super Mario World", Platform::RetroArch, None, Confidence::High);
+        games_repo.insert(&g).unwrap();
+
+        // Exact match
+        let found = games_repo.find_by_name_and_platform("Super Mario World", &Platform::RetroArch).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, g.id);
+
+        // Case-insensitive match
+        let found_lower = games_repo.find_by_name_and_platform("super mario world", &Platform::RetroArch).unwrap();
+        assert!(found_lower.is_some());
+        assert_eq!(found_lower.unwrap().id, g.id);
+
+        // Different platform returns None
+        let found_diff_platform = games_repo.find_by_name_and_platform("Super Mario World", &Platform::Dolphin).unwrap();
+        assert!(found_diff_platform.is_none());
+    }
+
+    #[test]
+    fn games_unique_name_platform_constraint_prevents_duplicate() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+
+        let g1 = Game::new("Unique Game", Platform::Generic, None, Confidence::High);
+        let g2 = Game::new("unique game", Platform::Generic, None, Confidence::Medium);
+
+        games_repo.insert(&g1).unwrap();
+        // Devido ao INSERT OR IGNORE e ao índice único, a duplicata é ignorada e não duplica no banco
+        games_repo.insert(&g2).unwrap();
+
+        let all = games_repo.list_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, g1.id);
+    }
 }
+
 

@@ -16,6 +16,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 glob = "0.3.4"
+winreg = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

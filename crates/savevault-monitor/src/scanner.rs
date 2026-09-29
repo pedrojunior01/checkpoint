@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use uuid::Uuid;
 use savevault_core::models::{SaveLocation, SaveLocationType};
-use savevault_core::path::is_glob_pattern;
+use savevault_core::path::{is_glob_pattern, is_internal_savevault_file};
 use thiserror::Error;
 use walkdir::WalkDir;
 
@@ -76,8 +76,8 @@ impl SaveScanner {
             return Ok(vec![]);
         }
 
-        // Se existir mas for um diretório, não tratar como arquivo
-        if !location.path.is_file() {
+        // Se existir mas for um diretório, ou se for arquivo interno do SaveVault, não tratar como arquivo
+        if !location.path.is_file() || is_internal_savevault_file(&location.path) {
             return Ok(vec![]);
         }
 
@@ -121,8 +121,8 @@ impl SaveScanner {
                 }
             };
 
-            // Ignorar diretórios e symlinks
-            if entry.file_type().is_dir() || entry.path_is_symlink() {
+            // Ignorar diretórios, symlinks e arquivos internos do SaveVault (.savevault_safety_, .restore_tmp_, .tmp, etc.)
+            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
                 continue;
             }
 
@@ -173,7 +173,8 @@ impl SaveScanner {
                 }
             };
 
-            if entry.file_type().is_dir() || entry.path_is_symlink() {
+            // Ignorar diretórios, symlinks e arquivos internos do SaveVault
+            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
                 continue;
             }
 

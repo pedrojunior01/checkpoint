@@ -45,6 +45,14 @@ impl<'a> GamesRepo<'a> {
         Ok(rows.next().transpose()?)
     }
 
+    pub fn find_by_name_and_platform(&self, name: &str, platform: &Platform) -> Result<Option<Game>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, platform, platform_id, confidence, created_at FROM games WHERE name = ?1 COLLATE NOCASE AND platform = ?2"
+        )?;
+        let mut rows = stmt.query_map(params![name, platform_to_str(platform)], row_to_game)?;
+        Ok(rows.next().transpose()?)
+    }
+
     pub fn list_all(&self) -> Result<Vec<Game>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, platform, platform_id, confidence, created_at FROM games ORDER BY name"
