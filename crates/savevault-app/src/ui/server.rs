@@ -442,6 +442,46 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         }
 
         // -------------------------------------------------------------
+        // REST: Autostart (Windows Registry)
+        // -------------------------------------------------------------
+        ("GET", "/api/autostart") => {
+            let status = savevault_core::autostart::status().unwrap_or(savevault_core::autostart::AutostartStatus {
+                enabled: false,
+                command: None,
+                executable_path: None,
+            });
+            let json = serde_json::to_string(&status)?;
+            send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+        }
+
+        ("POST", "/api/autostart/toggle") => {
+            let is_on = savevault_core::autostart::is_enabled().unwrap_or(false);
+            let res = if is_on {
+                savevault_core::autostart::disable()
+            } else {
+                savevault_core::autostart::enable(None)
+            };
+
+            match res {
+                Ok(new_status) => {
+                    let json = serde_json::to_string(&new_status)?;
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
         // 404 Não Encontrado
         // -------------------------------------------------------------
         _ => {

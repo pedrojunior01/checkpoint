@@ -17,6 +17,7 @@
 //! - Tentativas > MAX_ATTEMPTS: marcado como `failed` permanentemente
 
 use anyhow::{anyhow, Result};
+use std::path::PathBuf;
 use savevault_cloud::CloudProvider;
 use savevault_core::models::{SyncOperation, SyncStatus};
 use savevault_db::repositories::{BackupsRepo, FilesRepo, SyncQueueRepo};
@@ -207,10 +208,12 @@ impl<P: CloudProvider> SyncEngine<P> {
                                         })
                                         .unwrap_or_else(|| "save.dat".to_string())
                                 };
-                                let local_snapshot = self.backup_root
-                                    .join(backup.file_id.to_string())
-                                    .join("latest")
-                                    .join(&filename);
+                                let local_snapshot = self.resolve_local_snapshot_path(
+                                    conn,
+                                    backup.file_id,
+                                    backup.version,
+                                    &filename,
+                                );
 
                                 let tx = conn.unchecked_transaction()?;
                                 if local_snapshot.exists() {
@@ -296,28 +299,12 @@ impl<P: CloudProvider> SyncEngine<P> {
 
         let filename = filename_owned.as_str();
 
-        let game_name = {
-            let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
-            let games_repo = savevault_db::repositories::GamesRepo::new(conn);
-            if let Ok(Some(loc)) = loc_repo.find_by_id(save_location_id) {
-                if let Ok(Some(game)) = games_repo.find_by_id(loc.game_id) {
-                    game.name
-                } else {
-                    "Desconhecido".to_string()
-                }
-            } else {
-                "Desconhecido".to_string()
-            }
-        };
-
-        let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
-
-        // Caminho local do snapshot: <backup_root>/<game_name>/v<version>/<filename>
-        let local_path = self
-            .backup_root
-            .join(&safe_game_name)
-            .join("latest")
-            .join(filename);
+        let local_path = self.resolve_local_snapshot_path(
+            conn,
+            file_id,
+            version,
+            filename,
+        );
 
         if !local_path.exists() {
             return Err(anyhow!(
@@ -335,6 +322,51 @@ impl<P: CloudProvider> SyncEngine<P> {
         let drive_file_id = self.provider.upload(&local_path, &cloud_path).await?;
 
         Ok((cloud_path, drive_file_id))
+    }
+
+    fn resolve_local_snapshot_path(
+        &self,
+        conn: &Connection,
+        file_id: Uuid,
+        version: u32,
+        filename: &str,
+    ) -> PathBuf {
+        let game_name = {
+            let files_repo = FilesRepo::new(conn);
+            let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+            let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+            if let Ok(Some(file)) = files_repo.find_by_id(file_id) {
+                if let Ok(Some(loc)) = loc_repo.find_by_id(file.save_location_id) {
+                    if let Ok(Some(game)) = games_repo.find_by_id(loc.game_id) {
+                        game.name
+                    } else {
+                        "Desconhecido".to_string()
+                    }
+                } else {
+                    "Desconhecido".to_string()
+                }
+            } else {
+                "Desconhecido".to_string()
+            }
+        };
+
+        let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
+
+        let candidates = [
+            self.backup_root.join(&safe_game_name).join("latest").join(filename),
+            self.backup_root.join(&safe_game_name).join(format!("v{}", version)).join(filename),
+            self.backup_root.join(file_id.to_string()).join(format!("v{}", version)).join(filename),
+            self.backup_root.join(file_id.to_string()).join("latest").join(filename),
+            self.backup_root.join(&safe_game_name).join("daily").join(filename),
+        ];
+
+        for c in &candidates {
+            if c.exists() {
+                return c.clone();
+            }
+        }
+
+        candidates[0].clone()
     }
 }
 

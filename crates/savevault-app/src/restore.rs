@@ -251,7 +251,7 @@ pub fn validate_destination_security(
 pub fn validate_snapshot_security(
     backup_root: &Path,
     game_name: &str,
-    _version: u32,
+    version: u32,
     filename: &str,
 ) -> Result<PathBuf, RestoreError> {
     if filename.is_empty()
@@ -268,10 +268,32 @@ pub fn validate_snapshot_security(
 
     let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
 
-    let version_dir = backup_root
+    let version_path = backup_root
         .join(&safe_game_name)
-        .join("latest");
-    let source_path = version_dir.join(filename);
+        .join(format!("v{}", version))
+        .join(filename);
+
+    let latest_path = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    let daily_path = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(filename);
+
+    let source_path = if version_path.exists() {
+        version_path
+    } else if version == 1 && daily_path.exists() {
+        daily_path
+    } else if latest_path.exists() {
+        latest_path
+    } else if daily_path.exists() {
+        daily_path
+    } else {
+        latest_path
+    };
 
     if !source_path.starts_with(backup_root) {
         return Err(RestoreError::PathSecurityViolation(format!(

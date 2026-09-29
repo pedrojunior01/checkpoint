@@ -144,7 +144,7 @@ async fn test_end_to_end_pipeline_from_event_to_cloud() {
     let expected_snapshot_path = backup_dir
         .path()
         .join("Pipeline Hero")
-        .join("v1")
+        .join("latest")
         .join("hero_save.dat");
     assert!(
         expected_snapshot_path.exists(),

@@ -34,6 +34,14 @@ fn main() -> anyhow::Result<()> {
             println!("SaveVault v0.6.0");
             return Ok(());
         }
+        [autostart_cmd, sub] if autostart_cmd == "autostart" => {
+            handle_autostart_cli(sub)?;
+            return Ok(());
+        }
+        [autostart_cmd] if autostart_cmd == "autostart" => {
+            handle_autostart_cli("status")?;
+            return Ok(());
+        }
         [restore_cmd, help_flag]
             if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h") =>
         {
@@ -555,17 +563,82 @@ fn print_global_help() {
     println!("SaveVault — Sistema de Proteção e Sincronização de Saves");
     println!();
     println!("USO:");
-    println!("  savevault                       Inicia o daemon de monitoramento contínuo");
-    println!("  savevault --once                Executa descoberta e persiste sem manter ativo");
-    println!("  savevault add <nome> <caminho>  Cadastra manualmente um jogo e pasta de save");
-    println!("  savevault list                  Lista todos os jogos e diretórios monitorados");
-    println!("  savevault restore <backup_id>   Restaura snapshot com safety backup");
-    println!("  savevault restore list          Lista snapshots históricos disponíveis");
-    println!("  savevault auth login|status     Gerencia login com Google Drive");
-    println!("  savevault sync                  Processa a fila de sincronização");
-    println!("  savevault --ui                  Inicia a interface de testes DEV-UI (porta 4040)");
-    println!("  savevault --help                Exibe esta ajuda");
-    println!("  savevault --version             Exibe a versão do SaveVault");
+    println!("  savevault                                   Inicia o daemon de monitoramento contínuo");
+    println!("  savevault --once                            Executa descoberta e persiste sem manter ativo");
+    println!("  savevault add <nome> <caminho>              Cadastra manualmente um jogo e pasta de save");
+    println!("  savevault list                              Lista todos os jogos e diretórios monitorados");
+    println!("  savevault restore <backup_id>               Restaura snapshot com safety backup");
+    println!("  savevault restore list                      Lista snapshots históricos disponíveis");
+    println!("  savevault autostart [enable|disable|status] Configura inicialização automática com o Windows");
+    println!("  savevault --ui                              Inicia a interface de testes DEV-UI (porta 4040)");
+    println!("  savevault --help                            Exibe esta ajuda");
+    println!("  savevault --version                         Exibe a versão do SaveVault");
+}
+
+fn handle_autostart_cli(sub: &str) -> anyhow::Result<()> {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    let config_dir = PathBuf::from(&appdata).join("SaveVault");
+    let config_path = config_dir.join("config.toml");
+    let mut config = Config::load(&config_path).unwrap_or_default();
+
+    match sub.to_ascii_lowercase().as_str() {
+        "enable" | "on" | "true" | "1" => {
+            let status = savevault_core::autostart::enable(None)?;
+            config.general.autostart = true;
+            let _ = config.save(&config_path);
+
+            println!("✅ Inicialização automática com o Windows HABILITADA com sucesso!");
+            if let Some(cmd) = status.command {
+                println!("   Comando:  {}", cmd);
+            }
+            if let Some(exe) = status.executable_path {
+                println!("   Binário:  {}", exe.display());
+            }
+            println!("   Registro: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SaveVault");
+            println!("   O SaveVault será iniciado automaticamente em segundo plano ao ligar o computador.");
+        }
+        "disable" | "off" | "false" | "0" => {
+            let _ = savevault_core::autostart::disable()?;
+            config.general.autostart = false;
+            let _ = config.save(&config_path);
+
+            println!("✅ Inicialização automática com o Windows DESABILITADA.");
+            println!("   O SaveVault não será mais iniciado automaticamente ao ligar o computador.");
+        }
+        "status" | "check" | "info" => {
+            let status = savevault_core::autostart::status()?;
+            println!("================================================================================");
+            println!("INICIALIZAÇÃO AUTOMÁTICA COM O WINDOWS (AUTOSTART)");
+            println!("--------------------------------------------------------------------------------");
+            if status.enabled {
+                println!("Status:     🟢 HABILITADA");
+                if let Some(cmd) = status.command {
+                    println!("Comando:    {}", cmd);
+                }
+                if let Some(path) = status.executable_path {
+                    println!("Executável: {}", path.display());
+                }
+                println!("Registro:   HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SaveVault");
+                println!();
+                println!("Para desabilitar, execute: savevault autostart disable");
+            } else {
+                println!("Status:     ⚪ DESABILITADA");
+                println!("Registro:   Nenhum registro ativo em HKCU\\...\\Run\\SaveVault");
+                println!();
+                println!("Para habilitar, execute: savevault autostart enable");
+            }
+            println!("================================================================================");
+        }
+        other => {
+            eprintln!("Subcomando desconhecido: 'autostart {}'.", other);
+            eprintln!("Uso:");
+            eprintln!("  savevault autostart enable   Habilita a inicialização com o Windows");
+            eprintln!("  savevault autostart disable  Desabilita a inicialização com o Windows");
+            eprintln!("  savevault autostart status   Verifica se está ativo");
+        }
+    }
+
+    Ok(())
 }
 
 fn print_restore_help() {

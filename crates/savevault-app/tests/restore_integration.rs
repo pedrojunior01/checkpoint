@@ -105,14 +105,14 @@ async fn test_end_to_end_pipeline_snapshot_and_restore() {
         "Safety backup deve preservar exatamente o estado antes da substituição"
     );
 
-    // 8. Confirma que os snapshots físicos v1 e v2 continuam intactos no vault
+    // 8. Confirma que os snapshots físicos v1 e v2 continuam intactos no vault (daily e latest)
     let v1_disk_path = backup_dir
-        .join("RPG Hero")
-        .join("v1")
+        .join(&game.name)
+        .join("daily")
         .join("save_slot_1.sav");
     let v2_disk_path = backup_dir
-        .join("RPG Hero")
-        .join("v2")
+        .join(&game.name)
+        .join("latest")
         .join("save_slot_1.sav");
 
     assert!(v1_disk_path.exists());
@@ -169,7 +169,7 @@ async fn test_end_to_end_consecutive_restores_and_safety_backups() {
         .unwrap();
 
     // Cria snapshots v1 e v2 fisicamente e no DB
-    let v1_dir = backup_root_dir(&backup_dir, file_id, 1);
+    let v1_dir = backup_root_dir(&backup_dir, &game.name, 1);
     std::fs::create_dir_all(&v1_dir).unwrap();
     std::fs::write(v1_dir.join("game.sav"), "v1_payload").unwrap();
     let b1 = savevault_core::models::Backup {
@@ -183,7 +183,7 @@ async fn test_end_to_end_consecutive_restores_and_safety_backups() {
     };
     backups_repo.insert(&b1).unwrap();
 
-    let v2_dir = backup_root_dir(&backup_dir, file_id, 2);
+    let v2_dir = backup_root_dir(&backup_dir, &game.name, 2);
     std::fs::create_dir_all(&v2_dir).unwrap();
     std::fs::write(v2_dir.join("game.sav"), "v2_payload").unwrap();
     let b2 = savevault_core::models::Backup {
@@ -254,7 +254,7 @@ async fn test_restore_tampered_snapshot_fails_integrity_and_leaves_save_intact()
         })
         .unwrap();
 
-    let v1_dir = backup_root_dir(&backup_dir, file_id, 1);
+    let v1_dir = backup_root_dir(&backup_dir, &game.name, 1);
     std::fs::create_dir_all(&v1_dir).unwrap();
     std::fs::write(v1_dir.join("precious_save.dat"), "conteudo_v1_snapshot").unwrap();
 
@@ -343,8 +343,8 @@ fn test_cli_restore_binary_execution() {
     assert!(stderr_invalid.contains("[FALHA] ID de snapshot inválido: 'not-a-uuid'"));
 }
 
-fn backup_root_dir(backup_root: &std::path::Path, file_id: Uuid, version: u32) -> PathBuf {
+fn backup_root_dir(backup_root: &std::path::Path, game_name: &str, version: u32) -> PathBuf {
     backup_root
-        .join("RPG Hero")
+        .join(game_name)
         .join(format!("v{}", version))
 }

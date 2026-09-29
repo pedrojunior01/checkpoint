@@ -138,6 +138,7 @@ O executável otimizado estará disponível em: `target/release/savevault.exe`.
 | `savevault list` | Lista todos os jogos e diretórios atualmente monitorados e registrados no banco SQLite. |
 | `savevault restore list` | Exibe a lista de todos os snapshots históricos disponíveis para restauração. |
 | `savevault restore <BACKUP_ID>` | Restaura um snapshot específico no disco com criação prévia de *safety backup*. |
+| `savevault autostart [enable\|disable\|status]` | Gerencia a inicialização automática do SaveVault junto ao Windows (HKCU\Run). |
 | `savevault --ui` | Inicia a **DEV-UI**: servidor HTTP local em `http://127.0.0.1:4040` para inspecionar jogos, status e fila no navegador. |
 | `savevault --help` | Exibe as opções de ajuda da CLI. |
 | `savevault --version` | Exibe a versão instalada do SaveVault. |
@@ -193,13 +194,13 @@ A confiabilidade dos seus saves é o princípio inegociável do SaveVault. Toda 
 cargo test --workspace
 ```
 
-São **213 testes automatizados (100% de aprovação)**:
+São **218 testes automatizados (100% de aprovação)**:
 - **`savevault-discovery` (46 testes)**: Parsing de manifestos Steam ACF, leitura do Registro do Windows para GOG (String e DWORD), isolamento de detector e heurística genérica.
 - **`savevault-db` (37 testes)**: Idempotência de migrações (001 a 005), integridade referencial `ON DELETE CASCADE`, deduplicação de jogos e CRUD de repositórios.
 - **`savevault-app` (36 testes)**: Testes E2E do pipeline de monitoramento, DEV-UI, reconciliação periódica e restauração atômica com rollback.
 - **`savevault-monitor` (30 testes)**: Coalescência de debouncing, limites de memória, recuperação de sharing violation (locks do Windows 32/33) e deleção de arquivos.
 - **`savevault-cloud` (23 testes)**: Mocks do Google Drive, upload multipart, token refresh, validação de `state` anti-CSRF e cofre de chaves.
-- **`savevault-core` (18 testes)**: Normalização de paths Win32 (remoção de prefixos estendidos `\\?\`), arquivos internos e modelos.
+- **`savevault-core` (23 testes)**: Normalização de paths Win32, inicialização automática com o Windows (HKCU/Run), arquivos internos e modelos.
 - **`savevault-sync` (12 testes)**: Consumo da fila, retentativas com backoff exponencial e transações atômicas de sync.
 - **`savevault-backup` (11 testes)**: Hashing BLAKE3 em streaming, integridade de snapshots versionados, pruning físico de disco e safety backups.
 

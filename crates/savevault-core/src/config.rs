@@ -20,6 +20,9 @@ pub struct GeneralConfig {
     /// Intervalo (segundos) entre ciclos de reconciliação periódica.
     #[serde(default = "default_reconciliation_interval_secs")]
     pub reconciliation_interval_secs: u64,
+    /// Se a inicialização automática com o Windows está habilitada.
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 fn default_reconciliation_interval_secs() -> u64 {
@@ -49,6 +52,7 @@ impl Default for Config {
                 log_level: "info".into(),
                 debounce_ms: 2000,
                 reconciliation_interval_secs: 30,
+                autostart: false,
             },
             cloud: CloudConfig {
                 provider: "google_drive".into(),

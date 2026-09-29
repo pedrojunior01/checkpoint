@@ -104,22 +104,37 @@ impl SnapshotManager {
         let safe_game_name = sanitize_name(game_name);
 
         // Validação antecipada da versão de origem (nunca alterar o disco se a versão não existir)
-        let version_dir = self.backup_root
+        let version_path = self.backup_root
             .join(&safe_game_name)
-            .join("latest");
+            .join(format!("v{}", version))
+            .join(filename);
 
-        let mut source = version_dir.join(filename);
-        if !source.exists() {
-            let daily_source = self.backup_root.join(&safe_game_name).join("daily").join(filename);
-            if daily_source.exists() {
-                source = daily_source;
-            }
-        }
+        let latest_path = self.backup_root
+            .join(&safe_game_name)
+            .join("latest")
+            .join(filename);
+
+        let daily_path = self.backup_root
+            .join(&safe_game_name)
+            .join("daily")
+            .join(filename);
+
+        let source = if version_path.exists() {
+            version_path
+        } else if version == 1 && daily_path.exists() {
+            daily_path
+        } else if latest_path.exists() {
+            latest_path
+        } else if daily_path.exists() {
+            daily_path
+        } else {
+            latest_path
+        };
 
         if !source.exists() {
             anyhow::bail!(
                 "Versão {} do arquivo {} não encontrada em {}",
-                version, file_id, version_dir.display()
+                version, file_id, source.display()
             );
         }
 
