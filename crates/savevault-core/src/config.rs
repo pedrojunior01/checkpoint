@@ -38,6 +38,9 @@ pub struct PathsConfig {
     pub backup_dir: PathBuf,
     /// Caminho do banco SQLite.
     pub database_path: PathBuf,
+    /// Diretório raiz sincronizado pelo Google Drive para computador (opcional).
+    #[serde(default)]
+    pub drive_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -56,6 +59,7 @@ impl Default for Config {
             paths: PathsConfig {
                 backup_dir: base.join("backups"),
                 database_path: base.join("savevault.db"),
+                drive_dir: None,
             },
         }
     }
@@ -69,10 +73,13 @@ fn dirs_default() -> PathBuf {
 }
 
 impl Config {
-    /// Carrega a configuração de um arquivo TOML. Se não existir, retorna o default.
+    /// Carrega a configuração de um arquivo TOML. Se não existir ou estiver vazio (0 bytes), retorna o default.
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
+            if content.trim().is_empty() {
+                return Ok(Config::default());
+            }
             let config: Config = toml::from_str(&content)?;
             Ok(config)
         } else {
@@ -80,13 +87,33 @@ impl Config {
         }
     }
 
-    /// Salva a configuração em um arquivo TOML.
+    /// Salva a configuração atomicamente em um arquivo TOML usando arquivo temporário + sync_all + rename.
     pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::create_dir_all(parent)?;
+
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config.toml");
+        let tmp_file_name = format!(".{}.tmp.{}", file_name, uuid::Uuid::new_v4());
+        let tmp_path = parent.join(tmp_file_name);
+
+        // Escreve no arquivo temporário e força sincronização em disco
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&tmp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        // Renomeação atômica (no Windows usa MoveFileExW com REPLACE_EXISTING)
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e.into());
+        }
+
         Ok(())
     }
 }

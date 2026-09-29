@@ -3,10 +3,10 @@
 //! Mapeia a estrutura de schema oficial do Ludusavi Manifest (schema.yaml)
 //! permitindo deserialização resiliente de jogos, caminhos, tags e IDs de loja.
 
+use crate::save_detector::SaveDiscoveryError;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
-use crate::save_detector::SaveDiscoveryError;
 
 /// Representação em memória do Ludusavi Manifest.
 ///

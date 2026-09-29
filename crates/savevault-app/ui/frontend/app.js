@@ -59,7 +59,16 @@
     document.getElementById('btn-refresh-snapshots')?.addEventListener('click', loadSnapshots);
     document.getElementById('btn-refresh-safety')?.addEventListener('click', loadSafetyBackups);
     document.getElementById('btn-refresh-sync')?.addEventListener('click', loadSyncQueue);
+    document.getElementById('btn-refresh-drive')?.addEventListener('click', loadDriveConfig);
     document.getElementById('btn-refresh-events')?.addEventListener('click', loadEvents);
+
+    // Drive actions
+    document.getElementById('btn-browse-drive-folder')?.addEventListener('click', selectDriveFolderNative);
+    document.getElementById('btn-save-drive-folder')?.addEventListener('click', saveDriveFolder);
+    document.getElementById('btn-validate-drive-folder')?.addEventListener('click', validateDriveFolder);
+    document.getElementById('btn-create-drive-structure')?.addEventListener('click', createDriveStructure);
+    document.getElementById('btn-open-drive-explorer')?.addEventListener('click', openDriveFolderInExplorer);
+    document.getElementById('btn-sync-all-drive')?.addEventListener('click', syncAllToDrive);
 
     // Games search filter
     document.getElementById('games-search')?.addEventListener('input', (e) => {
@@ -143,6 +152,9 @@
         break;
       case 'tab-sync':
         loadSyncQueue();
+        break;
+      case 'tab-drive':
+        loadDriveConfig();
         break;
       case 'tab-events':
         loadEvents();
@@ -264,12 +276,12 @@
             <strong style="color: #ffffff">${game.save_locations_count}</strong>
           </div>
           <div class="game-card-stats-row">
-            <span>Arquivos Monitorados:</span>
-            <strong style="color: #ffffff">${game.files_count}</strong>
+            <span>Snapshots Locais:</span>
+            <strong style="color: #ffffff">${game.snapshots_count}</strong>
           </div>
           <div class="game-card-stats-row">
-            <span>Snapshots no Cofre:</span>
-            <strong style="color: #ffffff">${game.snapshots_count}</strong>
+            <span>Snapshots no Drive:</span>
+            <strong style="color: #38bdf8">${game.drive_snapshots_count || 0}</strong>
           </div>
         </div>
 
@@ -332,14 +344,19 @@
           <div>
             <div class="game-hero-title">🎮 ${escapeHtml(g.name)}</div>
             <div class="game-hero-meta">
-              <span>${escapeHtml(platformStr)}</span>
+              <span>Plataforma: <strong>${escapeHtml(platformStr)}</strong></span>
               <span>·</span>
               <span class="badge ${g.monitoring_status === 'Monitorando' ? 'badge-success' : 'badge-warning'}">
                 ● ${escapeHtml(g.monitoring_status)}
               </span>
               <span>·</span>
-              <span class="badge badge-subtle">Sincronização: ${escapeHtml(g.sync_status)}</span>
+              <span class="badge badge-subtle">Drive: ${escapeHtml(g.sync_status)}</span>
             </div>
+          </div>
+          <div class="game-hero-actions">
+            <button class="btn btn-primary btn-sm" onclick="window.syncGameToDrive('${g.id}')" title="Copiar snapshots pendentes deste jogo para a pasta do Drive">
+              ☁️ Copiar para a pasta do Drive
+            </button>
           </div>
         </div>
 
@@ -349,16 +366,20 @@
             <div class="hero-stat-value">${g.save_locations_count}</div>
           </div>
           <div class="hero-stat-box">
-            <div class="hero-stat-label">Arquivos</div>
-            <div class="hero-stat-value">${g.files_count}</div>
-          </div>
-          <div class="hero-stat-box">
-            <div class="hero-stat-label">Snapshots</div>
+            <div class="hero-stat-label">Snapshots Locais</div>
             <div class="hero-stat-value">${g.snapshots_count}</div>
           </div>
           <div class="hero-stat-box">
-            <div class="hero-stat-label">Última Atividade</div>
-            <div class="hero-stat-value" style="font-size: 15px;">${escapeHtml(lastAct)}</div>
+            <div class="hero-stat-label">Snapshots no Drive</div>
+            <div class="hero-stat-value" style="color: #38bdf8;">${g.drive_snapshots_count || 0}</div>
+          </div>
+          <div class="hero-stat-box">
+            <div class="hero-stat-label">Último Backup Local</div>
+            <div class="hero-stat-value" style="font-size: 13px;">${escapeHtml(g.last_backup_local || lastAct)}</div>
+          </div>
+          <div class="hero-stat-box">
+            <div class="hero-stat-label">Copiado para Drive</div>
+            <div class="hero-stat-value" style="font-size: 13px; color: ${g.last_copied_to_drive ? 'var(--success)' : 'var(--text-dim)'};">${escapeHtml(g.last_copied_to_drive ? g.last_copied_to_drive : 'Pendente / Não copiado')}</div>
           </div>
         </div>
       `;
@@ -920,6 +941,226 @@
       console.error('Erro ao carregar eventos:', e);
     }
   }
+
+  // 12. Tab: Google Drive para computador
+  async function loadDriveConfig() {
+    try {
+      const cfg = await invoke('get_drive_config');
+      if (!cfg) return;
+
+      const input = document.getElementById('drive-folder-input');
+      const badge = document.getElementById('drive-status-badge');
+      const dot = document.getElementById('drive-status-dot');
+      const text = document.getElementById('drive-status-text');
+      const resolved = document.getElementById('drive-resolved-path');
+      const sidebarDot = document.getElementById('badge-drive-status');
+
+      if (input && cfg.path) {
+        input.value = cfg.path;
+      }
+      if (resolved) {
+        resolved.textContent = cfg.resolved_base_dir || cfg.path || '—';
+      }
+
+      if (cfg.is_available) {
+        if (badge) {
+          badge.className = 'badge badge-success';
+          badge.textContent = '● Pasta disponível';
+        }
+        if (dot) dot.className = 'status-dot dot-active';
+        if (text) {
+          text.textContent = '● Pasta disponível e acessível para armazenamento de snapshots';
+          text.style.color = 'var(--success)';
+        }
+        if (sidebarDot) sidebarDot.style.display = 'inline-block';
+      } else {
+        if (badge) {
+          badge.className = 'badge badge-warning';
+          badge.textContent = cfg.path ? '● Indisponível' : 'Não configurado';
+        }
+        if (dot) dot.className = 'status-dot dot-warning';
+        if (text) {
+          text.textContent = cfg.status_message || (cfg.path ? 'Pasta não acessível no momento' : 'Nenhuma pasta do Google Drive selecionada');
+          text.style.color = 'var(--warning)';
+        }
+        if (sidebarDot) sidebarDot.style.display = 'none';
+      }
+
+      renderDriveTree(cfg.structure || []);
+    } catch (e) {
+      console.error('Erro ao carregar configuração do Drive:', e);
+      showToast(`Erro ao carregar config do Drive: ${e}`, 'error');
+    }
+  }
+
+  function renderDriveTree(platforms) {
+    const container = document.getElementById('drive-tree-container');
+    const empty = document.getElementById('drive-tree-empty');
+    const summary = document.getElementById('drive-tree-summary');
+    if (!container) return;
+
+    container.innerHTML = '';
+    let totalGames = 0;
+    let totalSnapshots = 0;
+
+    if (!platforms || platforms.length === 0) {
+      if (empty) empty.style.display = 'block';
+      if (summary) summary.textContent = '0 plataformas';
+      return;
+    }
+
+    let hasAnyGames = false;
+    platforms.forEach((p) => {
+      totalGames += p.games.length;
+      if (p.games.length > 0) hasAnyGames = true;
+
+      const pBox = document.createElement('div');
+      pBox.className = 'drive-tree-platform-box';
+
+      let gamesHtml = '';
+      if (p.games.length === 0) {
+        gamesHtml = '<div class="drive-tree-empty-platform">Nenhum jogo registrado nesta plataforma</div>';
+      } else {
+        gamesHtml = p.games.map((g) => {
+          totalSnapshots += g.snapshots_count;
+          const gameTitle = g.name || g.folder_name;
+          return `
+            <div class="drive-tree-game-row">
+              <div class="drive-tree-branch">├──</div>
+              <div class="drive-tree-game-info">
+                <span class="drive-tree-game-name">🎮 ${escapeHtml(gameTitle)}</span>
+                <span class="drive-tree-folder-badge code-text">${escapeHtml(g.folder_name)}</span>
+              </div>
+              <div class="drive-tree-game-stats">
+                <span class="badge badge-subtle">${g.snapshots_count} snapshot(s)</span>
+                ${g.last_snapshot_date ? `<span class="badge badge-success" title="Último snapshot: ${escapeHtml(g.last_snapshot_date)}">meta ✓</span>` : '<span class="badge badge-subtle">—</span>'}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      pBox.innerHTML = `
+        <div class="drive-tree-platform-header">
+          <span class="drive-tree-platform-icon">📁</span>
+          <span class="drive-tree-platform-title">${escapeHtml(p.platform)}/</span>
+          <span class="badge badge-subtle" style="margin-left: auto;">${p.games.length} jogo(s)</span>
+        </div>
+        <div class="drive-tree-platform-content">
+          ${gamesHtml}
+        </div>
+      `;
+
+      container.appendChild(pBox);
+    });
+
+    if (summary) {
+      summary.textContent = `${platforms.length} plataformas · ${totalGames} jogos · ${totalSnapshots} snapshots`;
+    }
+    if (empty) {
+      empty.style.display = hasAnyGames ? 'none' : 'block';
+    }
+  }
+
+  async function selectDriveFolderNative() {
+    try {
+      const selected = await invoke('select_drive_folder_native');
+      if (selected) {
+        const input = document.getElementById('drive-folder-input');
+        if (input) input.value = selected;
+        await saveDriveFolder();
+      }
+    } catch (e) {
+      showToast(`Erro ao selecionar pasta: ${e}`, 'error');
+    }
+  }
+
+  async function saveDriveFolder() {
+    const input = document.getElementById('drive-folder-input');
+    const folderPath = input ? input.value.trim() : '';
+    if (!folderPath) {
+      showToast('Por favor, informe o caminho da pasta do Google Drive.', 'warning');
+      return;
+    }
+
+    try {
+      const res = await invoke('set_drive_folder', { folderPath: folderPath });
+      if (res && res.is_available) {
+        showToast('Pasta do Google Drive configurada e disponível!', 'success');
+      } else if (res && res.configured) {
+        showToast(`Pasta configurada: ${res.status_message}`, 'warning');
+      } else {
+        showToast('Pasta do Google Drive salva.', 'info');
+      }
+      await loadDriveConfig();
+    } catch (e) {
+      showToast(`Falha ao salvar pasta do Drive: ${e}`, 'error');
+    }
+  }
+
+  async function validateDriveFolder() {
+    const input = document.getElementById('drive-folder-input');
+    const folderPath = input ? input.value.trim() : '';
+    try {
+      const res = await invoke('validate_drive_folder', { folderPath: folderPath || null });
+      if (res && res.is_valid) {
+        showToast(`Validação OK: ${res.message}`, 'success');
+      } else {
+        showToast(`Pasta inválida: ${res.message}`, 'error');
+      }
+      await loadDriveConfig();
+    } catch (e) {
+      showToast(`Erro na validação: ${e}`, 'error');
+    }
+  }
+
+  async function createDriveStructure() {
+    try {
+      const res = await invoke('create_drive_structure');
+      showToast(`Estrutura criada: ${res.message}`, 'success');
+      await loadDriveConfig();
+    } catch (e) {
+      showToast(`Erro ao criar estrutura: ${e}`, 'error');
+    }
+  }
+
+  async function openDriveFolderInExplorer() {
+    try {
+      const ok = await invoke('open_drive_folder');
+      if (ok) {
+        showToast('Windows Explorer aberto na pasta do Drive.', 'info');
+      } else {
+        showToast('Não foi possível abrir o Explorer.', 'error');
+      }
+    } catch (e) {
+      showToast(`Erro ao abrir Explorer: ${e}`, 'error');
+    }
+  }
+
+  async function syncAllToDrive() {
+    try {
+      showToast('Copiando snapshots locais para a pasta do Google Drive...', 'info');
+      const count = await invoke('sync_all_to_drive');
+      showToast(`${count} snapshot(s) copiado(s) para a pasta do Drive com sucesso!`, 'success');
+      await loadDriveConfig();
+      if (selectedGameId) {
+        await loadGameDetails(selectedGameId);
+      }
+    } catch (e) {
+      showToast(`Erro ao copiar snapshots: ${e}`, 'error');
+    }
+  }
+
+  window.syncGameToDrive = async function (gameId) {
+    try {
+      showToast('Copiando snapshots do jogo para a pasta do Google Drive...', 'info');
+      const count = await invoke('sync_game_to_drive', { gameId: gameId.toString() });
+      showToast(`${count} snapshot(s) deste jogo copiado(s) para a pasta do Drive!`, 'success');
+      await loadGameDetails(gameId);
+    } catch (e) {
+      showToast(`Erro ao copiar para o Drive: ${e}`, 'error');
+    }
+  };
 
   // Window Visibility & Resource Saving Handling
   function initVisibilityHandling() {

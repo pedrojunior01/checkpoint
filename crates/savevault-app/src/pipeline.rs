@@ -122,6 +122,17 @@ pub async fn handle_stable_event(
         }
     }
 
+    // Se o caminho estiver atualmente sob processo de restauração ativa,
+    // suprime o evento para prevenir concorrência com o restore e evitar
+    // criação desnecessária de um novo snapshot do arquivo que acabou de ser restaurado (SV-ADV-010).
+    if crate::restore::is_path_under_active_restore(&event.path) {
+        tracing::debug!(
+            "Arquivo {} está sob restauração ativa. Suprimindo evento do watcher.",
+            event.path.display()
+        );
+        return Ok(None);
+    }
+
     if !event.path.exists() {
         tracing::warn!(
             "Evento estável recebido mas arquivo não existe no disco: {}",
@@ -171,6 +182,17 @@ pub async fn process_file(
             );
             return Ok(None);
         }
+    }
+
+    // Se o caminho estiver atualmente sob processo de restauração ativa,
+    // suprime o evento para prevenir concorrência com o restore e evitar
+    // criação desnecessária de um novo snapshot do arquivo que acabou de ser restaurado (SV-ADV-010).
+    if crate::restore::is_path_under_active_restore(&event.path) {
+        tracing::debug!(
+            "Arquivo {} está sob restauração ativa. Suprimindo evento do watcher.",
+            event.path.display()
+        );
+        return Ok(None);
     }
 
     if !event.path.exists() {
@@ -238,9 +260,8 @@ pub async fn run_pipeline(
                         match res {
                             Ok(Some((_backup, _queue_item))) => {
                                 if trigger_sync {
-                                    let conn = db.lock().await;
                                     if let Err(e) = savevault_sync::process_queue_google_drive(
-                                        &conn,
+                                        &db,
                                         backup_root.clone(),
                                     ).await {
                                         tracing::debug!("Sync em nuvem durante evento: {}", e);
@@ -272,4 +293,221 @@ pub async fn run_pipeline(
     }
 
     Ok(())
+}
+
+/// Sincroniza um snapshot específico para a pasta local sincronizada do Google Drive para computador.
+///
+/// Garante:
+/// 1. Verificação prévia da acessibilidade da pasta raiz;
+/// 2. Estrutura por plataforma e jogo (<DriveRoot>/SaveVault/<Platform>/<Game>/);
+/// 3. Escrita atômica via arquivo temporário no mesmo volume do destino;
+/// 4. Verificação de integridade via BLAKE3 e conferência de tamanho;
+/// 5. Atualização do status para `SyncStatus::CopiedToDriveFolder`;
+/// 6. Caso a pasta do Drive esteja indisponível, mantém o snapshot local 100% intacto e marca status pendente offline.
+pub fn sync_backup_to_drive_folder(
+    conn: &Connection,
+    backup_id: Uuid,
+    backup_root: &Path,
+    drive_dir: &Path,
+) -> Result<bool> {
+    use savevault_backup::storage::{BackupSnapshotParams, BackupStorage, FilesystemBackupStorage};
+    use savevault_db::repositories::{
+        BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
+    };
+
+    let backups_repo = BackupsRepo::new(conn);
+    let backup = match backups_repo.find_by_id(backup_id)? {
+        Some(b) => b,
+        None => return Ok(false),
+    };
+
+    let files_repo = FilesRepo::new(conn);
+    let file_entry = match files_repo.find_by_id(backup.file_id)? {
+        Some(f) => f,
+        None => return Ok(false),
+    };
+
+    let locs_repo = SaveLocationsRepo::new(conn);
+    let loc = match locs_repo.find_by_id(file_entry.save_location_id)? {
+        Some(l) => l,
+        None => return Ok(false),
+    };
+
+    let games_repo = GamesRepo::new(conn);
+    let game = match games_repo.find_by_id(loc.game_id)? {
+        Some(g) => g,
+        None => return Ok(false),
+    };
+
+    let file_name = file_entry
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("save.dat");
+
+    let local_snapshot_path = backup_root
+        .join(backup.file_id.to_string())
+        .join(format!("v{}", backup.version))
+        .join(file_name);
+
+    let local_meta = match std::fs::metadata(&local_snapshot_path) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(
+                "Snapshot local não encontrado ou inacessível em {}: {}",
+                local_snapshot_path.display(),
+                e
+            );
+            return Ok(false);
+        }
+    };
+    let local_size = local_meta.len();
+
+    let storage = FilesystemBackupStorage::new(drive_dir.to_path_buf());
+    let folder_status = storage.validate_folder();
+    if !folder_status.is_available() {
+        tracing::info!(
+            "Pasta do Drive indisponível no momento: {:?}. Mantendo snapshot local.",
+            folder_status
+        );
+        let _ = backups_repo.update_sync_status(backup.id, &SyncStatus::PendingOffline);
+        return Ok(false);
+    }
+
+    // Se este backup for a versão mais recente cadastrada para o arquivo,
+    // o hash em `file_entry.hash` corresponde ao seu conteúdo.
+    // Caso contrário (versão anterior), não podemos usar `file_entry.hash` (que reflete o estado mais recente).
+    let is_latest = backups_repo
+        .list_by_file(backup.file_id)
+        .ok()
+        .and_then(|list| list.first().map(|latest| latest.version == backup.version))
+        .unwrap_or(true);
+
+    let expected_hash = if is_latest {
+        Some(file_entry.hash)
+    } else {
+        None
+    };
+
+    let params = BackupSnapshotParams {
+        local_snapshot_path,
+        platform: game.platform,
+        game_name: game.name,
+        game_id: Some(game.id),
+        file_id: Some(file_entry.id),
+        backup_id: Some(backup.id),
+        version: backup.version,
+        file_name: file_name.to_string(),
+        expected_hash,
+        expected_size: Some(local_size),
+    };
+
+    match storage.backup_snapshot(params) {
+        Ok(_) => {
+            backups_repo.update_sync_status(backup.id, &SyncStatus::CopiedToDriveFolder)?;
+            let queue_repo = SyncQueueRepo::new(conn);
+            if let Ok(pending) = queue_repo.list_pending() {
+                for item in pending {
+                    if item.backup_id == backup.id {
+                        let _ = queue_repo.delete(item.id);
+                    }
+                }
+            }
+            tracing::info!(
+                "Backup #{} de '{}' copiado com sucesso para a pasta do Drive",
+                backup.version,
+                file_name
+            );
+            Ok(true)
+        }
+        Err(e) => {
+            tracing::error!("Falha ao copiar snapshot para pasta do Drive: {}", e);
+            let _ = backups_repo.update_sync_status(backup.id, &SyncStatus::PendingOffline);
+            Ok(false)
+        }
+    }
+}
+
+/// Sincroniza todos os backups pendentes para a pasta do Drive configurada.
+/// Utiliza reconciliação leve (existência e tamanho antes de cópia).
+pub fn sync_all_pending_to_drive_folder(
+    conn: &Connection,
+    backup_root: &Path,
+    drive_dir: &Path,
+) -> Result<usize> {
+    use savevault_backup::storage::FilesystemBackupStorage;
+    use savevault_db::repositories::{BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo};
+
+    let storage = FilesystemBackupStorage::new(drive_dir.to_path_buf());
+    if !storage.validate_folder().is_available() {
+        return Ok(0);
+    }
+
+    let files_repo = FilesRepo::new(conn);
+    let games_repo = GamesRepo::new(conn);
+    let locs_repo = SaveLocationsRepo::new(conn);
+    let backups_repo = BackupsRepo::new(conn);
+
+    let all_files = files_repo.list_all()?;
+    let mut copied_count = 0usize;
+
+    for f in all_files {
+        let loc = match locs_repo.find_by_id(f.save_location_id)? {
+            Some(l) => l,
+            None => continue,
+        };
+        let game = match games_repo.find_by_id(loc.game_id)? {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let backups = backups_repo.list_by_file(f.id)?;
+        for b in backups {
+            if b.sync_status == SyncStatus::CopiedToDriveFolder {
+                continue;
+            }
+
+            let file_name = f
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("save.dat");
+            let paths = storage.get_game_paths(&game.platform, &game.name, Some(game.id));
+            let drive_file = paths
+                .snapshots_dir
+                .join(format!("v{}", b.version))
+                .join(file_name);
+            let meta_file = paths
+                .metadata_dir
+                .join(format!("v{}_{}.json", b.version, file_name));
+
+            let local_snapshot_path = backup_root
+                .join(b.file_id.to_string())
+                .join(format!("v{}", b.version))
+                .join(file_name);
+
+            // Se o snapshot e seus metadados já existem no Drive e o tamanho bate com o snapshot local,
+            // considera já sincronizado e atualiza o status diretamente.
+            if drive_file.exists() && meta_file.exists() && local_snapshot_path.exists() {
+                if let (Ok(d_meta), Ok(l_meta)) = (
+                    std::fs::metadata(&drive_file),
+                    std::fs::metadata(&local_snapshot_path),
+                ) {
+                    if d_meta.len() == l_meta.len() {
+                        let _ =
+                            backups_repo.update_sync_status(b.id, &SyncStatus::CopiedToDriveFolder);
+                        copied_count += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // Caso contrário, copia atomicamente com validação de hash e tamanho
+            if let Ok(true) = sync_backup_to_drive_folder(conn, b.id, backup_root, drive_dir) {
+                copied_count += 1;
+            }
+        }
+    }
+
+    Ok(copied_count)
 }

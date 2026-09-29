@@ -3,12 +3,12 @@
 //! Converte entradas do manifest para o modelo canônico `SaveLocation`,
 //! associando jogos por Store ID (Steam/GOG) ou título e resolvendo caminhos.
 
-use std::path::Path;
-use savevault_core::models::{Game, Platform, SaveLocation, SaveLocationType};
-use savevault_core::path::{is_glob_path, is_glob_pattern};
-use crate::save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
 use super::manifest::{LudusaviGameEntry, LudusaviManifest};
 use super::resolver::PathResolver;
+use crate::save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
+use savevault_core::models::{Game, Platform, SaveLocation, SaveLocationType};
+use savevault_core::path::{is_glob_path, is_glob_pattern};
+use std::path::Path;
 
 enum GameLookupResult<'a> {
     Found(&'a LudusaviGameEntry),
@@ -164,12 +164,34 @@ impl LudusaviSaveDetector {
         }
 
         // Se ainda não foi criado fisicamente no disco:
-        // Se termina com barra ou não possui extensão de arquivo, convenciona-se pasta de saves
-        if raw_path.ends_with('/') || raw_path.ends_with('\\') || resolved_path.extension().is_none() {
-            SaveLocationType::Directory
-        } else {
-            SaveLocationType::File
+        // Se termina explicitamente com separador de diretório ('/' ou '\'), é Directory
+        if raw_path.ends_with('/') || raw_path.ends_with('\\') {
+            return SaveLocationType::Directory;
         }
+
+        // Não usar resolved_path.extension().is_none() para classificar como File!
+        // Pastas contendo pontos (ex.: Game.1.0, Celeste.Release, Config.d, Save.Data)
+        // NÃO são arquivos. Números de versão e sufixos organizacionais em nomes de pastas
+        // não devem causar classificação errônea como File.
+        if let Some(ext) = resolved_path.extension().and_then(|e| e.to_str()) {
+            // Se for puramente numérico (ex.: "0", "1", "2"), é sufixo de versão de diretório
+            if !ext.chars().all(|c| c.is_ascii_digit()) {
+                let lower_ext = ext.to_lowercase();
+                // Lista de extensões padrão e inequívocas de arquivos individuais de save/dados
+                const KNOWN_SAVE_FILE_EXTENSIONS: &[&str] = &[
+                    "sav", "save", "dat", "bin", "json", "xml", "ini", "cfg", "txt", "db",
+                    "sqlite", "sqlite3", "sl2", "sfs", "raw", "sii", "chr", "profile", "bak",
+                    "log", "yaml", "yml", "savegame",
+                ];
+                if KNOWN_SAVE_FILE_EXTENSIONS.contains(&lower_ext.as_str()) {
+                    return SaveLocationType::File;
+                }
+            }
+        }
+
+        // Estratégia conservadora: qualquer caminho inexistente sem extensão inequívoca de arquivo
+        // é monitorado como Directory, garantindo monitoramento recursivo contra perda silenciosa de saves.
+        SaveLocationType::Directory
     }
 }
 
@@ -178,7 +200,10 @@ impl SaveDetector for LudusaviSaveDetector {
         "ludusavi-manifest"
     }
 
-    fn detect_save_locations(&self, game: &Game) -> Result<SaveDiscoveryResult, SaveDiscoveryError> {
+    fn detect_save_locations(
+        &self,
+        game: &Game,
+    ) -> Result<SaveDiscoveryResult, SaveDiscoveryError> {
         let entry = match self.find_game_entry(game) {
             GameLookupResult::Found(res) => res,
             GameLookupResult::NotFound => return Ok(SaveDiscoveryResult::UnrecognizedGame),

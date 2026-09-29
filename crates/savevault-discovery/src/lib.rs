@@ -1,17 +1,16 @@
 pub mod emulators;
 pub mod generic;
 pub mod gog;
-pub mod manifest;
-pub mod steam;
-pub mod save_detector;
 pub mod ludusavi;
+pub mod manifest;
+pub mod save_detector;
+pub mod steam;
 
-pub use save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
 pub use ludusavi::LudusaviSaveDetector;
+pub use save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
 
 use anyhow::Result;
-use savevault_core::models::{Game, SaveLocation, SaveLocationType};
-use uuid::Uuid;
+use savevault_core::models::{Game, SaveLocation};
 
 /// Resultado de uma operação de discovery.
 #[derive(Debug)]
@@ -66,52 +65,79 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     }
 
     // ------------------------------------------------------------------
-    // Ludusavi Manifest — detecção de saves para jogos Steam
+    // Genéricos (%USERPROFILE%\Saved Games)
     // ------------------------------------------------------------------
-    match manifest::get_manifest_path(cache_dir).await {
-        Ok(manifest_path) => {
-            match manifest::ManifestDetector::load(&manifest_path) {
-                Ok(detector) => {
-                    for info in &steam_infos {
-                        let game = &info.game;
-                        let app_id = match game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok()) {
-                            Some(id) => id,
-                            None => {
-                                games.push(game.clone());
-                                continue;
-                            }
-                        };
-
-                        let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
-                        let paths = detector.find_save_paths(app_id, &ctx);
-
-                        for path in paths {
-                            save_locations.push(SaveLocation {
-                                id: Uuid::new_v4(),
-                                game_id: game.id,
-                                path,
-                                location_type: SaveLocationType::Directory,
-                            });
-                        }
-
-                        games.push(game.clone());
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Falha ao carregar manifest: {}. Saves não serão detectados.", e);
-                    for info in &steam_infos {
-                        games.push(info.game.clone());
-                    }
-                }
-            }
+    let generic_infos = match generic::GenericDetector::new().detect_with_paths().await {
+        Ok(infos) => {
+            tracing::info!("Generic: {} jogo(s) encontrado(s)", infos.len());
+            infos
         }
         Err(e) => {
-            tracing::warn!("Manifest indisponível: {}. Saves não serão detectados.", e);
-            for info in &steam_infos {
-                games.push(info.game.clone());
+            tracing::warn!("Generic detector falhou: {}", e);
+            vec![]
+        }
+    };
+
+    for info in generic_infos {
+        save_locations.push(SaveLocation::new(
+            info.game.id,
+            info.save_path,
+            savevault_core::models::SaveLocationType::Directory,
+        ));
+        games.push(info.game);
+    }
+
+    for info in steam_infos {
+        games.push(info.game);
+    }
+
+    // ------------------------------------------------------------------
+    // Ludusavi Manifest — detecção de saves para todos os jogos descobertos
+    // (Steam, GOG, Emuladores, Genéricos) com SaveLocationType correto
+    // ------------------------------------------------------------------
+    match manifest::get_manifest_path(cache_dir).await {
+        Ok(manifest_path) => match LudusaviSaveDetector::from_file(&manifest_path) {
+            Ok(detector) => {
+                for game in &games {
+                    match detector.detect_save_locations(game) {
+                        Ok(res) => {
+                            let locs = res.into_locations();
+                            if !locs.is_empty() {
+                                tracing::debug!(
+                                    "Ludusavi: {} local(is) de save para '{}' ({:?})",
+                                    locs.len(),
+                                    game.name,
+                                    game.platform
+                                );
+                                save_locations.extend(locs);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Erro ao detectar saves para '{}': {}", game.name, e);
+                        }
+                    }
+                }
             }
+            Err(e) => {
+                tracing::warn!(
+                    "Falha ao carregar manifest: {}. Saves não serão detectados.",
+                    e
+                );
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Manifest indisponível: {}. Saves não serão detectados.", e);
         }
     }
+
+    // Deduplica save_locations por (game_id, path normalizado case-insensitive)
+    let mut seen_locs = std::collections::HashSet::new();
+    save_locations.retain(|loc| {
+        let norm = savevault_core::path::normalize_windows_path(&loc.path)
+            .unwrap_or_else(|_| loc.path.clone());
+        let key = (loc.game_id, norm.to_string_lossy().to_lowercase());
+        seen_locs.insert(key)
+    });
 
     tracing::info!(
         "Discovery concluído: {} jogo(s), {} caminho(s) de save detectado(s).",
@@ -119,7 +145,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
         save_locations.len()
     );
 
-    Ok(DiscoveryResult { games, save_locations })
+    Ok(DiscoveryResult {
+        games,
+        save_locations,
+    })
 }
 
 /// Conecta os jogos encontrados pelo Game Discovery ao Save Discovery,

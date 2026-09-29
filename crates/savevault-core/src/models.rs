@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -12,11 +12,29 @@ use chrono::{DateTime, Utc};
 pub enum Platform {
     Steam,
     Gog,
+    Epic,
     Dolphin,
     Pcsx2,
     Ppsspp,
     RetroArch,
     Generic,
+}
+
+impl Platform {
+    /// Nome da pasta de plataforma utilizado na organização do filesystem do Google Drive:
+    /// `<DriveRoot>/SaveVault/<Platform>/<Game>/`
+    pub fn display_folder_name(&self) -> &'static str {
+        match self {
+            Platform::Steam => "Steam",
+            Platform::Gog => "GOG",
+            Platform::Epic => "Epic",
+            Platform::Dolphin => "Dolphin",
+            Platform::Pcsx2 => "PCSX2",
+            Platform::Ppsspp => "PPSSPP",
+            Platform::RetroArch => "RetroArch",
+            Platform::Generic => "Other",
+        }
+    }
 }
 
 /// Nível de confiança na detecção do save (usado internamente — não exibido ao usuário como número).
@@ -28,7 +46,7 @@ pub enum Confidence {
     Low,
 }
 
-/// Status de sincronização com a cloud.
+/// Status de sincronização com a cloud ou pasta do Google Drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncStatus {
@@ -36,6 +54,7 @@ pub enum SyncStatus {
     Synced,
     Failed,
     PendingOffline,
+    CopiedToDriveFolder,
 }
 
 /// Tipo de operação na fila de sync.
@@ -63,7 +82,12 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(name: impl Into<String>, platform: Platform, platform_id: Option<String>, confidence: Confidence) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        platform: Platform,
+        platform_id: Option<String>,
+        confidence: Confidence,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),

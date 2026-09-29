@@ -48,6 +48,53 @@ mod tests {
             cfg.save(&path).expect("deve criar diretórios e salvar");
             assert!(path.exists());
         }
+
+        #[test]
+        fn config_save_atomic_overwrite_leaves_no_tmp_files() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let mut cfg = Config::default();
+            cfg.general.max_versions = 5;
+            cfg.save(&path).expect("salvar primeira vez");
+
+            cfg.general.max_versions = 25;
+            cfg.save(&path).expect("sobrescrever atomicamente");
+
+            let loaded = Config::load(&path).expect("carregar config atualizado");
+            assert_eq!(loaded.general.max_versions, 25);
+
+            // Verifica que não ficaram arquivos residuais .tmp no diretório
+            let entries: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(entries, vec!["config.toml".to_string()]);
+        }
+
+        #[test]
+        fn config_load_empty_or_whitespace_file_returns_default() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("empty_config.toml");
+            std::fs::write(&path, "   \n\t  ").unwrap();
+
+            let cfg = Config::load(&path).expect("deve recuperar graciosamente com default");
+            assert_eq!(cfg.general.max_versions, 10);
+            assert_eq!(cfg.cloud.provider, "google_drive");
+        }
+
+        #[test]
+        fn config_load_corrupted_syntax_returns_error() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("broken_config.toml");
+            std::fs::write(&path, "[general\ninvalid = syntax :::").unwrap();
+
+            let result = Config::load(&path);
+            assert!(
+                result.is_err(),
+                "TOML com sintaxe inválida deve retornar erro"
+            );
+        }
     }
 
     // ------------------------------------------------------------------
@@ -55,22 +102,36 @@ mod tests {
     // ------------------------------------------------------------------
     mod model_tests {
         use crate::models::{
-            Confidence, Game, Platform, SaveLocation, SaveLocationType,
-            SyncStatus,
+            Confidence, Game, Platform, SaveLocation, SaveLocationType, SyncStatus,
         };
         use std::path::PathBuf;
         use uuid::Uuid;
 
         #[test]
         fn game_new_generates_unique_ids() {
-            let g1 = Game::new("Jogo A", Platform::Steam, Some("123".into()), Confidence::High);
-            let g2 = Game::new("Jogo A", Platform::Steam, Some("123".into()), Confidence::High);
+            let g1 = Game::new(
+                "Jogo A",
+                Platform::Steam,
+                Some("123".into()),
+                Confidence::High,
+            );
+            let g2 = Game::new(
+                "Jogo A",
+                Platform::Steam,
+                Some("123".into()),
+                Confidence::High,
+            );
             assert_ne!(g1.id, g2.id, "IDs devem ser únicos");
         }
 
         #[test]
         fn game_fields_are_set_correctly() {
-            let game = Game::new("Stardew Valley", Platform::Steam, Some("413150".into()), Confidence::High);
+            let game = Game::new(
+                "Stardew Valley",
+                Platform::Steam,
+                Some("413150".into()),
+                Confidence::High,
+            );
             assert_eq!(game.name, "Stardew Valley");
             assert_eq!(game.platform, Platform::Steam);
             assert_eq!(game.platform_id, Some("413150".into()));

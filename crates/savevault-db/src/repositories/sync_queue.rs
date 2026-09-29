@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
-use savevault_core::models::{SyncQueueItem, SyncOperation, SyncStatus};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use savevault_core::models::{SyncOperation, SyncQueueItem, SyncStatus};
+use uuid::Uuid;
 
 pub struct SyncQueueRepo<'a> {
     pub conn: &'a Connection,
@@ -33,9 +33,10 @@ impl<'a> SyncQueueRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, backup_id, operation, status, attempts, created_at
              FROM sync_queue WHERE status = 'pending'
-             ORDER BY created_at ASC LIMIT 50"
+             ORDER BY created_at ASC LIMIT 50",
         )?;
-        let items = stmt.query_map([], row_to_item)?
+        let items = stmt
+            .query_map([], row_to_item)?
             .filter_map(|r| r.ok())
             .collect();
         Ok(items)
@@ -44,7 +45,7 @@ impl<'a> SyncQueueRepo<'a> {
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<SyncQueueItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, backup_id, operation, status, attempts, created_at
-             FROM sync_queue WHERE id = ?1"
+             FROM sync_queue WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id.to_string()], row_to_item)?;
         Ok(rows.next().transpose()?)
@@ -63,7 +64,10 @@ impl<'a> SyncQueueRepo<'a> {
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM sync_queue WHERE id = ?1", params![id.to_string()])?;
+        self.conn.execute(
+            "DELETE FROM sync_queue WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 }
@@ -81,7 +85,9 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<SyncQueueItem> {
         operation: str_to_operation(&op_str),
         status: super::backups::str_to_sync_status(&status_str),
         attempts: attempts as u32,
-        created_at: created_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at: created_str
+            .parse::<DateTime<Utc>>()
+            .unwrap_or_else(|_| Utc::now()),
     })
 }
 

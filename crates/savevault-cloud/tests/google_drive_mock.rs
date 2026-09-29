@@ -104,7 +104,8 @@ async fn test_upload_success() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"id":"uploaded-drive-id-999","name":"save.dat","size":"1234"}"#.to_string(),
+                body: r#"{"id":"uploaded-drive-id-999","name":"save.dat","size":"1234"}"#
+                    .to_string(),
             }
         } else {
             MockResponse {
@@ -114,7 +115,8 @@ async fn test_upload_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-bearer-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -126,22 +128,27 @@ async fn test_upload_success() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save game binary payload").unwrap();
 
-    let res = provider.upload(tmp.path(), "game_uuid_1/file_uuid_2/save.dat").await;
-    assert!(res.is_ok(), "Upload deve ter sucesso contra mock HTTP: {:?}", res);
+    let res = provider
+        .upload(tmp.path(), "game_uuid_1/file_uuid_2/save.dat")
+        .await;
+    assert!(
+        res.is_ok(),
+        "Upload deve ter sucesso contra mock HTTP: {:?}",
+        res
+    );
     let drive_file_id = res.unwrap();
     assert_eq!(drive_file_id, "uploaded-drive-id-999");
 }
 
 #[tokio::test]
 async fn test_upload_401_unauthorized() {
-    let server = MockHttpServer::spawn(|_, _, _| {
-        MockResponse {
-            status: 401,
-            status_text: "Unauthorized",
-            content_type: "application/json",
-            body: r#"{"error":{"code":401,"message":"Invalid Credentials"}}"#.to_string(),
-        }
-    }).await;
+    let server = MockHttpServer::spawn(|_, _, _| MockResponse {
+        status: 401,
+        status_text: "Unauthorized",
+        content_type: "application/json",
+        body: r#"{"error":{"code":401,"message":"Invalid Credentials"}}"#.to_string(),
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("expired-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -153,10 +160,21 @@ async fn test_upload_401_unauthorized() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("401"), "Erro deve reportar código 401: {}", err_str);
-    assert!(err_str.contains("Invalid Credentials"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("401"),
+        "Erro deve reportar código 401: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Invalid Credentials"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -184,7 +202,8 @@ async fn test_upload_403_forbidden() {
                 body: r#"{"error":{"code":403,"message":"Insufficient Permission"}}"#.to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -196,10 +215,21 @@ async fn test_upload_403_forbidden() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("403"), "Erro deve reportar 403: {}", err_str);
-    assert!(err_str.contains("Insufficient Permission"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("403"),
+        "Erro deve reportar 403: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Insufficient Permission"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -227,7 +257,8 @@ async fn test_upload_429_rate_limited() {
                 body: r#"{"error":{"code":429,"message":"Rate Limit Exceeded"}}"#.to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -239,10 +270,21 @@ async fn test_upload_429_rate_limited() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("429"), "Erro deve reportar 429: {}", err_str);
-    assert!(err_str.contains("Rate Limit Exceeded"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("429"),
+        "Erro deve reportar 429: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Rate Limit Exceeded"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -270,7 +312,8 @@ async fn test_upload_500_server_error() {
                 body: "<html>500 Internal Server Error</html>".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -282,9 +325,16 @@ async fn test_upload_500_server_error() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("500"), "Erro deve reportar 500 mesmo com body HTML: {}", err_str);
+    assert!(
+        err_str.contains("500"),
+        "Erro deve reportar 500 mesmo com body HTML: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -305,7 +355,8 @@ async fn test_download_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -319,7 +370,10 @@ async fn test_download_success() {
 
     let res = provider.download("drive-file-abc", &dest).await;
     assert!(res.is_ok(), "Download deve ter sucesso: {:?}", res);
-    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "downloaded cloud save content");
+    assert_eq!(
+        std::fs::read_to_string(&dest).unwrap(),
+        "downloaded cloud save content"
+    );
 }
 
 #[tokio::test]
@@ -340,7 +394,8 @@ async fn test_delete_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -350,23 +405,30 @@ async fn test_delete_success() {
     );
 
     let res = provider.delete("drive-to-delete-123").await;
-    assert!(res.is_ok(), "Delete deve retornar Ok para status 204: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Delete deve retornar Ok para status 204: {:?}",
+        res
+    );
 
     // 404 também deve ser tolerado
     let res_404 = provider.delete("nonexistent-file").await;
-    assert!(res_404.is_ok(), "Delete deve tolerar 404 (já deletado): {:?}", res_404);
+    assert!(
+        res_404.is_ok(),
+        "Delete deve tolerar 404 (já deletado): {:?}",
+        res_404
+    );
 }
 
 #[tokio::test]
 async fn test_invalid_json_response_handling() {
-    let server = MockHttpServer::spawn(|_, _, _| {
-        MockResponse {
-            status: 200,
-            status_text: "OK",
-            content_type: "application/json",
-            body: "BROKEN_JSON_NOT_VALID".to_string(),
-        }
-    }).await;
+    let server = MockHttpServer::spawn(|_, _, _| MockResponse {
+        status: 200,
+        status_text: "OK",
+        content_type: "application/json",
+        body: "BROKEN_JSON_NOT_VALID".to_string(),
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -378,11 +440,15 @@ async fn test_invalid_json_response_handling() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("JSON inválida") || err_str.contains("BROKEN_JSON"),
-        "Deve reportar erro de JSON inválido: {}", err_str
+        "Deve reportar erro de JSON inválido: {}",
+        err_str
     );
 }
 
@@ -396,7 +462,8 @@ async fn test_token_refresh_flow() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"access_token":"fresh_access_token_xyz987","expires_in":3600}"#.to_string(),
+                body: r#"{"access_token":"fresh_access_token_xyz987","expires_in":3600}"#
+                    .to_string(),
             }
         } else {
             MockResponse {
@@ -406,7 +473,8 @@ async fn test_token_refresh_flow() {
                 body: "Bad Request".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let token_endpoint = format!("{}/oauth2/token", server.base_url);
     let auth = AuthService::with_mock_refresh(
@@ -417,7 +485,10 @@ async fn test_token_refresh_flow() {
     );
 
     let token = auth.get_fresh_access_token().await.unwrap();
-    assert_eq!(token, "fresh_access_token_xyz987", "Token renovado com sucesso");
+    assert_eq!(
+        token, "fresh_access_token_xyz987",
+        "Token renovado com sucesso"
+    );
 }
 
 #[tokio::test]
@@ -452,7 +523,8 @@ async fn test_case_a_upload_returns_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -464,10 +536,15 @@ async fn test_case_a_upload_returns_file_id() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save content").unwrap();
 
-    let res = provider.upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat").await;
+    let res = provider
+        .upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat")
+        .await;
     assert!(res.is_ok(), "Upload deve ter sucesso: {:?}", res);
     let drive_file_id = res.unwrap();
-    assert_eq!(drive_file_id, "drive-file-123", "Upload DEVE retornar o File ID retornado pelo Google Drive");
+    assert_eq!(
+        drive_file_id, "drive-file-123",
+        "Upload DEVE retornar o File ID retornado pelo Google Drive"
+    );
 }
 
 #[tokio::test]
@@ -488,7 +565,8 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -501,7 +579,10 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
     let dest = dir.path().join("downloaded.dat");
 
     // 1. Tentar passar um cloud_path (com barras) DEVE falhar imediatamente sem fazer chamada HTTP
-    let err = provider.download("location_uuid/file_uuid/v1_save.dat", &dest).await.unwrap_err();
+    let err = provider
+        .download("location_uuid/file_uuid/v1_save.dat", &dest)
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("Identificador remoto inválido"),
         "Download com cloud_path deve falhar com erro de rejeição semântica: {}",
@@ -510,7 +591,11 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
 
     // 2. Passar o drive_file_id real DEVE funcionar
     let ok = provider.download("drive-file-123", &dest).await;
-    assert!(ok.is_ok(), "Download com File ID real deve ter sucesso: {:?}", ok);
+    assert!(
+        ok.is_ok(),
+        "Download com File ID real deve ter sucesso: {:?}",
+        ok
+    );
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "binary payload");
 }
 
@@ -532,7 +617,8 @@ async fn test_case_c_delete_rejects_cloud_path_and_uses_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -542,7 +628,10 @@ async fn test_case_c_delete_rejects_cloud_path_and_uses_file_id() {
     );
 
     // 1. Tentar deletar passando cloud_path DEVE falhar
-    let err = provider.delete("location_uuid/file_uuid/v1_save.dat").await.unwrap_err();
+    let err = provider
+        .delete("location_uuid/file_uuid/v1_save.dat")
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("Identificador remoto inválido"),
         "Delete com cloud_path deve falhar com rejeição semântica: {}",
@@ -603,7 +692,8 @@ async fn test_case_e_retry_after_transient_error_429() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -616,12 +706,23 @@ async fn test_case_e_retry_after_transient_error_429() {
     std::fs::write(tmp.path(), b"save content").unwrap();
 
     // Primeira tentativa falha com 429
-    let err1 = provider.upload(tmp.path(), "loc/file/save.dat").await.unwrap_err();
-    assert!(err1.to_string().contains("429"), "Primeira tentativa deve falhar com 429: {}", err1);
+    let err1 = provider
+        .upload(tmp.path(), "loc/file/save.dat")
+        .await
+        .unwrap_err();
+    assert!(
+        err1.to_string().contains("429"),
+        "Primeira tentativa deve falhar com 429: {}",
+        err1
+    );
 
     // Segunda tentativa (retry) sucede com 200 + drive_file_id
     let res2 = provider.upload(tmp.path(), "loc/file/save.dat").await;
-    assert!(res2.is_ok(), "Segunda tentativa deve ter sucesso: {:?}", res2);
+    assert!(
+        res2.is_ok(),
+        "Segunda tentativa deve ter sucesso: {:?}",
+        res2
+    );
     assert_eq!(res2.unwrap(), "drive-file-retry-success");
 }
 
@@ -641,7 +742,8 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"files":[{"id":"existing-remote-drive-id-888","name":"v1_save.dat"}]}"#.to_string(),
+                body: r#"{"files":[{"id":"existing-remote-drive-id-888","name":"v1_save.dat"}]}"#
+                    .to_string(),
             }
         } else if method == "POST" {
             // Se chamar POST, falha o teste! A idempotência deve reutilizar o arquivo sem re-upload!
@@ -659,7 +761,8 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -671,8 +774,14 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save binary payload").unwrap();
 
-    let res = provider.upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat").await;
-    assert!(res.is_ok(), "Upload idempotente deve reutilizar o arquivo: {:?}", res);
+    let res = provider
+        .upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat")
+        .await;
+    assert!(
+        res.is_ok(),
+        "Upload idempotente deve reutilizar o arquivo: {:?}",
+        res
+    );
     assert_eq!(
         res.unwrap(),
         "existing-remote-drive-id-888",
@@ -713,7 +822,8 @@ async fn test_case_g_file_id_missing_in_response_fails_explicitly() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -725,7 +835,10 @@ async fn test_case_g_file_id_missing_in_response_fails_explicitly() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"payload").unwrap();
 
-    let err = provider.upload(tmp.path(), "loc/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "loc/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("missing field `id`") || err_str.contains("Resposta JSON inválida"),
@@ -747,7 +860,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
             content_type: "application/json",
             body: "{}".to_string(),
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -780,7 +894,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
         assert!(
             err_dl_str.contains("Identificador remoto inválido") || err_dl_str.contains("vazio"),
             "Download com ID '{}' deve ser rejeitado sem enviar requisição: {}",
-            invalid_id, err_dl_str
+            invalid_id,
+            err_dl_str
         );
 
         // Testa delete
@@ -789,7 +904,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
         assert!(
             err_del_str.contains("Identificador remoto inválido") || err_del_str.contains("vazio"),
             "Delete com ID '{}' deve ser rejeitado sem enviar requisição: {}",
-            invalid_id, err_del_str
+            invalid_id,
+            err_del_str
         );
     }
 
@@ -814,7 +930,8 @@ async fn test_case_sec_02_valid_opaque_id_accepted() {
             content_type: "application/octet-stream",
             body: "file content".to_string(),
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -825,11 +942,7 @@ async fn test_case_sec_02_valid_opaque_id_accepted() {
 
     let tmp = NamedTempFile::new().unwrap();
 
-    let valid_ids = [
-        "1a2B3c-4D5_E",
-        "1-a_B.c~",
-        "ABCDEF1234567890",
-    ];
+    let valid_ids = ["1a2B3c-4D5_E", "1-a_B.c~", "ABCDEF1234567890"];
 
     for valid_id in valid_ids {
         provider.download(valid_id, tmp.path()).await.unwrap();
@@ -854,7 +967,9 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
             let mut buf = vec![0u8; 1024];
             let _ = socket.read(&mut buf).await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await;
         }
     });
 
@@ -864,17 +979,17 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
         .build()
         .unwrap();
 
-    let provider = GoogleDriveProvider::with_custom_endpoints(
-        auth,
-        base_url.clone(),
-        base_url,
-    ).with_client(timeout_client);
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url)
+        .with_client(timeout_client);
 
     let start = std::time::Instant::now();
     let res = provider.delete("file_123").await;
     let elapsed = start.elapsed();
 
-    assert!(res.is_err(), "Operação com timeout estourado deve retornar erro");
+    assert!(
+        res.is_err(),
+        "Operação com timeout estourado deve retornar erro"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(400),
         "Timeout de 50ms deve retornar rapidamente, levou {:?}",
@@ -886,9 +1001,494 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
         .map(|e| e.is_timeout())
         .unwrap_or(false)
         || format!("{:#}", err).to_lowercase().contains("time");
+    assert!(is_timeout, "Erro deve indicar timeout HTTP: {:#}", err);
+}
+
+#[tokio::test]
+async fn test_resumable_streaming_upload_for_large_files() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+    let server_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    };
+                    let base_for_loc = format!("http://{}", addr);
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 8192];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        let req = String::from_utf8_lossy(&buf[..n]);
+                        let first_line = req.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split_whitespace().collect();
+                        let method = parts.first().copied().unwrap_or("GET");
+                        let path = parts.get(1).copied().unwrap_or("/");
+
+                        if method == "GET" && path.contains("mimeType") {
+                            // Retorna pasta existente
+                            let body = r#"{"files":[{"id":"folder-root","name":"SaveVault"}]}"#;
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(body.as_bytes()).await;
+                        } else if method == "GET" && path.contains("/files?q=") {
+                            // Checagem de idempotência: arquivo ainda não existe
+                            let body = r#"{"files":[]}"#;
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(body.as_bytes()).await;
+                        } else if method == "POST" && path.contains("uploadType=resumable") {
+                            // Passo 1 da sessão resumable: retorna Location header
+                            let session_loc = format!("{}/upload_session_abc123", base_for_loc);
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                session_loc
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                        } else if method == "PUT" && path.contains("upload_session_abc123") {
+                            // Passo 2 do upload resumable: consome o stream completo do arquivo antes de responder
+                            let headers_len = req.find("\r\n\r\n").map(|idx| idx + 4).unwrap_or(n);
+                            let mut total_body = n.saturating_sub(headers_len);
+                            let mut drain_buf = vec![0u8; 64 * 1024];
+                            while total_body < 1024 * 1024 {
+                                let read_bytes = socket.read(&mut drain_buf).await.unwrap_or(0);
+                                if read_bytes == 0 { break; }
+                                total_body += read_bytes;
+                            }
+
+                            let body = r#"{"id":"resumable-file-id-777","name":"large_save.dat","size":"1048576"}"#;
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(body.as_bytes()).await;
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    // Configura limiar baixo (500 KB) para disparar Resumable Upload
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url)
+        .with_resumable_threshold(500 * 1024);
+
+    let tmp = NamedTempFile::new().unwrap();
+    // Cria arquivo de 1 MB (maior que o limiar de 500 KB)
+    let payload = vec![0x42u8; 1024 * 1024];
+    std::fs::write(tmp.path(), payload).unwrap();
+
+    let res = provider
+        .upload(tmp.path(), "game_uuid_x/file_uuid_y/large_save.dat")
+        .await;
+
+    assert!(res.is_ok(), "Upload resumable deve ter sucesso: {:?}", res);
+    let id = res.unwrap();
+    assert_eq!(id, "resumable-file-id-777");
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn test_streaming_download_bounded_ram() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+    let server_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    };
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 1024];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        let payload = vec![0x55u8; 256 * 1024]; // 256 KB
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            payload.len()
+                        );
+                        let _ = socket.write_all(head.as_bytes()).await;
+                        let _ = socket.write_all(&payload).await;
+                    });
+                }
+            }
+        }
+    });
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url);
+
+    let tmp = NamedTempFile::new().unwrap();
+    let dest_path = tmp.path().to_path_buf();
+
+    let res = provider.download("drive-file-stream-123", &dest_path).await;
     assert!(
-        is_timeout,
-        "Erro deve indicar timeout HTTP: {:#}",
-        err
+        res.is_ok(),
+        "Download em streaming deve ter sucesso: {:?}",
+        res
     );
+
+    let downloaded_bytes = std::fs::read(&dest_path).unwrap();
+    assert_eq!(downloaded_bytes.len(), 256 * 1024);
+    assert_eq!(downloaded_bytes[0], 0x55u8);
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn test_oauth_pkce_and_state_generation() {
+    use savevault_cloud::auth::{generate_oauth_state, generate_pkce_pair};
+
+    let (verifier, challenge) = generate_pkce_pair();
+    assert!(
+        verifier.len() >= 43,
+        "PKCE code_verifier deve ter pelo menos 43 caracteres"
+    );
+    assert!(
+        !challenge.is_empty(),
+        "PKCE code_challenge não pode ser vazio"
+    );
+    assert!(!verifier.contains('+'), "Base64URL não deve conter '+'");
+    assert!(!verifier.contains('/'), "Base64URL não deve conter '/'");
+    assert!(
+        !verifier.contains('='),
+        "Base64URL não deve conter padding '='"
+    );
+
+    let state1 = generate_oauth_state();
+    let state2 = generate_oauth_state();
+    assert_ne!(
+        state1, state2,
+        "Cada state gerado deve ser imprevisível e único"
+    );
+    assert!(state1.len() >= 32, "State deve ter alta entropia");
+}
+
+#[test]
+fn test_oauth_callback_validation_security() {
+    use savevault_cloud::auth::validate_callback_request;
+
+    let valid_state = "expected_random_state_1234567890";
+    let valid_request = format!(
+        "GET /oauth/callback?code=auth_code_xyz&state={} HTTP/1.1\r\nHost: 127.0.0.1:8085\r\n\r\n",
+        valid_state
+    );
+
+    // 1. Sucesso com state legítimo
+    let code = validate_callback_request(&valid_request, valid_state);
+    assert_eq!(code.unwrap(), "auth_code_xyz");
+
+    // 2. Ataque CSRF com state incorreto / forjado
+    let malicious_request = "GET /oauth/callback?code=attacker_code&state=evil_state HTTP/1.1\r\nHost: 127.0.0.1:8085\r\n\r\n";
+    let csrf_err = validate_callback_request(malicious_request, valid_state);
+    assert!(
+        csrf_err.is_err(),
+        "Callback com state forjado DEVE ser rejeitado"
+    );
+    assert!(csrf_err.unwrap_err().to_string().contains("mismatch"));
+
+    // 3. Ataque CSRF com state ausente
+    let no_state_request =
+        "GET /oauth/callback?code=some_code HTTP/1.1\r\nHost: 127.0.0.1:8085\r\n\r\n";
+    let no_state_err = validate_callback_request(no_state_request, valid_state);
+    assert!(
+        no_state_err.is_err(),
+        "Callback sem state DEVE ser rejeitado"
+    );
+    assert!(no_state_err.unwrap_err().to_string().contains("ausente"));
+
+    // 4. Endpoint inválido
+    let wrong_endpoint = format!("GET /evil?code=123&state={} HTTP/1.1\r\n\r\n", valid_state);
+    assert!(validate_callback_request(&wrong_endpoint, valid_state).is_err());
+}
+
+#[test]
+fn test_auth_service_debug_redacts_secrets() {
+    let auth = AuthService::with_mock_refresh(
+        "my_client_id".into(),
+        "super_secret_client_key".into(),
+        "https://oauth2.googleapis.com/token".into(),
+        "super_secret_refresh_token_value".into(),
+    );
+
+    let debug_str = format!("{:?}", auth);
+    assert!(
+        !debug_str.contains("super_secret_client_key"),
+        "client_secret NUNCA deve vazar em Debug output: {}",
+        debug_str
+    );
+    assert!(
+        !debug_str.contains("super_secret_refresh_token_value"),
+        "refresh_token NUNCA deve vazar em Debug output: {}",
+        debug_str
+    );
+    assert!(debug_str.contains("[REDACTED]"));
+}
+
+// ---------------------------------------------------------------------------
+// SV-ADV-007: Testes de Integridade Cloud (Truncamento & Hash Cryptográfico)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_download_truncated_stream_fails_and_cleans_up() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    };
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 1024];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        // Anuncia Content-Length de 1024 bytes mas só envia 100 bytes e fecha a conexão (truncamento)
+                        let payload = vec![0x41u8; 100];
+                        let head = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1024\r\nConnection: close\r\n\r\n";
+                        let _ = socket.write_all(head.as_bytes()).await;
+                        let _ = socket.write_all(&payload).await;
+                    });
+                }
+            }
+        }
+    });
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let dest_file = temp_dir.path().join("truncated_target.sav");
+
+    let res = provider.download("drive_file_trunc_test", &dest_file).await;
+    assert!(res.is_err(), "Download truncado DEVE retornar erro");
+    let err_msg = res.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("truncado") || err_msg.contains("interrompida"),
+        "Mensagem de erro deve indicar truncamento ou conexão interrompida: {}",
+        err_msg
+    );
+
+    // Invariante de Segurança: o arquivo de destino NÃO deve ter sido promovido
+    assert!(
+        !dest_file.exists(),
+        "Arquivo corrompido/truncado NUNCA deve ser promovido para o destino"
+    );
+
+    // Invariante de Limpeza (SV-ADV-011): staging temporário deve ter sido removido
+    let entries: Vec<_> = std::fs::read_dir(temp_dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "Nenhum arquivo temporário de staging deve restar após falha no download: {:?}",
+        entries
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_download_integrity_hash_mismatch_fails_and_cleans_up() {
+    let server = MockHttpServer::spawn(|method, path, _| {
+        if method == "GET" && path.contains("alt=media") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/octet-stream",
+                body: "REAL_CONTENT_FROM_DRIVE".to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: "Not Found".to_string(),
+            }
+        }
+    })
+    .await;
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        server.base_url.clone(),
+        server.base_url.clone(),
+    );
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let dest_file = temp_dir.path().join("hash_check.sav");
+
+    // 1. Falha com hash incompatível (ataque de corrupção ou spoofing)
+    let forged_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+    let res = provider
+        .download_with_integrity("drive_file_hash_test", &dest_file, Some(forged_hash))
+        .await;
+
+    assert!(res.is_err(), "Download com hash divergente DEVE falhar");
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Integridade criptográfica violada"),
+        "Erro deve reportar falha de integridade criptográfica"
+    );
+    assert!(
+        !dest_file.exists(),
+        "Destino não deve existir se integridade falhou"
+    );
+
+    // 2. Sucesso com hash SHA-256 correto
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"REAL_CONTENT_FROM_DRIVE");
+    let valid_sha256 = format!("{:02x}", hasher.finalize());
+
+    let ok_res = provider
+        .download_with_integrity("drive_file_hash_test", &dest_file, Some(&valid_sha256))
+        .await;
+    assert!(
+        ok_res.is_ok(),
+        "Download com hash válido deve suceder: {:?}",
+        ok_res
+    );
+    assert_eq!(
+        std::fs::read_to_string(&dest_file).unwrap(),
+        "REAL_CONTENT_FROM_DRIVE"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SV-ADV-008: Testes de Resumable Upload com HTTP 308 (Resume Incomplete)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_resumable_upload_handles_http_308_and_resumes_cleanly() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+    let server_task = tokio::spawn(async move {
+        let mut put_count = 0;
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    };
+                    let base_for_loc = format!("http://{}", addr);
+                    put_count += 1;
+                    let current_put = put_count;
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 8192];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        let req = String::from_utf8_lossy(&buf[..n]);
+                        let first_line = req.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split_whitespace().collect();
+                        let method = parts.first().copied().unwrap_or("GET");
+                        let path = parts.get(1).copied().unwrap_or("/");
+
+                        if method == "GET" && path.contains("mimeType") {
+                            let body = r#"{"files":[{"id":"folder-root","name":"SaveVault"}]}"#;
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(body.as_bytes()).await;
+                        } else if method == "GET" && path.contains("/files?q=") {
+                            let body = r#"{"files":[]}"#;
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(body.as_bytes()).await;
+                        } else if method == "POST" && path.contains("uploadType=resumable") {
+                            let session_loc = format!("{}/upload_session_308_test", base_for_loc);
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                session_loc
+                            );
+                            let _ = socket.write_all(head.as_bytes()).await;
+                        } else if method == "PUT" && path.contains("upload_session_308_test") {
+                            if current_put <= 3 {
+                                // Primeira tentativa de PUT: simula que o servidor recebeu apenas 512 KB
+                                // e responde com HTTP 308 Resume Incomplete indicando Range 0-524287
+                                let head = "HTTP/1.1 308 Resume Incomplete\r\nRange: bytes=0-524287\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                                let _ = socket.write_all(head.as_bytes()).await;
+                            } else {
+                                // Segunda tentativa de PUT: o cliente enviou o restante (bytes 524288-1048575)
+                                // Servidor responde 200 OK com o ID
+                                let body = r#"{"id":"resumed-success-drive-id-308","name":"large.dat","size":"1048576"}"#;
+                                let head = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                    body.len()
+                                );
+                                let _ = socket.write_all(head.as_bytes()).await;
+                                let _ = socket.write_all(body.as_bytes()).await;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url)
+        .with_resumable_threshold(256 * 1024);
+
+    let tmp = NamedTempFile::new().unwrap();
+    let payload = vec![0x77u8; 1024 * 1024]; // 1 MB
+    std::fs::write(tmp.path(), payload).unwrap();
+
+    let res = provider.upload(tmp.path(), "game/file/large.dat").await;
+
+    assert!(
+        res.is_ok(),
+        "Upload com HTTP 308 resume deve ter sucesso: {:?}",
+        res
+    );
+    assert_eq!(res.unwrap(), "resumed-success-drive-id-308");
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
 }

@@ -98,6 +98,7 @@ pub struct Reconciler {
     pub backup_root: PathBuf,
     pub max_versions: u32,
     pub scanner: SaveScanner,
+    pub drive_dir: std::sync::RwLock<Option<PathBuf>>,
     is_reconciling: Arc<AtomicBool>,
 }
 
@@ -112,6 +113,7 @@ impl Reconciler {
             backup_root,
             max_versions,
             scanner: SaveScanner::default(),
+            drive_dir: std::sync::RwLock::new(None),
             is_reconciling: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -127,8 +129,20 @@ impl Reconciler {
             backup_root,
             max_versions,
             scanner,
+            drive_dir: std::sync::RwLock::new(None),
             is_reconciling: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn set_drive_dir(&self, drive_dir: Option<PathBuf>) {
+        if let Ok(mut lock) = self.drive_dir.write() {
+            *lock = drive_dir;
+        }
+    }
+
+    pub fn with_drive_dir(self, drive_dir: Option<PathBuf>) -> Self {
+        self.set_drive_dir(drive_dir);
+        self
     }
 
     /// Retorna se há uma reconciliação atualmente em execução.
@@ -334,6 +348,19 @@ impl Reconciler {
                         entry.path.display(),
                         entry.id
                     );
+                }
+            }
+        }
+
+        // Reconciliação opcional com a pasta configurada do Google Drive
+        let maybe_drive = { self.drive_dir.read().ok().and_then(|lock| lock.clone()) };
+        if let Some(ref ddir) = maybe_drive {
+            let conn = self.db.lock().await;
+            if let Ok(copied) =
+                crate::pipeline::sync_all_pending_to_drive_folder(&conn, &self.backup_root, ddir)
+            {
+                if copied > 0 {
+                    tracing::info!("Reconciliação: {} snapshot(s) pendente(s) sincronizado(s) com a pasta do Drive.", copied);
                 }
             }
         }

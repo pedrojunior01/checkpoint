@@ -1,81 +1,23 @@
 //! Testes de Integração da Interface de Desenvolvimento (DEV-UI-01).
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use savevault_app::pipeline::handle_stable_event;
-use savevault_app::ui::{
-    start_dev_ui_server, DashboardSummary, DevUiEventLevel, DevUiState, LocationView,
-    ReconciliationView, RestoreApiResponse, SnapshotView,
-};
+use savevault_app::ui::{DevUiEventLevel, DevUiState};
 use savevault_app::Reconciler;
-use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
-use savevault_db::repositories::{BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo};
+use savevault_core::models::{
+    Backup, Confidence, FileEntry, Game, Platform, SaveLocation, SaveLocationType, SyncOperation,
+    SyncQueueItem, SyncStatus,
+};
+use savevault_db::repositories::{
+    BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
+};
 use savevault_db::Database;
 use savevault_monitor::events::{StableFileEvent, StableFileEventKind};
-
-/// Helper para requisições HTTP GET na DEV-UI.
-async fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .expect("Falha ao conectar no servidor DEV-UI");
-    let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        path, addr
-    );
-    stream.write_all(req.as_bytes()).await.unwrap();
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).await.unwrap();
-
-    let status = resp
-        .lines()
-        .next()
-        .unwrap()
-        .split_whitespace()
-        .nth(1)
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
-
-    let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
-    (status, body)
-}
-
-/// Helper para requisições HTTP POST na DEV-UI.
-async fn http_post(addr: SocketAddr, path: &str, json_body: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .expect("Falha ao conectar no servidor DEV-UI");
-    let req = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        path,
-        addr,
-        json_body.len(),
-        json_body
-    );
-    stream.write_all(req.as_bytes()).await.unwrap();
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).await.unwrap();
-
-    let status = resp
-        .lines()
-        .next()
-        .unwrap()
-        .split_whitespace()
-        .nth(1)
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
-
-    let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
-    (status, body)
-}
 
 #[tokio::test]
 async fn test_dev_ui_state_dashboard_and_views() {
@@ -306,7 +248,7 @@ async fn test_dev_ui_reconciliation_trigger() {
 }
 
 #[tokio::test]
-async fn test_dev_ui_http_server_endpoints_and_shutdown() {
+async fn test_dev_ui_graceful_shutdown_and_ipc_state() {
     let temp_root = tempdir().expect("Falha ao criar tempdir");
     let db_path = temp_root.path().join("vault.db");
     let db = Database::open(&db_path).expect("Falha ao abrir banco");
@@ -321,65 +263,211 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
         Duration::from_secs(30),
     ));
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    state.set_shutdown_sender(shutdown_tx).await;
 
-    // Inicia o servidor em porta dinâmica (0)
-    let (addr, server_handle) = start_dev_ui_server(state.clone(), 0, shutdown_rx)
+    // Estado inicial ativo
+    assert!(state
+        .watcher_active
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(state
+        .reconciler_active
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!*shutdown_rx.borrow());
+
+    // Aciona shutdown gracioso
+    state.trigger_graceful_shutdown().await;
+
+    // Valida flags atômicas e sinal no canal
+    assert!(!state
+        .watcher_active
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!state
+        .reconciler_active
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(*shutdown_rx.borrow_and_update());
+}
+
+#[tokio::test]
+async fn test_graceful_shutdown_waits_for_in_flight_operations() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
+
+    let db_mutex = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(DevUiState::new(
+        db_mutex,
+        db_path,
+        backup_dir,
+        None,
+        Duration::from_secs(30),
+    ));
+
+    // 1. Simula um worker ocupado com uma operação crítica (snapshot ou restore)
+    let in_flight_guard = state
+        .register_in_flight_operation()
+        .expect("Deve aceitar operação antes do shutdown");
+    assert_eq!(state.in_flight_count(), 1);
+
+    // 2. Dispara o shutdown em uma task assíncrona
+    let state_clone = state.clone();
+    let shutdown_handle = tokio::spawn(async move {
+        state_clone
+            .wait_graceful_shutdown(Duration::from_secs(3))
+            .await
+    });
+
+    // 3. Aguarda 150ms: o shutdown já foi solicitado, mas NÃO pode concluir enquanto o worker estiver ativo
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        !shutdown_handle.is_finished(),
+        "Shutdown NÃO deve concluir enquanto houver worker ativo!"
+    );
+    assert!(
+        state.is_shutting_down(),
+        "Sistema deve marcar que está em shutdown"
+    );
+
+    // 4. Nova tentativa de trabalho DEVE ser rejeitada para impedir novas tarefas
+    let rejected_op = state.register_in_flight_operation();
+    assert!(
+        rejected_op.is_none(),
+        "Novas operações DEVEM ser rejeitadas durante o shutdown!"
+    );
+
+    // 5. Worker finaliza o trabalho crítico (drop do guard)
+    drop(in_flight_guard);
+
+    // 6. Agora o shutdown deve concluir com sucesso (sem timeout)
+    let clean_exit = tokio::time::timeout(Duration::from_secs(1), shutdown_handle)
         .await
-        .expect("Falha ao iniciar servidor DEV-UI");
+        .expect("Shutdown deveria ter finalizado rapidamente após drop do worker")
+        .expect("Task de shutdown falhou");
 
-    // 1. Testa GET / (Assets HTML)
-    let (status, html) = http_get(addr, "/").await;
-    assert_eq!(status, 200);
-    assert!(html.contains("SaveVault"));
-    assert!(html.contains("DEV-UI-01"));
+    assert!(clean_exit, "Shutdown deve relatar conclusão limpa");
+    assert_eq!(state.in_flight_count(), 0);
+}
 
-    // 2. Testa GET /api/dashboard
-    let (status, dash_body) = http_get(addr, "/api/dashboard").await;
-    assert_eq!(status, 200);
-    let dash: DashboardSummary = serde_json::from_str(&dash_body).unwrap();
-    assert_eq!(dash.app_status, "Online");
+#[tokio::test]
+async fn test_graceful_shutdown_timeout_when_worker_stuck() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
 
-    // 3. Testa GET /api/locations
-    let (status, locs_body) = http_get(addr, "/api/locations").await;
-    assert_eq!(status, 200);
-    let locs: Vec<LocationView> = serde_json::from_str(&locs_body).unwrap();
-    assert!(locs.is_empty());
+    let db_mutex = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(DevUiState::new(
+        db_mutex,
+        db_path,
+        backup_dir,
+        None,
+        Duration::from_secs(30),
+    ));
 
-    // 4. Testa GET /api/snapshots
-    let (status, snaps_body) = http_get(addr, "/api/snapshots").await;
-    assert_eq!(status, 200);
-    let snaps: Vec<SnapshotView> = serde_json::from_str(&snaps_body).unwrap();
-    assert!(snaps.is_empty());
+    // Simula worker preso que não conclui dentro do prazo
+    let _stuck_guard = state
+        .register_in_flight_operation()
+        .expect("Deve registrar");
 
-    // 5. Testa GET /api/reconciliation
-    let (status, recon_body) = http_get(addr, "/api/reconciliation").await;
-    assert_eq!(status, 200);
-    let recon: ReconciliationView = serde_json::from_str(&recon_body).unwrap();
-    assert_eq!(recon.status, "Idle");
+    let clean = state
+        .wait_graceful_shutdown(Duration::from_millis(100))
+        .await;
 
-    // 6. Testa GET /api/events
-    let (status, events_body) = http_get(addr, "/api/events").await;
-    assert_eq!(status, 200);
-    assert!(events_body.contains("Servidor DEV-UI iniciado"));
+    assert!(
+        !clean,
+        "Shutdown deve retornar false quando timeout for atingido com worker pendente"
+    );
+    assert_eq!(state.in_flight_count(), 1);
+}
 
-    // 7. Testa POST /api/restore (erro gracioso para snapshot inexistente)
-    let bad_payload = serde_json::json!({
-        "snapshot_id": Uuid::new_v4().to_string()
-    })
-    .to_string();
-    let (status, restore_body) = http_post(addr, "/api/restore", &bad_payload).await;
-    assert_eq!(status, 200);
-    let restore_resp: RestoreApiResponse = serde_json::from_str(&restore_body).unwrap();
-    assert!(!restore_resp.success);
-    assert!(restore_resp.error.unwrap().contains("não encontrado"));
+#[tokio::test]
+async fn test_get_sync_queue_returns_expected_items() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("test_ui_sync.db");
+    let backup_dir = dir.path().join("backups");
+    let db = Database::open(&db_path).unwrap();
 
-    // 8. Testa rota 404
-    let (status, _) = http_get(addr, "/api/rota_inexistente").await;
-    assert_eq!(status, 404);
+    let game_id = Uuid::new_v4();
+    let loc_id = Uuid::new_v4();
+    let file_id = Uuid::new_v4();
+    let backup_id = Uuid::new_v4();
+    let queue_id = Uuid::new_v4();
 
-    // 9. Shutdown gracioso
-    let _ = shutdown_tx.send(true);
-    let server_res = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
-    assert!(server_res.is_ok(), "Servidor demorou para encerrar");
+    // 1. Popula dados completos
+    let game = Game {
+        id: game_id,
+        name: "Sync Test Game".to_string(),
+        platform: Platform::Steam,
+        platform_id: Some("12345".to_string()),
+        confidence: Confidence::High,
+        created_at: chrono::Utc::now(),
+    };
+    GamesRepo::new(&db.conn).insert(&game).unwrap();
+
+    let loc = SaveLocation {
+        id: loc_id,
+        game_id,
+        path: std::path::PathBuf::from(r"C:\Games\SyncTest\save.dat"),
+        location_type: SaveLocationType::File,
+    };
+    SaveLocationsRepo::new(&db.conn).insert(&loc).unwrap();
+
+    let file = FileEntry {
+        id: file_id,
+        save_location_id: loc_id,
+        path: std::path::PathBuf::from(r"C:\Games\SyncTest\save.dat"),
+        hash: "abc123blake3".to_string(),
+        size_bytes: 1024,
+        modified_at: chrono::Utc::now(),
+    };
+    FilesRepo::new(&db.conn).upsert(&file).unwrap();
+
+    let backup = Backup {
+        id: backup_id,
+        file_id,
+        version: 1,
+        cloud_path: None,
+        drive_file_id: None,
+        created_at: chrono::Utc::now(),
+        sync_status: SyncStatus::Pending,
+    };
+    BackupsRepo::new(&db.conn).insert(&backup).unwrap();
+
+    let queue_item = SyncQueueItem {
+        id: queue_id,
+        backup_id,
+        operation: SyncOperation::Upload,
+        status: SyncStatus::Pending,
+        attempts: 2,
+        created_at: chrono::Utc::now(),
+    };
+    SyncQueueRepo::new(&db.conn).enqueue(&queue_item).unwrap();
+
+    let db_conn = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(DevUiState::new(
+        db_conn,
+        db_path,
+        backup_dir,
+        None,
+        Duration::from_secs(30),
+    ));
+
+    // 2. Invoca get_sync_queue
+    let queue_views = state
+        .get_sync_queue()
+        .await
+        .expect("get_sync_queue deve ter sucesso sem erros de SQL");
+
+    // 3. Validações determinísticas
+    assert_eq!(queue_views.len(), 1);
+    let view = &queue_views[0];
+    assert_eq!(view.id, queue_id);
+    assert_eq!(view.backup_id, backup_id);
+    assert_eq!(view.operation, "upload");
+    assert_eq!(view.status, "pending");
+    assert_eq!(view.attempts, 2);
+    assert_eq!(view.file_name, "save.dat");
+    assert_eq!(view.game_name, "Sync Test Game");
+    assert!(view.last_error.is_none());
 }

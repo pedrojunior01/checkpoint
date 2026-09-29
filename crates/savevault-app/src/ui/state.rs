@@ -21,7 +21,7 @@ use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo, SyncQu
 use savevault_monitor::scanner::SaveScanner;
 
 use crate::reconciler::{Reconciler, ReconciliationError, ReconciliationReport};
-use crate::restore::{restore_snapshot_with_db, RestoreError, RestoreRequest};
+use crate::restore::{RestoreError, RestoreRequest};
 
 /// Nível de severidade de um evento registrado na DEV-UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +75,9 @@ pub struct GameCardView {
     pub save_locations_count: usize,
     pub files_count: usize,
     pub snapshots_count: usize,
+    pub drive_snapshots_count: usize,
+    pub last_backup_local: Option<String>,
+    pub last_copied_to_drive: Option<String>,
     pub monitoring_status: String,
     pub last_activity: Option<String>,
     pub last_error: Option<String>,
@@ -88,12 +91,63 @@ pub struct GameDetailView {
     pub locations: Vec<LocationView>,
     pub snapshots: Vec<SnapshotView>,
     pub recent_activity: Vec<DevUiEvent>,
+    pub drive_snapshots_count: usize,
+    pub last_backup_local: Option<String>,
+    pub last_copied_to_drive: Option<String>,
+}
+
+/// Configuração e estado do Google Drive para a interface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveConfigView {
+    pub configured: bool,
+    pub path: Option<String>,
+    pub resolved_base_dir: Option<String>,
+    pub exists: bool,
+    pub is_available: bool,
+    pub status_message: String,
+    pub total_snapshots_in_drive: usize,
+    pub structure: Vec<DrivePlatformTree>,
+}
+
+/// Estrutura em árvore de uma plataforma no Google Drive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrivePlatformTree {
+    pub platform: String,
+    pub games: Vec<DriveGameTree>,
+}
+
+/// Estrutura de um jogo no Google Drive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveGameTree {
+    pub name: String,
+    pub folder_name: String,
+    pub snapshots_count: usize,
+    pub last_snapshot_date: Option<String>,
+}
+
+/// Resultado da validação de uma pasta do Drive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveValidationResult {
+    pub path: String,
+    pub is_valid: bool,
+    pub exists: bool,
+    pub is_writable: bool,
+    pub message: String,
+}
+
+/// Resultado da criação da estrutura de diretórios no Drive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveStructureResult {
+    pub base_path: String,
+    pub platforms_created: Vec<String>,
+    pub games_created: Vec<String>,
+    pub message: String,
 }
 
 /// Item da fila de sincronização com metadados para a DEV-UI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncQueueItemView {
-    pub id: i64,
+    pub id: Uuid,
     pub backup_id: Uuid,
     pub operation: String,
     pub status: String,
@@ -215,6 +269,19 @@ pub struct RestoreApiResponse {
     pub details: Option<String>,
 }
 
+/// RAII Guard que rastreia uma operação crítica em andamento (ex: snapshot, restauração).
+/// Ao sofrer drop, decrementa atomicamente o contador `in_flight_operations`.
+#[derive(Debug)]
+pub struct InFlightOpGuard {
+    counter: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Drop for InFlightOpGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Estado compartilhado e thread-safe da DEV-UI.
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
@@ -225,11 +292,13 @@ pub struct DevUiState {
     pub reconciliation_interval: Duration,
     pub watcher_active: AtomicBool,
     pub reconciler_active: AtomicBool,
+    pub in_flight_operations: Arc<std::sync::atomic::AtomicUsize>,
     event_counter: AtomicU64,
     recent_events: Mutex<VecDeque<DevUiEvent>>,
     last_error: Mutex<Option<String>>,
     last_reconciliation_report: Mutex<Option<ReconciliationReport>>,
     last_reconcile_time: Mutex<Option<DateTime<Utc>>>,
+    shutdown_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 impl DevUiState {
@@ -254,12 +323,109 @@ impl DevUiState {
             reconciliation_interval,
             watcher_active: AtomicBool::new(true),
             reconciler_active: AtomicBool::new(true),
+            in_flight_operations: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             event_counter: AtomicU64::new(1),
             recent_events: Mutex::new(VecDeque::with_capacity(100)),
             last_error: Mutex::new(None),
             last_reconciliation_report: Mutex::new(None),
             last_reconcile_time: Mutex::new(None),
+            shutdown_tx: Mutex::new(None),
         }
+    }
+
+    /// Registra uma operação crítica em andamento.
+    /// Retorna `None` se o aplicativo já estiver em processo de shutdown (impedindo novos trabalhos).
+    pub fn register_in_flight_operation(&self) -> Option<InFlightOpGuard> {
+        if self.is_shutting_down() {
+            return None;
+        }
+        self.in_flight_operations.fetch_add(1, Ordering::SeqCst);
+        if self.is_shutting_down() {
+            self.in_flight_operations.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(InFlightOpGuard {
+            counter: self.in_flight_operations.clone(),
+        })
+    }
+
+    /// Retorna a quantidade de operações críticas atualmente em execução.
+    pub fn in_flight_count(&self) -> usize {
+        self.in_flight_operations.load(Ordering::SeqCst)
+    }
+
+    /// Indica se o processo de shutdown já foi disparado.
+    pub fn is_shutting_down(&self) -> bool {
+        !self.watcher_active.load(Ordering::SeqCst)
+            || !self.reconciler_active.load(Ordering::SeqCst)
+    }
+
+    /// Registra o transmissor de shutdown para encerramento gracioso dos serviços de background.
+    pub async fn set_shutdown_sender(&self, tx: tokio::sync::watch::Sender<bool>) {
+        let mut guard = self.shutdown_tx.lock().await;
+        *guard = Some(tx);
+    }
+
+    /// Aciona o desligamento seguro de todos os serviços de background (watcher, pipeline, reconciliação).
+    pub async fn trigger_graceful_shutdown(&self) {
+        self.watcher_active.store(false, Ordering::SeqCst);
+        self.reconciler_active.store(false, Ordering::SeqCst);
+        let guard = self.shutdown_tx.lock().await;
+        if let Some(ref tx) = *guard {
+            let _ = tx.send(true);
+        }
+    }
+
+    /// Solicita shutdown e aguarda ativamente a finalização de todas as operações críticas e reconciliações
+    /// até o timeout informado.
+    ///
+    /// Justificativa de timeout recomendado em produção (15s):
+    /// No Windows NTFS, saves de jogos típicos variam entre dezenas de KB a 200MB.
+    /// Em SSD/HD comum, hashing BLAKE3 e cópia/rename atômico levam entre 0.5s e 3s.
+    /// Um limite de 15 segundos concede margem ampla (>5x) para a conclusão segura de qualquer
+    /// snapshot ou restore em trânsito sem congelar a UI indefinidamente em falhas de disco.
+    pub async fn wait_graceful_shutdown(&self, timeout: Duration) -> bool {
+        tracing::info!(
+            "Disparando shutdown gracioso com barreira (timeout: {:?})...",
+            timeout
+        );
+        self.trigger_graceful_shutdown().await;
+
+        let start = std::time::Instant::now();
+        let poll_interval = Duration::from_millis(25);
+
+        while start.elapsed() < timeout {
+            let is_recon = if let Some(ref r) = self.reconciler {
+                r.is_reconciling()
+            } else {
+                false
+            };
+            let in_flight = self.in_flight_count();
+
+            if !is_recon && in_flight == 0 {
+                tracing::info!(
+                    "Shutdown concluído graciosamente em {:?} sem operações pendentes.",
+                    start.elapsed()
+                );
+                return true;
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+
+        let is_recon = if let Some(ref r) = self.reconciler {
+            r.is_reconciling()
+        } else {
+            false
+        };
+        let in_flight = self.in_flight_count();
+        tracing::warn!(
+            "Timeout de shutdown atingido ({:?})! Pendências ativas: reconciliando={}, in_flight={}",
+            timeout,
+            is_recon,
+            in_flight
+        );
+        false
     }
 
     /// Registra um evento no log em memória da DEV-UI.
@@ -443,7 +609,35 @@ impl DevUiState {
                 .ok()
                 .or_else(|| Some(game.created_at.format("%Y-%m-%d %H:%M:%S").to_string()));
 
-            // Status de sync do jogo
+            // Status de sync e Drive do jogo
+            let drive_snapshots_count: usize = conn
+                .query_row(
+                    "SELECT COUNT(b.id)
+                     FROM backups b
+                     JOIN files f ON b.file_id = f.id
+                     JOIN save_locations sl ON f.save_location_id = sl.id
+                     WHERE sl.game_id = ?1 AND b.sync_status = 'copied_to_drive_folder'",
+                    rusqlite::params![game.id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            let last_copied_to_drive: Option<String> = conn
+                .query_row(
+                    "SELECT b.created_at
+                     FROM backups b
+                     JOIN files f ON b.file_id = f.id
+                     JOIN save_locations sl ON f.save_location_id = sl.id
+                     WHERE sl.game_id = ?1 AND b.sync_status = 'copied_to_drive_folder'
+                     ORDER BY b.created_at DESC
+                     LIMIT 1",
+                    rusqlite::params![game.id.to_string()],
+                    |r| r.get(0),
+                )
+                .ok();
+
+            let last_backup_local = last_activity.clone();
+
             let pending_sync: usize = conn
                 .query_row(
                     "SELECT COUNT(sq.id)
@@ -459,8 +653,10 @@ impl DevUiState {
 
             let sync_status = if pending_sync > 0 {
                 format!("Pendente ({})", pending_sync)
+            } else if drive_snapshots_count > 0 {
+                "Copiado para o Drive".to_string()
             } else if snapshots_count > 0 {
-                "Sincronizado".to_string()
+                "Apenas local".to_string()
             } else {
                 "—".to_string()
             };
@@ -495,6 +691,9 @@ impl DevUiState {
                 save_locations_count: locations_count,
                 files_count,
                 snapshots_count,
+                drive_snapshots_count,
+                last_backup_local,
+                last_copied_to_drive,
                 monitoring_status,
                 last_activity,
                 last_error: None,
@@ -536,6 +735,9 @@ impl DevUiState {
             .collect();
 
         Ok(GameDetailView {
+            drive_snapshots_count: game.drive_snapshots_count,
+            last_backup_local: game.last_backup_local.clone(),
+            last_copied_to_drive: game.last_copied_to_drive.clone(),
             game,
             locations,
             snapshots,
@@ -547,7 +749,7 @@ impl DevUiState {
     pub async fn get_sync_queue(&self) -> Result<Vec<SyncQueueItemView>> {
         let conn = self.db.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT sq.id, sq.backup_id, sq.operation, sq.status, sq.retry_count, sq.created_at, sq.last_error,
+            "SELECT sq.id, sq.backup_id, sq.operation, sq.status, sq.attempts, sq.created_at,
                     f.path, g.name
              FROM sync_queue sq
              JOIN backups b ON sq.backup_id = b.id
@@ -559,15 +761,14 @@ impl DevUiState {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let id: i64 = row.get(0)?;
+            let id_str: String = row.get(0)?;
             let b_id: String = row.get(1)?;
             let op: String = row.get(2)?;
             let status: String = row.get(3)?;
             let attempts: u32 = row.get(4)?;
             let created_at: String = row.get(5)?;
-            let last_error: Option<String> = row.get(6)?;
-            let file_path: String = row.get(7)?;
-            let game_name: String = row.get(8)?;
+            let file_path: String = row.get(6)?;
+            let game_name: String = row.get(7)?;
 
             let file_name = std::path::Path::new(&file_path)
                 .file_name()
@@ -575,7 +776,7 @@ impl DevUiState {
                 .unwrap_or(file_path);
 
             Ok(SyncQueueItemView {
-                id,
+                id: Uuid::parse_str(&id_str).unwrap_or_default(),
                 backup_id: Uuid::parse_str(&b_id).unwrap_or_default(),
                 operation: op,
                 status,
@@ -583,7 +784,7 @@ impl DevUiState {
                 file_name,
                 game_name,
                 created_at,
-                last_error,
+                last_error: None,
             })
         })?;
 
@@ -613,9 +814,17 @@ impl DevUiState {
                         games_repo.find_by_platform_id(&game.platform, platform_id)
                     {
                         real_id = existing.id;
+                    } else if let Ok(Some(existing)) =
+                        games_repo.find_by_name_and_platform(&game.name, &game.platform)
+                    {
+                        real_id = existing.id;
                     } else if games_repo.insert(game).is_ok() {
                         new_games += 1;
                     }
+                } else if let Ok(Some(existing)) =
+                    games_repo.find_by_name_and_platform(&game.name, &game.platform)
+                {
+                    real_id = existing.id;
                 } else if games_repo.insert(game).is_ok() {
                     new_games += 1;
                 }
@@ -626,8 +835,10 @@ impl DevUiState {
                 if let Some(&real_id) = real_ids.get(&loc.game_id) {
                     let mut loc_to_insert = loc.clone();
                     loc_to_insert.game_id = real_id;
-                    if locations_repo.insert(&loc_to_insert).is_ok() {
-                        new_locations += 1;
+                    if let Ok(saved) = locations_repo.upsert(&loc_to_insert) {
+                        if saved.id == loc_to_insert.id {
+                            new_locations += 1;
+                        }
                     }
                 }
             }
@@ -1003,6 +1214,23 @@ impl DevUiState {
         snapshot_id: Uuid,
         expected_hash: Option<String>,
     ) -> RestoreApiResponse {
+        let _op_guard = match self.register_in_flight_operation() {
+            Some(g) => g,
+            None => {
+                return RestoreApiResponse {
+                    success: false,
+                    snapshot_id: Some(snapshot_id),
+                    version: None,
+                    dest_path: None,
+                    safety_backup_path: None,
+                    restored_hash: None,
+                    bytes_restored: None,
+                    error: Some("Operação recusada: sistema em processo de encerramento.".into()),
+                    details: Some("O aplicativo está sendo encerrado e não aceita novas operações de restauração.".into()),
+                };
+            }
+        };
+
         let req = match expected_hash {
             Some(h) => RestoreRequest::with_expected_hash(snapshot_id, h),
             None => RestoreRequest::new(snapshot_id),
@@ -1018,7 +1246,17 @@ impl DevUiState {
         )
         .await;
 
-        let res = restore_snapshot_with_db(&self.db, &self.backup_root, &req).await;
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let drive_dir = config.paths.drive_dir.as_deref();
+
+        let res = crate::restore::restore_snapshot_with_db_and_drive(
+            &self.db,
+            &self.backup_root,
+            drive_dir,
+            &req,
+        )
+        .await;
 
         match res {
             Ok(report) => {
@@ -1107,6 +1345,392 @@ impl DevUiState {
                 }
             }
         }
+    }
+
+    /// Retorna as informações de configuração e árvore de pastas do Google Drive para a DEV-UI.
+    pub async fn get_drive_config(&self) -> Result<DriveConfigView> {
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        let drive_path = config.paths.drive_dir.clone();
+        if let Some(ref path) = drive_path {
+            use savevault_backup::storage::FilesystemBackupStorage;
+            let storage = FilesystemBackupStorage::new(path);
+            let status = storage.validate_folder();
+
+            let exists = path.exists();
+            let is_available = status.is_available();
+            let status_message = match &status {
+                savevault_backup::storage::DriveFolderStatus::Available { .. } => {
+                    "Pasta disponível".to_string()
+                }
+                savevault_backup::storage::DriveFolderStatus::NotFound { .. } => {
+                    "Pasta não encontrada no disco".to_string()
+                }
+                savevault_backup::storage::DriveFolderStatus::AccessDenied { reason, .. } => {
+                    format!("Acesso negado: {}", reason)
+                }
+                savevault_backup::storage::DriveFolderStatus::Unavailable { reason, .. } => {
+                    format!("Indisponível: {}", reason)
+                }
+            };
+
+            let mut total_snapshots = 0usize;
+            let mut platform_trees = Vec::new();
+
+            if is_available {
+                let base_dir = storage.resolve_base_dir();
+                if base_dir.exists() {
+                    let platforms = ["Steam", "GOG", "Epic", "Other"];
+                    for plat in &platforms {
+                        let plat_dir = base_dir.join(plat);
+                        if plat_dir.exists() {
+                            let mut games = Vec::new();
+                            if let Ok(entries) = std::fs::read_dir(&plat_dir) {
+                                for entry in entries.flatten() {
+                                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                        let folder_name =
+                                            entry.file_name().to_string_lossy().to_string();
+                                        let meta_dir = entry.path().join("metadata");
+                                        let mut snap_count = 0usize;
+                                        let mut latest_date: Option<String> = None;
+
+                                        if meta_dir.exists() {
+                                            if let Ok(meta_entries) = std::fs::read_dir(&meta_dir) {
+                                                for m in meta_entries.flatten() {
+                                                    let fname =
+                                                        m.file_name().to_string_lossy().to_string();
+                                                    if fname.starts_with('v')
+                                                        && fname.ends_with(".json")
+                                                        && !fname.contains(".tmp.")
+                                                    {
+                                                        snap_count += 1;
+                                                        if let Ok(c) =
+                                                            std::fs::read_to_string(m.path())
+                                                        {
+                                                            if let Ok(meta) = serde_json::from_str::<savevault_backup::storage::StoredSnapshotMetadata>(&c) {
+                                                                let date_str = meta.copied_at.format("%Y-%m-%d %H:%M").to_string();
+                                                                if latest_date.is_none() || latest_date.as_ref().map(|d| d < &date_str).unwrap_or(false) {
+                                                                    latest_date = Some(date_str);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        total_snapshots += snap_count;
+                                        games.push(DriveGameTree {
+                                            name: folder_name.clone(),
+                                            folder_name,
+                                            snapshots_count: snap_count,
+                                            last_snapshot_date: latest_date,
+                                        });
+                                    }
+                                }
+                            }
+
+                            if !games.is_empty() {
+                                platform_trees.push(DrivePlatformTree {
+                                    platform: plat.to_string(),
+                                    games,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            let base_dir = storage.resolve_base_dir();
+            let resolved_base_dir = Some(base_dir.to_string_lossy().to_string());
+
+            Ok(DriveConfigView {
+                configured: true,
+                path: Some(path.to_string_lossy().to_string()),
+                resolved_base_dir,
+                exists,
+                is_available,
+                status_message,
+                total_snapshots_in_drive: total_snapshots,
+                structure: platform_trees,
+            })
+        } else {
+            Ok(DriveConfigView {
+                configured: false,
+                path: None,
+                resolved_base_dir: None,
+                exists: false,
+                is_available: false,
+                status_message: "Nenhuma pasta configurada".to_string(),
+                total_snapshots_in_drive: 0,
+                structure: Vec::new(),
+            })
+        }
+    }
+
+    /// Salva e valida uma nova pasta do Google Drive na configuração persistente.
+    pub async fn set_drive_folder(&self, path_str: String) -> Result<DriveConfigView> {
+        let trimmed = path_str.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("O caminho da pasta não pode ser vazio.");
+        }
+
+        let normalized = savevault_core::path::normalize_windows_path_str(trimmed)
+            .map_err(|e| anyhow::anyhow!("Caminho inválido: {}", e))?;
+        let pbuf = PathBuf::from(&normalized);
+
+        let config_path = self.config_dir.join("config.toml");
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        config.paths.drive_dir = Some(pbuf.clone());
+        config.save(&config_path)?;
+
+        if let Some(ref r) = self.reconciler {
+            r.set_drive_dir(Some(pbuf.clone()));
+        }
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            format!("Pasta do Google Drive configurada: {}", normalized),
+            None,
+        )
+        .await;
+
+        self.get_drive_config().await
+    }
+
+    /// Valida uma pasta do Google Drive (permissões, existência, escrita).
+    pub async fn validate_drive_folder(
+        &self,
+        path_str: Option<String>,
+    ) -> Result<DriveValidationResult> {
+        let path = match path_str {
+            Some(ref s) if !s.trim().is_empty() => PathBuf::from(s.trim()),
+            _ => {
+                let config_path = self.config_dir.join("config.toml");
+                let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+                match config.paths.drive_dir {
+                    Some(p) => p,
+                    None => {
+                        return Ok(DriveValidationResult {
+                            path: String::new(),
+                            is_valid: false,
+                            exists: false,
+                            is_writable: false,
+                            message: "Nenhuma pasta configurada".into(),
+                        });
+                    }
+                }
+            }
+        };
+
+        let exists = path.exists();
+        let mut is_writable = false;
+        let message;
+
+        if exists {
+            if path.is_dir() {
+                let test_file = path.join(format!(".savevault_write_test_{}.tmp", Uuid::new_v4()));
+                match std::fs::write(&test_file, b"ok") {
+                    Ok(_) => {
+                        let _ = std::fs::remove_file(&test_file);
+                        is_writable = true;
+                        message = "Pasta acessível e com permissão de escrita".to_string();
+                    }
+                    Err(e) => {
+                        message = format!("Sem permissão de escrita na pasta: {}", e);
+                    }
+                }
+            } else {
+                message = "O caminho especificado não é um diretório".to_string();
+            }
+        } else {
+            message = "A pasta não existe no disco".to_string();
+        }
+
+        Ok(DriveValidationResult {
+            path: path.to_string_lossy().to_string(),
+            is_valid: exists && is_writable,
+            exists,
+            is_writable,
+            message,
+        })
+    }
+
+    /// Cria a estrutura inicial de diretórios do SaveVault no Google Drive para todos os jogos cadastrados.
+    pub async fn create_drive_structure(&self) -> Result<DriveStructureResult> {
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let drive_dir = config.paths.drive_dir.ok_or_else(|| {
+            anyhow::anyhow!("Nenhuma pasta do Google Drive configurada. Configure a pasta antes de criar a estrutura.")
+        })?;
+
+        use savevault_backup::storage::{BackupStorage, FilesystemBackupStorage};
+        let storage = FilesystemBackupStorage::new(&drive_dir);
+        let status = storage.validate_folder();
+        if !status.is_available() {
+            anyhow::bail!("A pasta do Google Drive não está acessível: {:?}", status);
+        }
+
+        let base_dir = storage.resolve_base_dir();
+        std::fs::create_dir_all(&base_dir)?;
+
+        let (platforms_vec, games_created) = {
+            let conn = self.db.lock().await;
+            let games_repo = GamesRepo::new(&conn);
+            let games = games_repo.list_all()?;
+
+            let mut platforms_set = std::collections::HashSet::new();
+            let mut games_created = Vec::new();
+
+            for game in &games {
+                let plat_name = game.platform.display_folder_name();
+                platforms_set.insert(plat_name.to_string());
+                if let Ok(game_paths) =
+                    storage.ensure_game_structure(&game.platform, &game.name, Some(game.id))
+                {
+                    let folder_name = game_paths
+                        .game_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    games_created.push(format!("{}/{}", plat_name, folder_name));
+                }
+            }
+
+            let platforms_vec: Vec<String> = platforms_set.into_iter().collect();
+            (platforms_vec, games_created)
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Estrutura do SaveVault criada no Drive com sucesso: {} plataforma(s), {} jogo(s)",
+                platforms_vec.len(),
+                games_created.len()
+            ),
+            None,
+        )
+        .await;
+
+        Ok(DriveStructureResult {
+            base_path: base_dir.to_string_lossy().to_string(),
+            platforms_created: platforms_vec,
+            games_created,
+            message: "Estrutura do SaveVault criada com sucesso na pasta do Drive.".into(),
+        })
+    }
+
+    /// Abre o Windows Explorer diretamente na pasta do Google Drive.
+    pub async fn open_drive_folder(&self) -> Result<String> {
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let drive_dir = config
+            .paths
+            .drive_dir
+            .ok_or_else(|| anyhow::anyhow!("Nenhuma pasta do Google Drive configurada."))?;
+
+        if !drive_dir.exists() {
+            anyhow::bail!(
+                "A pasta configurada não existe no disco: {}",
+                drive_dir.display()
+            );
+        }
+
+        let storage = savevault_backup::storage::FilesystemBackupStorage::new(&drive_dir);
+        let target = storage.resolve_base_dir();
+        let open_target = if target.exists() { target } else { drive_dir };
+
+        std::process::Command::new("explorer")
+            .arg(&open_target)
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Falha ao abrir Windows Explorer: {}", e))?;
+
+        Ok(format!(
+            "Pasta aberta no Windows Explorer: {}",
+            open_target.display()
+        ))
+    }
+
+    /// Sincroniza manualmente todos os snapshots pendentes para a pasta do Drive.
+    pub async fn sync_all_to_drive(&self) -> Result<usize> {
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let drive_dir = config
+            .paths
+            .drive_dir
+            .ok_or_else(|| anyhow::anyhow!("Nenhuma pasta do Google Drive configurada."))?;
+
+        let count = {
+            let conn = self.db.lock().await;
+            crate::pipeline::sync_all_pending_to_drive_folder(&conn, &self.backup_root, &drive_dir)?
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Sincronização manual com o Drive: {} snapshot(s) copiado(s)",
+                count
+            ),
+            None,
+        )
+        .await;
+        Ok(count)
+    }
+
+    /// Sincroniza manualmente todos os snapshots de um jogo específico para a pasta do Drive.
+    pub async fn sync_game_to_drive(&self, game_id: Uuid) -> Result<usize> {
+        let config_path = self.config_dir.join("config.toml");
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let drive_dir = config
+            .paths
+            .drive_dir
+            .ok_or_else(|| anyhow::anyhow!("Nenhuma pasta do Google Drive configurada."))?;
+
+        let count = {
+            let conn = self.db.lock().await;
+            let mut count = 0usize;
+            let mut stmt = conn.prepare(
+                "SELECT b.id
+                 FROM backups b
+                 JOIN files f ON b.file_id = f.id
+                 JOIN save_locations sl ON f.save_location_id = sl.id
+                 WHERE sl.game_id = ?1 AND b.sync_status != 'copied_to_drive_folder'
+                 ORDER BY b.version ASC",
+            )?;
+            let backup_ids: Vec<Uuid> = stmt
+                .query_map(rusqlite::params![game_id.to_string()], |r| {
+                    let id_str: String = r.get(0)?;
+                    Ok(Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(stmt);
+
+            for bid in backup_ids {
+                if let Ok(true) = crate::pipeline::sync_backup_to_drive_folder(
+                    &conn,
+                    bid,
+                    &self.backup_root,
+                    &drive_dir,
+                ) {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Sincronização do jogo com o Drive: {} snapshot(s) copiado(s)",
+                count
+            ),
+            None,
+        )
+        .await;
+
+        Ok(count)
     }
 }
 

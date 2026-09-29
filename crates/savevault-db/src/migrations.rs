@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use anyhow::Result;
+use rusqlite::Connection;
 
 /// Executa as migrações do banco de dados em ordem.
 /// Novas migrações devem ser adicionadas no final do array `MIGRATIONS`.
@@ -18,12 +18,14 @@ pub fn run(conn: &Connection) -> Result<()> {
 
     for (name, sql) in MIGRATIONS {
         if !applied.contains(&name.to_string()) {
-            conn.execute_batch(sql)?;
-            conn.execute(
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(sql)?;
+            tx.execute(
                 "INSERT INTO __migrations (name, applied_at) VALUES (?1, datetime('now'))",
                 [name],
             )?;
-            tracing::info!("Migração aplicada: {}", name);
+            tx.commit()?;
+            tracing::info!("Migração aplicada com atomicidade: {}", name);
         }
     }
 
@@ -44,6 +46,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("002_save_locations_unique_path", MIGRATION_002),
     ("003_save_locations_nocase_index", MIGRATION_003),
     ("004_backups_drive_file_id", MIGRATION_004),
+    ("005_files_nocase_index", MIGRATION_005),
 ];
 
 const MIGRATION_001: &str = "
@@ -120,3 +123,33 @@ ALTER TABLE backups ADD COLUMN drive_file_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_backups_drive_file_id ON backups(drive_file_id);
 ";
 
+const MIGRATION_005: &str = "
+-- 1. Consolida backups que apontam para arquivos duplicados na tabela files antes de criar o índice único
+UPDATE backups
+SET file_id = (
+    SELECT f_canonical.id
+    FROM files f_canonical
+    JOIN files f_dup ON f_dup.id = backups.file_id
+    WHERE f_canonical.path = f_dup.path COLLATE NOCASE
+    ORDER BY f_canonical.rowid ASC
+    LIMIT 1
+)
+WHERE file_id IN (
+    SELECT id FROM files f_inner
+    WHERE f_inner.rowid > (
+        SELECT MIN(f_min.rowid) FROM files f_min
+        WHERE f_min.path = f_inner.path COLLATE NOCASE
+    )
+);
+
+-- 2. Remove registros duplicados na tabela files preservando a primeira ocorrência
+DELETE FROM files
+WHERE rowid NOT IN (
+    SELECT MIN(rowid)
+    FROM files
+    GROUP BY path COLLATE NOCASE
+);
+
+-- 3. Cria índice único case-insensitive na tabela files para garantir unicidade física no Windows
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_nocase ON files(path COLLATE NOCASE);
+";

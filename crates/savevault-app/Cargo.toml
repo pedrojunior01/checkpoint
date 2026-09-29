@@ -37,11 +37,13 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }
+walkdir = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+blake3 = { workspace = true }
 async-trait = "0.1"
 

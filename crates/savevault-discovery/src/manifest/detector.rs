@@ -1,9 +1,9 @@
+use super::resolver::{resolve_paths, PathContext};
+use super::types::GameEntry;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use anyhow::Result;
-use tracing::{info, debug};
-use super::types::GameEntry;
-use super::resolver::{PathContext, resolve_paths};
+use tracing::{debug, info};
 
 /// Detector de saves via Ludusavi Manifest.
 pub struct ManifestDetector {
@@ -81,12 +81,7 @@ impl ManifestDetector {
             }
             let resolved_list = resolve_paths(template, ctx);
             for resolved in resolved_list {
-                debug!(
-                    "[{}] {} → {}",
-                    game_name,
-                    template,
-                    resolved.display()
-                );
+                debug!("[{}] {} → {}", game_name, template, resolved.display());
                 paths.push(resolved);
             }
         }

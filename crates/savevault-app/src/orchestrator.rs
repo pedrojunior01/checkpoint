@@ -41,7 +41,10 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
         let discovery = detector.detect_save_locations(game)?;
 
         match discovery {
-            SaveDiscoveryResult::Found(locs) | SaveDiscoveryResult::KnownNotFoundOnDisk { expected_locations: locs } => {
+            SaveDiscoveryResult::Found(locs)
+            | SaveDiscoveryResult::KnownNotFoundOnDisk {
+                expected_locations: locs,
+            } => {
                 for loc in locs {
                     let persisted = loc_repo.upsert(&loc)?;
                     report.persisted_locations.push(persisted);

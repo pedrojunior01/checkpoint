@@ -4,9 +4,9 @@
 //! garantindo isolamento de ambiente, rejeição explícita de variáveis ausentes e
 //! manipulação segura de caminhos sem o uso de `to_string_lossy`.
 
+use crate::save_detector::SaveDiscoveryError;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::save_detector::SaveDiscoveryError;
 
 /// Resolvedor de caminhos e placeholders do Ludusavi.
 #[derive(Debug, Clone)]
@@ -27,25 +27,37 @@ impl PathResolver {
         if let Some(h) = &home {
             vars.insert("<home>".to_string(), h.clone());
             vars.insert("<winDocuments>".to_string(), h.join("Documents"));
-            vars.insert("<winLocalAppDataLow>".to_string(), h.join("AppData").join("LocalLow"));
+            vars.insert(
+                "<winLocalAppDataLow>".to_string(),
+                h.join("AppData").join("LocalLow"),
+            );
         }
 
         if let Ok(appdata) = std::env::var("APPDATA") {
             vars.insert("<winAppData>".to_string(), PathBuf::from(appdata));
         } else if let Some(h) = &home {
-            vars.insert("<winAppData>".to_string(), h.join("AppData").join("Roaming"));
+            vars.insert(
+                "<winAppData>".to_string(),
+                h.join("AppData").join("Roaming"),
+            );
         }
 
         if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
             vars.insert("<winLocalAppData>".to_string(), PathBuf::from(localappdata));
         } else if let Some(h) = &home {
-            vars.insert("<winLocalAppData>".to_string(), h.join("AppData").join("Local"));
+            vars.insert(
+                "<winLocalAppData>".to_string(),
+                h.join("AppData").join("Local"),
+            );
         }
 
         if let Ok(programdata) = std::env::var("ProgramData") {
             vars.insert("<winProgramData>".to_string(), PathBuf::from(programdata));
         } else {
-            vars.insert("<winProgramData>".to_string(), PathBuf::from(r"C:\ProgramData"));
+            vars.insert(
+                "<winProgramData>".to_string(),
+                PathBuf::from(r"C:\ProgramData"),
+            );
         }
 
         if let Ok(public) = std::env::var("PUBLIC") {
@@ -71,7 +83,11 @@ impl PathResolver {
     }
 
     /// Adiciona ou substitui uma variável no resolvedor.
-    pub fn with_variable(mut self, placeholder: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+    pub fn with_variable(
+        mut self,
+        placeholder: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Self {
         let mut key = placeholder.into();
         if !key.starts_with('<') {
             key = format!("<{}>", key);

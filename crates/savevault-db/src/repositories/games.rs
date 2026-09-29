@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
-use savevault_core::models::{Game, Platform, Confidence};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use savevault_core::models::{Confidence, Game, Platform};
+use uuid::Uuid;
 
 pub struct GamesRepo<'a> {
     pub conn: &'a Connection,
@@ -37,11 +37,29 @@ impl<'a> GamesRepo<'a> {
         Ok(rows.next().transpose()?)
     }
 
-    pub fn find_by_platform_id(&self, platform: &Platform, platform_id: &str) -> Result<Option<Game>> {
+    pub fn find_by_platform_id(
+        &self,
+        platform: &Platform,
+        platform_id: &str,
+    ) -> Result<Option<Game>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, platform, platform_id, confidence, created_at FROM games WHERE platform = ?1 AND platform_id = ?2"
         )?;
-        let mut rows = stmt.query_map(params![platform_to_str(platform), platform_id], row_to_game)?;
+        let mut rows =
+            stmt.query_map(params![platform_to_str(platform), platform_id], row_to_game)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn find_by_name_and_platform(
+        &self,
+        name: &str,
+        platform: &Platform,
+    ) -> Result<Option<Game>> {
+        let trimmed = name.trim();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, platform, platform_id, confidence, created_at FROM games WHERE name = ?1 COLLATE NOCASE AND platform = ?2"
+        )?;
+        let mut rows = stmt.query_map(params![trimmed, platform_to_str(platform)], row_to_game)?;
         Ok(rows.next().transpose()?)
     }
 
@@ -49,12 +67,16 @@ impl<'a> GamesRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, platform, platform_id, confidence, created_at FROM games ORDER BY name"
         )?;
-        let games = stmt.query_map([], row_to_game)?.filter_map(|r| r.ok()).collect();
+        let games = stmt
+            .query_map([], row_to_game)?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(games)
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM games WHERE id = ?1", params![id.to_string()])?;
+        self.conn
+            .execute("DELETE FROM games WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 }
@@ -71,7 +93,9 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<Game> {
         platform: str_to_platform(&platform_str),
         platform_id: row.get(3)?,
         confidence: str_to_confidence(&confidence_str),
-        created_at: created_at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at: created_at_str
+            .parse::<DateTime<Utc>>()
+            .unwrap_or_else(|_| Utc::now()),
     })
 }
 
@@ -79,6 +103,7 @@ fn platform_to_str(p: &Platform) -> &'static str {
     match p {
         Platform::Steam => "steam",
         Platform::Gog => "gog",
+        Platform::Epic => "epic",
         Platform::Dolphin => "dolphin",
         Platform::Pcsx2 => "pcsx2",
         Platform::Ppsspp => "ppsspp",
@@ -91,6 +116,7 @@ fn str_to_platform(s: &str) -> Platform {
     match s {
         "steam" => Platform::Steam,
         "gog" => Platform::Gog,
+        "epic" => Platform::Epic,
         "dolphin" => Platform::Dolphin,
         "pcsx2" => Platform::Pcsx2,
         "ppsspp" => Platform::Ppsspp,

@@ -145,6 +145,95 @@ pub async fn trigger_discovery(
     state.trigger_discovery().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_drive_config(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<crate::ui::state::DriveConfigView, String> {
+    state.get_drive_config().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_drive_folder(
+    state: State<'_, Arc<DevUiState>>,
+    folder_path: String,
+) -> Result<crate::ui::state::DriveConfigView, String> {
+    state
+        .set_drive_folder(folder_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn validate_drive_folder(
+    state: State<'_, Arc<DevUiState>>,
+    folder_path: Option<String>,
+) -> Result<crate::ui::state::DriveValidationResult, String> {
+    state
+        .validate_drive_folder(folder_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_drive_structure(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<crate::ui::state::DriveStructureResult, String> {
+    state
+        .create_drive_structure()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_drive_folder(state: State<'_, Arc<DevUiState>>) -> Result<String, String> {
+    state.open_drive_folder().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sync_all_to_drive(state: State<'_, Arc<DevUiState>>) -> Result<usize, String> {
+    state.sync_all_to_drive().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sync_game_to_drive(
+    state: State<'_, Arc<DevUiState>>,
+    game_id: String,
+) -> Result<usize, String> {
+    let id = Uuid::parse_str(&game_id).map_err(|e| format!("UUID de jogo inválido: {}", e))?;
+    state
+        .sync_game_to_drive(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn select_drive_folder_native() -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(|| {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Selecione a pasta do Google Drive para o SaveVault'; $f.ShowNewFolderButton = $true; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::WriteLine($f.SelectedPath) }",
+            ])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(s))
+                }
+            }
+            Ok(_) => Ok(None),
+            Err(e) => Err(format!("Falha ao abrir seletor nativo de pasta: {}", e)),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------------------
 // Inicialização do App Tauri
 // ---------------------------------------------------------------------------
@@ -167,6 +256,14 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_sync_queue,
             get_recent_events,
             trigger_discovery,
+            get_drive_config,
+            set_drive_folder,
+            validate_drive_folder,
+            create_drive_structure,
+            open_drive_folder,
+            sync_all_to_drive,
+            sync_game_to_drive,
+            select_drive_folder_native,
         ])
         .setup(|app| {
             // Garante que a janela principal seja exibida e receba foco imediatamente
@@ -221,7 +318,17 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                             });
                         }
                         "quit" => {
-                            app.exit(0);
+                            let state_ref: State<'_, Arc<DevUiState>> = app.state();
+                            let s = state_ref.inner().clone();
+                            let app_handle = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tracing::info!("Encerramento solicitado pelo System Tray. Aguardando finalização graciosa dos serviços...");
+                                let clean_exit = s.wait_graceful_shutdown(std::time::Duration::from_secs(15)).await;
+                                if !clean_exit {
+                                    tracing::error!("Timeout de 15s excedido durante encerramento no tray. Forçando exit.");
+                                }
+                                app_handle.exit(0);
+                            });
                         }
                         _ => {}
                     })

@@ -29,6 +29,11 @@ impl SteamDetector {
         }
     }
 
+    /// Cria detector com root explícito (útil para testes unitários ou fixtures).
+    pub fn with_root(steam_root: Option<PathBuf>) -> Self {
+        Self { steam_root }
+    }
+
     /// Detecta jogos Steam com seus caminhos de instalação.
     pub async fn detect_with_paths(&self) -> Result<Vec<SteamGameInfo>> {
         let root = match &self.steam_root {
@@ -43,7 +48,10 @@ impl SteamDetector {
         let library_folders = root.join("steamapps").join("libraryfolders.vdf");
 
         if !library_folders.exists() {
-            warn!("libraryfolders.vdf não encontrado em {}", library_folders.display());
+            warn!(
+                "libraryfolders.vdf não encontrado em {}",
+                library_folders.display()
+            );
             return Ok(vec![]);
         }
 
@@ -60,7 +68,11 @@ impl SteamDetector {
             let mut entries = tokio::fs::read_dir(&apps_dir).await?;
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
 
                 if name.starts_with("appmanifest_") && name.ends_with(".acf") {
                     if let Ok(acf_content) = tokio::fs::read_to_string(&path).await {
@@ -81,22 +93,112 @@ impl SteamDetector {
 
     /// Detecta apenas os Games (sem install path) — compatibilidade com testes existentes.
     pub async fn detect(&self) -> Result<Vec<Game>> {
-        Ok(self.detect_with_paths().await?.into_iter().map(|i| i.game).collect())
+        Ok(self
+            .detect_with_paths()
+            .await?
+            .into_iter()
+            .map(|i| i.game)
+            .collect())
     }
 }
 
-/// Localiza a pasta raiz do Steam no Windows.
+/// Localiza a pasta raiz do Steam no Windows consultando:
+/// 1. Variável de ambiente `STEAM_ROOT`
+/// 2. Registro do Windows (HKCU e HKLM)
+/// 3. Caminhos de instalação padrão
 fn find_steam_root() -> Option<PathBuf> {
-    let default = PathBuf::from("C:\\Program Files (x86)\\Steam");
-    if default.exists() {
-        return Some(default);
-    }
+    // 1. Variável de ambiente (override explícito ou testes)
     if let Ok(path) = std::env::var("STEAM_ROOT") {
         let p = PathBuf::from(path);
         if p.exists() {
             return Some(p);
         }
     }
+
+    // 2. Registro do Windows
+    #[cfg(windows)]
+    {
+        // HKCU\Software\Valve\Steam -> SteamPath
+        if let Some(path_str) = query_registry_value("HKCU\\Software\\Valve\\Steam", "SteamPath") {
+            let p = PathBuf::from(path_str.replace('/', "\\"));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        // HKLM\SOFTWARE\WOW6432Node\Valve\Steam -> InstallPath
+        if let Some(path_str) =
+            query_registry_value("HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath")
+        {
+            let p = PathBuf::from(path_str);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        // HKLM\SOFTWARE\Valve\Steam -> InstallPath
+        if let Some(path_str) = query_registry_value("HKLM\\SOFTWARE\\Valve\\Steam", "InstallPath")
+        {
+            let p = PathBuf::from(path_str);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+
+    // 3. Caminhos padrão do sistema de arquivos
+    let common_paths = [
+        "C:\\Program Files (x86)\\Steam",
+        "C:\\Program Files\\Steam",
+        "D:\\Steam",
+        "E:\\Steam",
+    ];
+
+    for &path in &common_paths {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
+/// Consulta o registro do Windows via utilitário nativo `reg query`.
+#[cfg(windows)]
+pub fn query_registry_value(key: &str, value: &str) -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("reg")
+        .args(["query", key, "/v", value])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.to_lowercase().starts_with(&value.to_lowercase()) {
+            if let Some(pos) = line.find("REG_SZ") {
+                let data = line[pos + 6..].trim();
+                if !data.is_empty() {
+                    return Some(data.to_string());
+                }
+            } else if let Some(pos) = line.find("REG_EXPAND_SZ") {
+                let data = line[pos + 13..].trim();
+                if !data.is_empty() {
+                    return Some(data.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub fn query_registry_value(_key: &str, _value: &str) -> Option<String> {
     None
 }
 
@@ -137,8 +239,8 @@ fn parse_acf(content: &str, library_path: &Path) -> Option<SteamGameInfo> {
         let key = parts[1].to_lowercase();
         let value = parts[3].trim_end_matches('"');
         match key.as_str() {
-            "name"       => name = Some(value.to_string()),
-            "appid"      => app_id = Some(value.to_string()),
+            "name" => name = Some(value.to_string()),
+            "appid" => app_id = Some(value.to_string()),
             "installdir" => install_dir = Some(value.to_string()),
             _ => {}
         }
@@ -147,9 +249,8 @@ fn parse_acf(content: &str, library_path: &Path) -> Option<SteamGameInfo> {
     let name = name?;
 
     // Caminho completo: {library}/steamapps/common/{installdir}
-    let install_path = install_dir.map(|dir| {
-        library_path.join("steamapps").join("common").join(dir)
-    });
+    let install_path =
+        install_dir.map(|dir| library_path.join("steamapps").join("common").join(dir));
 
     let game = Game::new(name, Platform::Steam, app_id, Confidence::High);
     Some(SteamGameInfo { game, install_path })

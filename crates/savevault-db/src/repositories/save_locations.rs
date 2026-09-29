@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection};
 use savevault_core::models::{SaveLocation, SaveLocationType};
-use uuid::Uuid;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 pub struct SaveLocationsRepo<'a> {
     pub conn: &'a Connection,
@@ -16,7 +16,9 @@ impl<'a> SaveLocationsRepo<'a> {
     pub fn insert(&self, loc: &SaveLocation) -> Result<()> {
         let norm_path = savevault_core::path::normalize_windows_path(&loc.path)
             .map_err(|e| anyhow::anyhow!("Caminho de save inválido: {}", e))?;
-        let path_str = norm_path.to_str().context("Caminho de save contém caracteres não-UTF8")?;
+        let path_str = norm_path
+            .to_str()
+            .context("Caminho de save contém caracteres não-UTF8")?;
         self.conn.execute(
             "INSERT INTO save_locations (id, game_id, path, location_type)
              VALUES (?1, ?2, ?3, ?4)",
@@ -39,14 +41,34 @@ impl<'a> SaveLocationsRepo<'a> {
     pub fn upsert(&self, loc: &SaveLocation) -> Result<SaveLocation> {
         let norm_path = savevault_core::path::normalize_windows_path(&loc.path)
             .map_err(|e| anyhow::anyhow!("Caminho de save inválido: {}", e))?;
-        let path_str = norm_path.to_str().context("Caminho de save contém caracteres não-UTF8")?;
+        let path_str = norm_path
+            .to_str()
+            .context("Caminho de save contém caracteres não-UTF8")?;
 
+        // 1. Verifica se já existe por equivalência canônica completa (incluindo Unicode não-ASCII e NFC/NFD)
+        if let Some(existing) = self.find_by_game_and_path(loc.game_id, &loc.path)? {
+            self.conn.execute(
+                "UPDATE save_locations SET location_type = ?1 WHERE id = ?2",
+                params![
+                    location_type_to_str(&loc.location_type),
+                    existing.id.to_string(),
+                ],
+            )?;
+            return Ok(SaveLocation {
+                id: existing.id,
+                game_id: existing.game_id,
+                path: existing.path,
+                location_type: loc.location_type.clone(),
+            });
+        }
+
+        // 2. Se não existe, insere normalmente com ON CONFLICT(game_id, path COLLATE NOCASE)
         let mut stmt = self.conn.prepare(
             "INSERT INTO save_locations (id, game_id, path, location_type)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(game_id, path COLLATE NOCASE) DO UPDATE SET
                  location_type = excluded.location_type
-             RETURNING id, game_id, path, location_type"
+             RETURNING id, game_id, path, location_type",
         )?;
 
         let saved = stmt.query_row(
@@ -63,9 +85,9 @@ impl<'a> SaveLocationsRepo<'a> {
     }
 
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<SaveLocation>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, game_id, path, location_type FROM save_locations WHERE id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, game_id, path, location_type FROM save_locations WHERE id = ?1")?;
         let mut rows = stmt.query(params![id.to_string()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_location(row)?))
@@ -74,24 +96,42 @@ impl<'a> SaveLocationsRepo<'a> {
         }
     }
 
-    pub fn find_by_game_and_path(&self, game_id: Uuid, path: &Path) -> Result<Option<SaveLocation>> {
+    pub fn find_by_game_and_path(
+        &self,
+        game_id: Uuid,
+        path: &Path,
+    ) -> Result<Option<SaveLocation>> {
         let norm_path = savevault_core::path::normalize_windows_path(path)
             .map_err(|e| anyhow::anyhow!("Caminho de save inválido: {}", e))?;
-        let path_str = norm_path.to_str().context("Caminho de save contém caracteres não-UTF8")?;
+        let path_str = norm_path
+            .to_str()
+            .context("Caminho de save contém caracteres não-UTF8")?;
         let mut stmt = self.conn.prepare(
             "SELECT id, game_id, path, location_type FROM save_locations WHERE game_id = ?1 AND path = ?2 COLLATE NOCASE"
         )?;
         let mut rows = stmt.query(params![game_id.to_string(), path_str])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(row_to_location(row)?))
-        } else {
-            Ok(None)
+            return Ok(Some(row_to_location(row)?));
         }
+
+        // Fallback para equivalência semântica Unicode / Windows completa:
+        let canon_target = savevault_core::path::canonicalize_windows_path(path)
+            .map_err(|e| anyhow::anyhow!("Caminho de save inválido para canonicalização: {}", e))?;
+        let locations = self.list_by_game(game_id)?;
+        for loc in locations {
+            if let Ok(c) = savevault_core::path::canonicalize_windows_path(&loc.path) {
+                if c == canon_target {
+                    return Ok(Some(loc));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn list_by_game(&self, game_id: Uuid) -> Result<Vec<SaveLocation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, game_id, path, location_type FROM save_locations WHERE game_id = ?1"
+            "SELECT id, game_id, path, location_type FROM save_locations WHERE game_id = ?1",
         )?;
         let mut rows = stmt.query(params![game_id.to_string()])?;
         let mut locs = Vec::new();
@@ -102,9 +142,9 @@ impl<'a> SaveLocationsRepo<'a> {
     }
 
     pub fn list_all(&self) -> Result<Vec<SaveLocation>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, game_id, path, location_type FROM save_locations"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, game_id, path, location_type FROM save_locations")?;
         let mut rows = stmt.query([])?;
         let mut locs = Vec::new();
         while let Some(row) = rows.next()? {
@@ -114,7 +154,10 @@ impl<'a> SaveLocationsRepo<'a> {
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM save_locations WHERE id = ?1", params![id.to_string()])?;
+        self.conn.execute(
+            "DELETE FROM save_locations WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 }

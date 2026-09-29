@@ -87,6 +87,11 @@
           <span class="nav-label">Sync Queue</span>
           <span class="nav-badge badge-warning" id="badge-sync-count" style="display: none;">0</span>
         </button>
+        <button class="nav-item" data-tab="tab-drive" id="nav-drive">
+          <span class="nav-icon">📁</span>
+          <span class="nav-label">Google Drive</span>
+          <span class="status-dot dot-active" id="badge-drive-status" style="margin-left: auto; display: none;"></span>
+        </button>
         <button class="nav-item" data-tab="tab-events" id="nav-events">
           <span class="nav-icon">📜</span>
           <span class="nav-label">Eventos</span>
@@ -518,6 +523,88 @@
             </div>
             <div id="sync-empty" class="empty-substate" style="display: none;">
               <p>Fila de sincronização vazia. Todos os snapshots estão atualizados.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB: GOOGLE DRIVE (PASTA LOCAL SINCRONIZADA) -->
+        <section id="tab-drive" class="tab-pane">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Google Drive para computador</h1>
+              <p class="view-subtitle">Armazenamento em nuvem via pasta sincronizada pelo Google Drive Desktop (sem API HTTP/OAuth).</p>
+            </div>
+            <div class="view-actions">
+              <button id="btn-sync-all-drive" class="btn btn-primary" title="Copiar todos os snapshots locais para a pasta do Drive">
+                ⚡ Sincronizar Tudo
+              </button>
+              <button id="btn-open-drive-explorer" class="btn btn-secondary" title="Abrir pasta configurada no Windows Explorer">
+                📂 Abrir pasta
+              </button>
+              <button id="btn-refresh-drive" class="btn btn-secondary">
+                🔄 Atualizar
+              </button>
+            </div>
+          </div>
+
+          <!-- Configuration Card -->
+          <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">
+              <div class="card-title">📁 Pasta Local do Google Drive</div>
+              <div id="drive-status-badge" class="badge badge-subtle">Verificando...</div>
+            </div>
+            <div class="card-body" style="padding: 20px;">
+              <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;">
+                <input type="text" id="drive-folder-input" class="search-input" style="flex: 1; min-width: 280px;" placeholder="Ex: G:\Meu Drive\SaveVault ou C:\Users\...\Google Drive\SaveVault">
+                <button id="btn-browse-drive-folder" class="btn btn-secondary">
+                  🔍 Selecionar
+                </button>
+                <button id="btn-save-drive-folder" class="btn btn-primary">
+                  💾 Salvar
+                </button>
+                <button id="btn-validate-drive-folder" class="btn btn-secondary">
+                  ✓ Validar
+                </button>
+                <button id="btn-create-drive-structure" class="btn btn-secondary">
+                  🏗️ Criar Estrutura
+                </button>
+              </div>
+
+              <div class="key-value-list" style="margin-top: 10px;">
+                <div class="kv-item">
+                  <span class="kv-key">Status:</span>
+                  <span class="kv-val" id="drive-status-display" style="display: flex; align-items: center; gap: 6px;">
+                    <span class="status-dot dot-warning" id="drive-status-dot"></span>
+                    <span id="drive-status-text">Pasta não configurada</span>
+                  </span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Caminho Efetivo (Base):</span>
+                  <span class="kv-val code-text" id="drive-resolved-path">—</span>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-key">Modo de Operação:</span>
+                  <span class="kv-val" style="color: var(--info);">
+                    Filesystem Local + Sincronização em Background pelo Google Drive Desktop
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Structure Tree Card -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">🌳 Estrutura do SaveVault no Drive</div>
+              <div class="card-badge" id="drive-tree-summary">—</div>
+            </div>
+            <div class="card-body" style="padding: 20px;">
+              <div id="drive-tree-container" class="drive-tree-view">
+                <!-- Dynamically loaded -->
+              </div>
+              <div id="drive-tree-empty" class="empty-substate" style="display: none;">
+                <p>Nenhuma pasta de jogo detectada no Google Drive. Clique em "Criar Estrutura" ou "Sincronizar Tudo".</p>
+              </div>
             </div>
           </div>
         </section>

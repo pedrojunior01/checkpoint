@@ -41,6 +41,90 @@ const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const REDIRECT_PORT: u16 = 8085;
 
 // ---------------------------------------------------------------------------
+use sha2::{Digest, Sha256};
+
+/// Codificação Base64URL sem padding (RFC 7636).
+pub fn base64url_encode(bytes: &[u8]) -> String {
+    const URL_SAFE_CHARS: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut res = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b0 = bytes[i];
+        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
+
+        res.push(URL_SAFE_CHARS[(b0 >> 2) as usize] as char);
+        res.push(URL_SAFE_CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if i + 1 < bytes.len() {
+            res.push(URL_SAFE_CHARS[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+        }
+        if i + 2 < bytes.len() {
+            res.push(URL_SAFE_CHARS[(b2 & 0x3F) as usize] as char);
+        }
+        i += 3;
+    }
+    res
+}
+
+/// Gera o par de chaves PKCE (code_verifier, code_challenge) com SHA-256 (RFC 7636).
+pub fn generate_pkce_pair() -> (String, String) {
+    let mut random_bytes = [0u8; 32];
+    for chunk in random_bytes.chunks_mut(16) {
+        let u = uuid::Uuid::new_v4();
+        chunk.copy_from_slice(&u.into_bytes()[..chunk.len()]);
+    }
+    let verifier = base64url_encode(&random_bytes);
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    let hash = hasher.finalize();
+    let challenge = base64url_encode(&hash);
+    (verifier, challenge)
+}
+
+/// Gera um parâmetro `state` criptograficamente imprevisível para mitigar ataques CSRF no OAuth 2.0.
+pub fn generate_oauth_state() -> String {
+    let u1 = uuid::Uuid::new_v4().simple().to_string();
+    let u2 = uuid::Uuid::new_v4().simple().to_string();
+    format!("{}{}", u1, u2)
+}
+
+/// Valida uma requisição de callback HTTP extraindo o código e comprovando a correspondência do `state`.
+pub fn validate_callback_request(raw_request: &str, expected_state: &str) -> Result<String> {
+    let first_line = raw_request
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow!("Requisição HTTP de callback vazia"))?;
+    let path = first_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| anyhow!("Requisição HTTP de callback malformada"))?;
+
+    if !path.starts_with("/oauth/callback") {
+        return Err(anyhow!("Endpoint de callback inválido: {}", path));
+    }
+
+    let state = extract_query_param(raw_request, "state")
+        .ok_or_else(|| anyhow!("Parâmetro 'state' ausente no callback OAuth (possível CSRF)"))?;
+
+    if state != expected_state {
+        return Err(anyhow!(
+            "OAuth state mismatch detectado! Esperado: '{}', Recebido: '{}'. Abortando por segurança (CSRF)",
+            expected_state,
+            state
+        ));
+    }
+
+    let code = extract_query_param(raw_request, "code").ok_or_else(|| {
+        let error =
+            extract_query_param(raw_request, "error").unwrap_or_else(|| "desconhecido".to_string());
+        anyhow!("Autorização recusada pelo provedor OAuth: {}", error)
+    })?;
+
+    Ok(code)
+}
+
+// ---------------------------------------------------------------------------
 // Tipos internos de resposta da API do Google
 // ---------------------------------------------------------------------------
 
@@ -65,6 +149,24 @@ pub struct AuthService {
     token_url: String,
     fixed_token: Option<String>,
     mock_refresh_token: Option<String>,
+}
+
+impl std::fmt::Debug for AuthService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthService")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .field("token_url", &self.token_url)
+            .field(
+                "fixed_token",
+                &self.fixed_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "mock_refresh_token",
+                &self.mock_refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl AuthService {
@@ -122,10 +224,14 @@ impl AuthService {
     }
 
     /// Inicia o fluxo interativo de login:
-    /// - Abre o navegador.
-    /// - Aguarda o callback OAuth.
+    /// - Gera credenciais PKCE (RFC 7636) e parâmetro `state` anti-CSRF.
+    /// - Abre o navegador com os desafios criptográficos.
+    /// - Aguarda e valida o callback OAuth.
     /// - Salva o refresh token de forma segura.
     pub async fn login_interactive(&self) -> Result<()> {
+        let (code_verifier, code_challenge) = generate_pkce_pair();
+        let state = generate_oauth_state();
+
         let redirect_uri = format!("http://127.0.0.1:{}/oauth/callback", REDIRECT_PORT);
         let auth_url = format!(
             "https://accounts.google.com/o/oauth2/v2/auth\
@@ -134,23 +240,34 @@ impl AuthService {
             &response_type=code\
             &scope={}\
             &access_type=offline\
-            &prompt=consent",
+            &prompt=consent\
+            &state={}\
+            &code_challenge={}\
+            &code_challenge_method=S256",
             self.client_id,
             urlencoding_simple(&redirect_uri),
             urlencoding_simple(DRIVE_SCOPE),
+            urlencoding_simple(&state),
+            urlencoding_simple(&code_challenge),
         );
 
         // Inicia o listener antes de abrir o navegador para não perder o callback
         let listener = TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT))
             .await
-            .map_err(|e| anyhow!(
-                "Falha ao abrir porta {}. Verifique se está em uso: {}",
-                REDIRECT_PORT, e
-            ))?;
+            .map_err(|e| {
+                anyhow!(
+                    "Falha ao abrir porta {}. Verifique se está em uso: {}",
+                    REDIRECT_PORT,
+                    e
+                )
+            })?;
 
         info!("Aguardando callback do Google na porta {}", REDIRECT_PORT);
         println!("\nAbrindo navegador para autenticação no Google Drive...");
-        println!("Caso o navegador não abra, acesse manualmente:\n{}\n", auth_url);
+        println!(
+            "Caso o navegador não abra, acesse manualmente:\n{}\n",
+            auth_url
+        );
 
         // Abre a URL no navegador padrão do Windows
         open_url_windows(&auth_url);
@@ -163,13 +280,26 @@ impl AuthService {
         let n = socket.read(&mut buffer).await?;
         let request = String::from_utf8_lossy(&buffer[..n]);
 
-        // Extrai o parâmetro `code` ou `error` do request HTTP
-        let code = extract_query_param(&request, "code")
-            .ok_or_else(|| {
-                let error = extract_query_param(&request, "error")
-                    .unwrap_or_else(|| "desconhecido".to_string());
-                anyhow!("Autorização recusada pelo Google: {}", error)
-            })?;
+        // Valida o callback, o endpoint e o parâmetro state anti-CSRF
+        let code = match validate_callback_request(&request, &state) {
+            Ok(c) => c,
+            Err(e) => {
+                let err_html = format!(
+                    "HTTP/1.1 403 Forbidden\r\n\
+                    Content-Type: text/html; charset=utf-8\r\n\
+                    Connection: close\r\n\r\n\
+                    <!DOCTYPE html><html><head><meta charset='utf-8'><title>SaveVault - Erro de Autenticação</title></head>\
+                    <body style='font-family:sans-serif;padding:2rem'>\
+                    <h2>❌ Falha de Segurança no OAuth</h2>\
+                    <p>A solicitação de autenticação foi rejeitada por falha de integridade (CSRF ou state inválido).</p>\
+                    <p style='color:red'>{}</p>\
+                    </body></html>",
+                    e
+                );
+                let _ = socket.write_all(err_html.as_bytes()).await;
+                return Err(e);
+            }
+        };
 
         // Resposta visual na aba do navegador
         let html = concat!(
@@ -184,20 +314,29 @@ impl AuthService {
         );
         let _ = socket.write_all(html.as_bytes()).await;
 
-        // Troca o código pelos tokens
-        self.exchange_code_for_tokens(&code, &redirect_uri).await?;
+        // Troca o código pelos tokens enviando o code_verifier PKCE
+        self.exchange_code_for_tokens(&code, &redirect_uri, Some(&code_verifier))
+            .await?;
         info!("Login no Google Drive concluído com sucesso.");
         Ok(())
     }
 
     /// Troca um `authorization_code` por tokens e persiste o `refresh_token`.
-    async fn exchange_code_for_tokens(&self, code: &str, redirect_uri: &str) -> Result<()> {
+    pub async fn exchange_code_for_tokens(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        code_verifier: Option<&str>,
+    ) -> Result<()> {
         let mut params = HashMap::new();
         params.insert("client_id", self.client_id.as_str());
         params.insert("client_secret", self.client_secret.as_str());
         params.insert("code", code);
         params.insert("grant_type", "authorization_code");
         params.insert("redirect_uri", redirect_uri);
+        if let Some(cv) = code_verifier {
+            params.insert("code_verifier", cv);
+        }
 
         let res = self
             .http
@@ -207,7 +346,7 @@ impl AuthService {
             .await?;
 
         if !res.status().is_success() {
-            let body = res.text().await?;
+            let body = res.text().await.unwrap_or_default();
             return Err(anyhow!("Falha ao obter tokens do Google: {}", body));
         }
 
@@ -261,12 +400,7 @@ impl AuthService {
         params.insert("refresh_token", refresh_token.as_str());
         params.insert("grant_type", "refresh_token");
 
-        let res = self
-            .http
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await?;
+        let res = self.http.post(&self.token_url).form(&params).send().await?;
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -363,14 +497,21 @@ mod tests {
 
     #[test]
     fn extract_code_from_get_request() {
-        let request = "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "code"), Some("abc123".to_string()));
+        let request =
+            "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        assert_eq!(
+            extract_query_param(request, "code"),
+            Some("abc123".to_string())
+        );
     }
 
     #[test]
     fn extract_error_from_get_request() {
         let request = "GET /oauth/callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "error"), Some("access_denied".to_string()));
+        assert_eq!(
+            extract_query_param(request, "error"),
+            Some("access_denied".to_string())
+        );
     }
 
     #[test]

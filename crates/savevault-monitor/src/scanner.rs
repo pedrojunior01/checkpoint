@@ -7,12 +7,12 @@
 //! e restringe a expansão de globs estritamente ao diretório base esperado,
 //! rejeitando tentativas de path traversal com `..`.
 
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-use uuid::Uuid;
 use savevault_core::models::{SaveLocation, SaveLocationType};
 use savevault_core::path::is_glob_pattern;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use thiserror::Error;
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 #[derive(Debug, Error)]
@@ -59,6 +59,15 @@ impl SaveScanner {
     ///
     /// Se o caminho não existir no disco, retorna `Ok(vec![])` sem erro fatal.
     pub fn scan(&self, location: &SaveLocation) -> Result<Vec<DiscoveredFile>, ScanError> {
+        // Se o caminho existe fisicamente no disco, a realidade do filesystem tem precedência sobre a inferência inicial
+        if location.path.exists() {
+            if location.path.is_file() {
+                return self.scan_file(location);
+            } else if location.path.is_dir() {
+                return self.scan_directory(location);
+            }
+        }
+
         match location.location_type {
             SaveLocationType::File => self.scan_file(location),
             SaveLocationType::Directory => self.scan_directory(location),
@@ -149,7 +158,10 @@ impl SaveScanner {
         let (base_dir, pattern) = match split_glob_base_and_pattern(&location.path) {
             Ok(pair) => pair,
             Err(ScanError::PathTraversal(p)) => {
-                tracing::warn!("Tentativa de path traversal em glob rejeitada: {}", p.display());
+                tracing::warn!(
+                    "Tentativa de path traversal em glob rejeitada: {}",
+                    p.display()
+                );
                 return Err(ScanError::PathTraversal(p));
             }
             Err(e) => return Err(e),
@@ -247,9 +259,9 @@ pub fn split_glob_base_and_pattern(path: &Path) -> Result<(PathBuf, String), Sca
                 }
             }
             std::path::Component::Normal(s) => {
-                let s_str = s.to_str().ok_or_else(|| {
-                    ScanError::NonUtf8Path(path.to_string_lossy().to_string())
-                })?;
+                let s_str = s
+                    .to_str()
+                    .ok_or_else(|| ScanError::NonUtf8Path(path.to_string_lossy().to_string()))?;
 
                 if in_pattern {
                     pattern_parts.push(s_str.to_string());

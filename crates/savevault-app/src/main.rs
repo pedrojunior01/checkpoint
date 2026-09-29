@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
         // ----------------------------------------------------------------
         [sync_cmd] if sync_cmd == "sync" => {
             let db = Database::open(&config.paths.database_path)?;
-            let synced = savevault_sync::process_queue_google_drive(
+            let synced = savevault_sync::process_queue_google_drive_conn(
                 &db.conn,
                 config.paths.backup_dir.clone(),
             )
@@ -119,6 +119,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("SaveVault iniciando...");
 
+    // Limpeza segura de arquivos de staging órfãos deixados por eventuais crashes anteriores (SV-ADV-011)
+    let _ = savevault_app::restore::cleanup_stale_staging_files(&config.paths.backup_dir);
+    if let Some(parent) = config.paths.database_path.parent() {
+        let _ = savevault_app::restore::cleanup_stale_staging_files(parent);
+    }
+
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
     let games_repo = GamesRepo::new(&db.conn);
@@ -144,9 +150,17 @@ async fn main() -> anyhow::Result<()> {
             if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id)
             {
                 real_id = existing.id;
+            } else if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(&game.name, &game.platform)
+            {
+                real_id = existing.id;
             } else {
                 games_repo.insert(game)?;
             }
+        } else if let Ok(Some(existing)) =
+            games_repo.find_by_name_and_platform(&game.name, &game.platform)
+        {
+            real_id = existing.id;
         } else {
             games_repo.insert(game)?;
         }
@@ -160,8 +174,10 @@ async fn main() -> anyhow::Result<()> {
         if let Some(&real_id) = real_ids.get(&loc.game_id) {
             let mut loc_to_insert = loc.clone();
             loc_to_insert.game_id = real_id;
-            if locations_repo.insert(&loc_to_insert).is_ok() {
-                new_locations += 1;
+            if let Ok(saved) = locations_repo.upsert(&loc_to_insert) {
+                if saved.id == loc_to_insert.id {
+                    new_locations += 1;
+                }
             }
         }
     }
@@ -181,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Tenta processar a fila de sync em background (falha silenciosa se offline)
     let synced =
-        savevault_sync::process_queue_google_drive(&db.conn, config.paths.backup_dir.clone())
+        savevault_sync::process_queue_google_drive_conn(&db.conn, config.paths.backup_dir.clone())
             .await
             .unwrap_or(0);
 
@@ -245,30 +261,30 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("SaveVault monitorando em modo residente (Watcher + Reconciler). Pressione Ctrl+C para encerrar.");
 
+    let pipeline_handle = tokio::spawn(savevault_app::pipeline::run_pipeline(
+        db_conn.clone(),
+        stable_rx,
+        config.paths.backup_dir.clone(),
+        config.general.max_versions,
+        pipeline_shutdown_rx,
+        true,
+    ));
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Sinal de encerramento recebido (Ctrl+C). Iniciando shutdown gracioso...");
-            let _ = shutdown_tx.send(true);
-            watcher.shutdown().await;
-            let _ = reconciler_handle.await;
-            tracing::info!("Serviços de monitoramento e reconciliação encerrados com sucesso.");
         }
-        res = savevault_app::pipeline::run_pipeline(
-            db_conn.clone(),
-            stable_rx,
-            config.paths.backup_dir.clone(),
-            config.general.max_versions,
-            pipeline_shutdown_rx,
-            true,
-        ) => {
-            if let Err(e) = res {
+        res = pipeline_handle => {
+            if let Ok(Err(e)) = res {
                 tracing::error!("Erro no pipeline de eventos: {}", e);
             }
-            let _ = shutdown_tx.send(true);
-            watcher.shutdown().await;
-            let _ = reconciler_handle.await;
         }
     }
+
+    let _ = shutdown_tx.send(true);
+    watcher.shutdown().await;
+    let _ = reconciler_handle.await;
+    tracing::info!("Serviços de monitoramento e reconciliação encerrados com sucesso.");
 
     println!("SaveVault encerrado com sucesso.");
     Ok(())
@@ -427,10 +443,36 @@ async fn handle_restore_command(
         }
         Err(savevault_app::RestoreError::PostWriteValidationFailed(path)) => {
             eprintln!(
-                "[FALHA DE INTEGRIDADE] A validação pós-escrita falhou em '{}'. O conteúdo gravado diverge do snapshot. O safety backup foi preservado.",
+                "[FALHA DE INTEGRIDADE] A validação pós-escrita falhou em '{}'. O conteúdo gravado diverge do snapshot.",
                 path.display()
             );
             Err(anyhow::anyhow!("Validação pós-escrita falhou"))
+        }
+        Err(savevault_app::RestoreError::PostWriteValidationFailedWithRollback {
+            path,
+            safety_backup,
+        }) => {
+            eprintln!(
+                "[FALHA DE INTEGRIDADE COM ROLLBACK] A validação pós-escrita falhou em '{}'. Rollback executado com sucesso a partir de '{}'. O save anterior foi restaurado intacto.",
+                path.display(),
+                safety_backup.display()
+            );
+            Err(anyhow::anyhow!(
+                "Validação pós-escrita falhou; rollback executado com sucesso"
+            ))
+        }
+        Err(savevault_app::RestoreError::PostWriteValidationAndRollbackFailed {
+            path,
+            safety_backup,
+            rollback_error,
+        }) => {
+            eprintln!(
+                "[FALHA CRÍTICA] Validação pós-escrita falhou em '{}' E o rollback a partir de '{}' falhou: {}. O arquivo de safety backup permanece no disco para recuperação manual.",
+                path.display(),
+                safety_backup.display(),
+                rollback_error
+            );
+            Err(anyhow::anyhow!("Validação pós-escrita e rollback falharam"))
         }
         Err(e) => {
             eprintln!("[FALHA] Erro durante a restauração: {}", e);
@@ -549,6 +591,7 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
 
     let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
     let recon_shutdown_rx = shutdown_tx.subscribe();
+    state.set_shutdown_sender(shutdown_tx.clone()).await;
 
     // Inicia reconciliador em background
     let reconciler_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
@@ -592,7 +635,7 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
         };
 
         rt.block_on(async move {
-            if let Some((_w, rx)) = watcher_opt {
+            if let Some((w, rx)) = watcher_opt {
                 if let Err(e) = savevault_app::pipeline::run_pipeline(
                     pipeline_db,
                     rx,
@@ -605,6 +648,7 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
                 {
                     tracing::warn!("Pipeline de eventos finalizado: {}", e);
                 }
+                w.shutdown().await;
             }
         });
     });

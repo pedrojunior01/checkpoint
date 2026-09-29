@@ -52,7 +52,10 @@ mod tests {
             // Se steam não está instalado no CI, retorna vazio
             // Se está instalado, retorna jogos reais — ambos são OK
             let result = detector.detect().await;
-            assert!(result.is_ok(), "Não deve retornar erro quando steam não encontrado");
+            assert!(
+                result.is_ok(),
+                "Não deve retornar erro quando steam não encontrado"
+            );
         }
 
         #[test]
@@ -69,6 +72,72 @@ mod tests {
             assert!(content.contains("Stardew Valley"));
             assert!(content.contains("413150"));
         }
+
+        #[tokio::test]
+        async fn steam_detect_with_custom_root_finds_all_games() {
+            let dir = tempdir().unwrap();
+            let steam_root = create_fake_steam_library(dir.path());
+            let detector = SteamDetector::with_root(Some(steam_root));
+
+            let games = detector.detect_with_paths().await.unwrap();
+            assert_eq!(games.len(), 2, "Deve detectar Stardew Valley e Celeste");
+
+            let stardew = games
+                .iter()
+                .find(|g| g.game.name == "Stardew Valley")
+                .expect("Stardew Valley");
+            assert_eq!(stardew.game.platform_id.as_deref(), Some("413150"));
+            assert_eq!(
+                stardew.game.platform,
+                savevault_core::models::Platform::Steam
+            );
+            assert!(stardew
+                .install_path
+                .as_ref()
+                .unwrap()
+                .ends_with("Stardew Valley"));
+
+            let celeste = games
+                .iter()
+                .find(|g| g.game.name == "Celeste")
+                .expect("Celeste");
+            assert_eq!(celeste.game.platform_id.as_deref(), Some("504230"));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // GOG detector — testa detecção via goggame-*.info e registro
+    // ------------------------------------------------------------------
+    mod gog_tests {
+        use crate::gog::GogDetector;
+        use tempfile::tempdir;
+
+        #[tokio::test]
+        async fn gog_detect_with_custom_root_finds_all_games() {
+            let dir = tempdir().unwrap();
+            let gog_root = dir.path().join("GOG Games");
+            let witcher_dir = gog_root.join("The Witcher 3 Wild Hunt");
+            std::fs::create_dir_all(&witcher_dir).unwrap();
+
+            let info_content = r#"{
+                "gameId": "1207658924",
+                "name": "The Witcher 3: Wild Hunt"
+            }"#;
+            std::fs::write(witcher_dir.join("goggame-1207658924.info"), info_content).unwrap();
+
+            let detector = GogDetector::with_root(Some(gog_root));
+            let games = detector.detect_with_paths().await.unwrap();
+
+            assert_eq!(games.len(), 1, "Deve detectar 1 jogo GOG");
+            let game_info = &games[0];
+            assert_eq!(game_info.game.name, "The Witcher 3: Wild Hunt");
+            assert_eq!(game_info.game.platform_id.as_deref(), Some("1207658924"));
+            assert_eq!(
+                game_info.game.platform,
+                savevault_core::models::Platform::Gog
+            );
+            assert_eq!(game_info.install_path.as_ref().unwrap(), &witcher_dir);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -81,7 +150,10 @@ mod tests {
         async fn detect_returns_ok_even_with_no_emulators() {
             let detector = EmulatorDetector::new();
             let result = detector.detect().await;
-            assert!(result.is_ok(), "Não deve falhar se nenhum emulador está instalado");
+            assert!(
+                result.is_ok(),
+                "Não deve falhar se nenhum emulador está instalado"
+            );
         }
     }
 
@@ -113,7 +185,11 @@ mod tests {
             let dir = tempdir().unwrap();
             let result = run_all(dir.path()).await.unwrap();
             let ids: std::collections::HashSet<_> = result.games.iter().map(|g| g.id).collect();
-            assert_eq!(ids.len(), result.games.len(), "Todos os IDs devem ser únicos");
+            assert_eq!(
+                ids.len(),
+                result.games.len(),
+                "Todos os IDs devem ser únicos"
+            );
         }
     }
 
@@ -121,12 +197,15 @@ mod tests {
     // Save Discovery tests (Ludusavi Manifest & SaveDetector)
     // ------------------------------------------------------------------
     mod save_discovery_tests {
-        use std::path::{Path, PathBuf};
-        use savevault_core::models::{Confidence, Game, Platform, SaveLocationType};
-        use crate::save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
         use crate::ludusavi::{LudusaviManifest, LudusaviSaveDetector, PathResolver};
+        use crate::save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
+        use savevault_core::models::{Confidence, Game, Platform, SaveLocationType};
+        use std::path::{Path, PathBuf};
 
-        const FIXTURE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/manifest_sample.yaml");
+        const FIXTURE_PATH: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/manifest_sample.yaml"
+        );
 
         fn setup_test_detector() -> LudusaviSaveDetector {
             let manifest = LudusaviManifest::from_path(Path::new(FIXTURE_PATH))
@@ -154,7 +233,10 @@ mod tests {
             let locs = result.locations();
             assert_eq!(locs.len(), 1);
             assert_eq!(locs[0].game_id, game.id);
-            assert_eq!(locs[0].path, PathBuf::from(r"C:\Users\TestUser\AppData\Roaming\StardewValley\Saves"));
+            assert_eq!(
+                locs[0].path,
+                PathBuf::from(r"C:\Users\TestUser\AppData\Roaming\StardewValley\Saves")
+            );
             assert_eq!(locs[0].location_type, SaveLocationType::Directory);
         }
 
@@ -173,8 +255,14 @@ mod tests {
             let locs = result.locations();
             assert_eq!(locs.len(), 2, "Jogo deve retornar múltiplos locais de save");
 
-            let has_dir = locs.iter().any(|l| l.location_type == SaveLocationType::Directory && l.path == Path::new(r"C:\Users\TestUser\AppData\Roaming\MultiGame\Saves"));
-            let has_file = locs.iter().any(|l| l.location_type == SaveLocationType::File && l.path == Path::new(r"C:\Users\TestUser\Documents\MultiGame\profile.sav"));
+            let has_dir = locs.iter().any(|l| {
+                l.location_type == SaveLocationType::Directory
+                    && l.path == Path::new(r"C:\Users\TestUser\AppData\Roaming\MultiGame\Saves")
+            });
+            let has_file = locs.iter().any(|l| {
+                l.location_type == SaveLocationType::File
+                    && l.path == Path::new(r"C:\Users\TestUser\Documents\MultiGame\profile.sav")
+            });
             assert!(has_dir);
             assert!(has_file);
         }
@@ -193,7 +281,10 @@ mod tests {
             let locs = result.locations();
             assert_eq!(locs.len(), 1);
             assert_eq!(locs[0].location_type, SaveLocationType::File);
-            assert_eq!(locs[0].path, PathBuf::from(r"C:\Users\TestUser\AppData\Local\SingleSaveGame\save.dat"));
+            assert_eq!(
+                locs[0].path,
+                PathBuf::from(r"C:\Users\TestUser\AppData\Local\SingleSaveGame\save.dat")
+            );
             assert!(locs[0].is_file());
         }
 
@@ -304,8 +395,14 @@ EmptyGame: {}
             match &result {
                 SaveDiscoveryResult::KnownNotFoundOnDisk { expected_locations } => {
                     assert_eq!(expected_locations.len(), 1);
-                    assert_eq!(expected_locations[0].path, PathBuf::from(r"C:\Users\TestUser\Documents\My Games\Celeste\Saves"));
-                    assert_eq!(expected_locations[0].location_type, SaveLocationType::Directory);
+                    assert_eq!(
+                        expected_locations[0].path,
+                        PathBuf::from(r"C:\Users\TestUser\Documents\My Games\Celeste\Saves")
+                    );
+                    assert_eq!(
+                        expected_locations[0].location_type,
+                        SaveLocationType::Directory
+                    );
                 }
                 SaveDiscoveryResult::Found(locs) => {
                     assert_eq!(locs.len(), 1);
@@ -328,7 +425,10 @@ EmptyGame: {}
             let resolved = resolver.resolve(path_with_forward_slashes).unwrap();
 
             // Deve ser normalizado para separadores do Windows
-            assert_eq!(resolved, PathBuf::from(r"C:\Users\User\AppData\Roaming\Game\SubDir\save.dat"));
+            assert_eq!(
+                resolved,
+                PathBuf::from(r"C:\Users\User\AppData\Roaming\Game\SubDir\save.dat")
+            );
         }
 
         #[test]
@@ -337,7 +437,12 @@ EmptyGame: {}
             let detector = setup_test_detector();
             assert_eq!(detector.name(), "ludusavi-manifest");
 
-            let game = Game::new("Stardew Valley", Platform::Steam, Some("413150".into()), Confidence::High);
+            let game = Game::new(
+                "Stardew Valley",
+                Platform::Steam,
+                Some("413150".into()),
+                Confidence::High,
+            );
             let res = detector.detect_save_locations(&game);
             assert!(res.is_ok());
         }
@@ -365,15 +470,28 @@ EmptyGame: {}
 
             // Apenas o caminho com tag [save] deve ser incluído, ignorando [config]
             assert_eq!(locs.len(), 1);
-            assert_eq!(locs[0].path, PathBuf::from(r"C:\Users\TestUser\Documents\The Witcher 3\gamesaves"));
+            assert_eq!(
+                locs[0].path,
+                PathBuf::from(r"C:\Users\TestUser\Documents\The Witcher 3\gamesaves")
+            );
         }
 
         #[test]
         fn test_14_integration_discover_saves_for_games() {
             let detector = setup_test_detector();
             let games = vec![
-                Game::new("Stardew Valley", Platform::Steam, Some("413150".into()), Confidence::High),
-                Game::new("The Witcher 3: Wild Hunt", Platform::Gog, Some("1207664643".into()), Confidence::High),
+                Game::new(
+                    "Stardew Valley",
+                    Platform::Steam,
+                    Some("413150".into()),
+                    Confidence::High,
+                ),
+                Game::new(
+                    "The Witcher 3: Wild Hunt",
+                    Platform::Gog,
+                    Some("1207664643".into()),
+                    Confidence::High,
+                ),
                 Game::new("Unknown Game", Platform::Generic, None, Confidence::Low),
             ];
 
@@ -423,10 +541,16 @@ GlobGame:
                 Confidence::High,
             );
             let result = detector.detect_save_locations(&game).unwrap();
-            assert!(result.is_recognized(), "Deve encontrar pelo Steam AppID mesmo com título diferente");
+            assert!(
+                result.is_recognized(),
+                "Deve encontrar pelo Steam AppID mesmo com título diferente"
+            );
             let locs = result.locations();
             assert_eq!(locs.len(), 1);
-            assert_eq!(locs[0].path, PathBuf::from(r"C:\Users\TestUser\AppData\Roaming\StardewValley\Saves"));
+            assert_eq!(
+                locs[0].path,
+                PathBuf::from(r"C:\Users\TestUser\AppData\Roaming\StardewValley\Saves")
+            );
         }
 
         #[test]
@@ -456,9 +580,16 @@ DOOM:
             );
 
             let result = detector.detect_save_locations(&game).unwrap();
-            assert!(result.is_conflict(), "Deve identificar explicitamente o conflito de identidade entre Store ID e nome");
+            assert!(
+                result.is_conflict(),
+                "Deve identificar explicitamente o conflito de identidade entre Store ID e nome"
+            );
             assert!(result.is_recognized(), "O jogo é conhecido por nome");
-            assert_eq!(result.locations().len(), 0, "Não deve associar silenciosamente os saves do jogo conflitante");
+            assert_eq!(
+                result.locations().len(),
+                0,
+                "Não deve associar silenciosamente os saves do jogo conflitante"
+            );
 
             match result {
                 SaveDiscoveryResult::ConflictingGameIdentity {
@@ -475,6 +606,103 @@ DOOM:
                 other => panic!("Esperava ConflictingGameIdentity, obteve {:?}", other),
             }
         }
+
+        #[tokio::test]
+        async fn test_18_generic_detector_with_paths() {
+            let tmp = tempfile::tempdir().unwrap();
+            let saved_games = tmp.path().join("Saved Games");
+            tokio::fs::create_dir_all(&saved_games).await.unwrap();
+
+            // Jogo 1: pasta com arquivos de save
+            let game1_dir = saved_games.join("Hades II");
+            tokio::fs::create_dir_all(&game1_dir).await.unwrap();
+            tokio::fs::write(game1_dir.join("Profile1.sav"), b"save data")
+                .await
+                .unwrap();
+
+            // Jogo 2: subpasta com arquivos
+            let game2_dir = saved_games.join("Respawn").join("Apex");
+            tokio::fs::create_dir_all(&game2_dir).await.unwrap();
+            tokio::fs::write(game2_dir.join("settings.cfg"), b"config")
+                .await
+                .unwrap();
+
+            let detector = crate::generic::GenericDetector::with_root(Some(saved_games));
+            let infos = detector.detect_with_paths().await.unwrap();
+
+            assert_eq!(infos.len(), 2);
+            let names: Vec<String> = infos.iter().map(|i| i.game.name.clone()).collect();
+            assert!(names.contains(&"Hades II".to_string()));
+            assert!(names.contains(&"Respawn".to_string()));
+
+            for info in &infos {
+                assert_eq!(info.game.platform, Platform::Generic);
+                assert!(info.save_path.exists());
+            }
+        }
+
+        #[tokio::test]
+        async fn test_19_generic_detector_ignores_empty_folders() {
+            let tmp = tempfile::tempdir().unwrap();
+            let saved_games = tmp.path().join("Saved Games");
+            tokio::fs::create_dir_all(&saved_games).await.unwrap();
+
+            // Pasta vazia (sem saves)
+            let empty_dir = saved_games.join("EmptyGameDir");
+            tokio::fs::create_dir_all(&empty_dir).await.unwrap();
+
+            let detector = crate::generic::GenericDetector::with_root(Some(saved_games));
+            let infos = detector.detect_with_paths().await.unwrap();
+
+            assert_eq!(infos.len(), 0, "Pastas sem arquivos devem ser ignoradas");
+        }
+
+        #[test]
+        fn test_20_directory_with_dots_in_name_is_classified_as_directory() {
+            let yaml = r#"
+DotGame:
+  files:
+    <winAppData>/Game.1.0:
+      tags: [save]
+      when:
+        - os: windows
+    <winDocuments>/Celeste.Release:
+      tags: [save]
+      when:
+        - os: windows
+"#;
+            let manifest = LudusaviManifest::from_yaml_str(yaml).unwrap();
+            let detector = LudusaviSaveDetector::new(
+                manifest,
+                PathResolver::empty()
+                    .with_variable("<winAppData>", r"C:\Users\User\AppData\Roaming")
+                    .with_variable("<winDocuments>", r"C:\Users\User\Documents"),
+            );
+
+            let game = Game::new("DotGame", Platform::Generic, None, Confidence::High);
+            let res = detector.detect_save_locations(&game).unwrap();
+            let locs = res.into_locations();
+            assert_eq!(locs.len(), 2);
+
+            let loc_1_0 = locs
+                .iter()
+                .find(|l| l.path.ends_with("Game.1.0"))
+                .expect("Game.1.0 location");
+            assert_eq!(
+                loc_1_0.location_type,
+                SaveLocationType::Directory,
+                "Game.1.0 não deve ser classificado como File apenas por ter '.0'!"
+            );
+
+            let loc_rel = locs
+                .iter()
+                .find(|l| l.path.ends_with("Celeste.Release"))
+                .expect("Celeste.Release location");
+            assert_eq!(
+                loc_rel.location_type,
+                SaveLocationType::Directory,
+                "Celeste.Release não deve ser classificado como File apenas por ter '.Release'!"
+            );
+        }
     }
 }
-

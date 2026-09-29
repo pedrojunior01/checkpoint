@@ -1,6 +1,6 @@
+use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
-use anyhow::Result;
 
 use crate::migrations;
 
