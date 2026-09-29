@@ -1,8 +1,8 @@
 # Relatório de Implementação e Arquitetura - SaveVault
 
-**Versão Atual:** v0.6.0  
+**Versão Atual:** v0.7.0  
 **Data do Relatório:** Setembro 2026  
-**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) + Multi-Discovery Completo
+**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) + Multi-Discovery + Autostart Windows + Arquitetura 2-Folder Completo
 
 ---
 
@@ -21,7 +21,11 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
   - Remoção de prefixos estendidos `\\?\` e `\\?\UNC\`.
   - Tratamento case-insensitive preservando formatação original.
   - Mitigação de directory traversal indevido.
-- **Configuração**: Gerenciamento do arquivo `%APPDATA%\SaveVault\config.toml` (retenção de versões, tempos de debounce e caminhos do sistema).
+- **Configuração**: Gerenciamento do arquivo `%APPDATA%\SaveVault\config.toml` (retenção de versões, tempos de debounce, flag de autostart e caminhos do sistema).
+- **Inicialização Automática com o Windows (`src/autostart.rs`)**:
+  - Integração nativa com a chave do Registro `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SaveVault`.
+  - Detecção e canonicidade de caminhos de executáveis com tratamento seguro de aspas e espaços.
+  - Funções de consulta e controle: `is_enabled`, `status`, `enable`, `disable`.
 
 ### 2. `savevault-db` (Completo)
 - **SQLite Embutido**: Utiliza `rusqlite` com flag `bundled` (independente de drivers externos ou DLLs do sistema).
@@ -69,9 +73,10 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
 
 ### 5. `savevault-backup` (Completo)
 - **Criptografia e Hashing**: Cálculo determinístico de assinaturas via **BLAKE3** com leitura em streaming por blocos.
-- **SnapshotManager**:
-  - Criação de snapshots locais versionados (`backup_root/<file_id>/v<version>/filename`).
-  - Rotina de **restauração segura**: gera automaticamente cópia temporária (`.savevault_safety_bak`) antes de substituir o arquivo original, permitindo desfazer rollbacks acidentais.
+- **SnapshotManager (Novo Modelo Cloud-First 2-Folder)**:
+  - Criação de snapshots locais organizados em duas pastas por jogo: `latest/` (último save ativo) e `daily/` (cópia de segurança do primeiro save do dia).
+  - Previne vazamento de espaço em disco em jogos com auto-save frequente.
+  - Rotina de **restauração segura com resolução multi-layout**: busca snapshots em `v{version}`, `latest/` e `daily/`, gerando automaticamente cópia temporária (`.savevault_safety_bak`) antes de substituir o arquivo original.
 
 ### 6. `savevault-cloud` (Completo)
 - **Autenticação OAuth 2.0 (`src/auth.rs`)**:
@@ -88,6 +93,7 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
 ### 7. `savevault-sync` (Completo)
 - **SyncEngine**:
   - Consumo assíncrono da tabela `sync_queue`.
+  - Resolução resiliente de snapshots locais em múltiplos layouts (`latest/`, `v{version}`, pastas por `file_id` e `daily/`).
   - Tratamento de falhas de rede com backoff exponencial (até 5 tentativas antes de marcar como falha definitiva).
   - Atualização idempotente do status de sincronização (`Pending` ➔ `Synced`) e persistência atômica do `cloud_path` e `drive_file_id`.
   - Operação segura em modo offline (ignora silenciosamente uploads pendentes quando o usuário não estiver autenticado).
@@ -102,24 +108,29 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
   - `savevault list`: exibe todos os jogos e diretórios cadastrados no banco.
   - `savevault restore <id>`: restaura snapshot histórico com safety backup prévio.
   - `savevault restore list`: lista snapshots disponíveis para restauração.
+  - `savevault autostart enable | disable | status`: gerencia a inicialização automática com o Windows no Registro (`HKCU\...\Run`).
   - `savevault auth login | status | logout`: gerencia o login OAuth 2.0 com o Google Drive.
   - `savevault sync`: força o processamento manual da fila de sincronização na nuvem.
   - `savevault --ui`: inicia o servidor local da DEV-UI para testes e inspeção no navegador.
+  - `savevault --help` / `savevault --version`: visualização rápida de ajuda e versão.
+- **DEV-UI REST Endpoints**:
+  - `GET /api/autostart`: consulta o estado de inicialização automática.
+  - `POST /api/autostart/toggle`: ativa/desativa a inicialização com o Windows via interface web.
 
 ---
 
 ## 3. Bateria de Testes Automatizados (QA)
 
-Atualmente a suíte conta com **213 testes automatizados (100% de aprovação)** cobrindo todos os módulos do workspace:
+Atualmente a suíte conta com **218 testes automatizados (100% de aprovação)** cobrindo todos os módulos do workspace:
 
 1. **`savevault-discovery` (46 testes)**: Parsing de manifestos Steam ACF, leitura do Registro do Windows para GOG (com suporte a String e DWORD numérico), heurística genérica com filtros anti-falsos-positivos, isolamento do detector e testes de integração com o catálogo Ludusavi.
 2. **`savevault-db` (37 testes)**: Idempotência de migrações (incluindo migração 005), índices case-insensitive (`COLLATE NOCASE`), `ON DELETE CASCADE`, consistência de UUIDs, deduplicação de jogos e operações CRUD.
 3. **`savevault-app` (36 testes)**: Testes de integração E2E do pipeline de monitoramento residente, DEV-UI, reconciliação periódica e restauração segura com escrita atômica e rollback.
 4. **`savevault-monitor` (30 testes)**: Coalescência de debouncing, limites de memória, recuperação de sharing violation (locks do Windows), filtragem de arquivos internos e renomeação atômica.
 5. **`savevault-cloud` (23 testes)**: Testes com mock do Google Drive, upload multipart, token refresh, validação de `state` anti-CSRF e keyring.
-6. **`savevault-core` (18 testes)**: Normalização de paths com remoção de prefixos estendidos `\\?\` e `\\?\UNC\`, roundtrip do arquivo `config.toml`, detecção de arquivos internos e modelos.
+6. **`savevault-core` (23 testes)**: Normalização de paths Win32, inicialização automática com o Windows (`HKCU\...\Run`), roundtrip do arquivo `config.toml`, detecção de arquivos internos e modelos.
 7. **`savevault-sync` (12 testes)**: Consumo da fila, retentativas com backoff exponencial e transações atômicas de sync.
-8. **`savevault-backup` (11 testes)**: Hashing BLAKE3 em streaming, integridade de snapshots versionados, remoção física de diretórios podados e safety backups anti-colisão.
+8. **`savevault-backup` (11 testes)**: Hashing BLAKE3 em streaming, integridade de snapshots no modelo 2-folder, remoção física de diretórios podados e safety backups anti-colisão.
 
 ---
 
@@ -138,6 +149,7 @@ No ciclo de auditoria sistêmica e adversarial, foram eliminados os seguintes bu
 | **BUG-09** | Médio | `config.general.debounce_ms` era ignorado pelo watcher | Propagação de `debounce_duration` configurada para `SaveWatcherConfig`. |
 | **BUG-10** | Médio | Paths Win32 estendidos (`\\?\` e `\\?\UNC\`) quebravam normalização | Tratamento e remoção segura de prefixos em `crates/savevault-core/src/path.rs`. |
 | **BUG-11** | Baixo | Registro GOG salvando `gameID` como `REG_DWORD` falhava ao ler como String | Fallback com tentativa de leitura numérica `u32` e fallback por nome de subchave. |
+| **BUG-12** | Alto | Arquitetura 2-folder (`latest`/`daily`) quebrava restaurações e uploads que buscavam estruturas de versão `v{version}` | Implementada resolução de snapshots em cascata (`v{version}` ➔ `latest` ➔ `daily` ➔ layouts legados) em `restore.rs` e `savevault-sync`. |
 | **STACK** | Crítico | Frame assíncrono estourando stack padrão de 1MB da thread inicial do Windows | Despacho síncrono imediato para comandos de ajuda e runner Tokio em thread dedicada com stack de 16MB. |
 
 ---
@@ -163,11 +175,14 @@ No ciclo de auditoria sistêmica e adversarial, foram eliminados os seguintes bu
   - [x] Leitura de chaves do Registro do Windows (`HKLM\SOFTWARE\GOG.com\Games` e WoW6432Node).
   - [x] Heurística para busca de saves em jogos independentes fora do manifesto (`generic.rs`).
   - [x] Comandos CLI `savevault add` e `savevault list`.
+- [x] **Inicialização Automática com o Windows**:
+  - [x] Integração com `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SaveVault`.
+  - [x] Comandos CLI: `savevault autostart enable | disable | status`.
+  - [x] Endpoints REST na DEV-UI: `GET /api/autostart` e `POST /api/autostart/toggle`.
 - [ ] **Interface Desktop Definitiva & System Tray (v1.0)**:
   - Ícone na bandeja do Windows (System Tray) para monitoramento silencioso minimizado.
   - Interface gráfica definitiva nativa (Tauri / egui) empacotada.
-- [ ] **Empacotamento & Inicialização com o Windows**:
-  - Opção para registrar inicialização automática no Windows (`HKCU\...\Run`).
+- [ ] **Empacotamento e Distribuição**:
   - Criação de instalador executável para usuário final (`.msi` ou `.exe`).
 - [ ] **Provedores Secundários de Cloud (Pós-MVP)**:
   - OneDrive (Microsoft Graph API), Dropbox, WebDAV / S3.
