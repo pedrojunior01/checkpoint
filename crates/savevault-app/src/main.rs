@@ -7,10 +7,7 @@
 //! savevault restore list       # Lista os snapshots disponíveis
 //! savevault add <nome> <caminho> # Adiciona um jogo e local de save manualmente
 //! savevault list                # Lista todos os jogos cadastrados no banco
-//! savevault auth login         # Autentica no Google Drive via navegador
-//! savevault auth logout        # Remove as credenciais salvas
-//! savevault auth status        # Verifica se está autenticado
-//! savevault sync               # Processa manualmente a fila de sincronização
+
 //! ```
 
 use savevault_core::config::Config;
@@ -21,6 +18,9 @@ use savevault_db::{
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
+    // Carrega as variáveis de ambiente do arquivo .env (se existir)
+    dotenvy::dotenv().ok();
+
     // Parseia os argumentos da linha de comando
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -82,27 +82,7 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
-        // ----------------------------------------------------------------
-        // savevault auth login / logout / status
-        // ----------------------------------------------------------------
-        [auth, sub] if auth == "auth" => {
-            handle_auth_command(sub).await?;
-            return Ok(());
-        }
 
-        // ----------------------------------------------------------------
-        // savevault sync — processa a fila manualmente
-        // ----------------------------------------------------------------
-        [sync_cmd] if sync_cmd == "sync" => {
-            let db = Database::open(&config.paths.database_path)?;
-            let synced = savevault_sync::process_queue_google_drive(
-                &db.conn,
-                config.paths.backup_dir.clone(),
-            )
-            .await?;
-            println!("Sincronização concluída: {} backup(s) enviado(s).", synced);
-            return Ok(());
-        }
 
         // ----------------------------------------------------------------
         // savevault restore — restaura um snapshot para o save original
@@ -233,15 +213,7 @@ async fn run_resident_daemon(
         result.save_locations.len()
     );
 
-    // Tenta processar a fila de sync em background (falha silenciosa se offline)
-    let synced =
-        savevault_sync::process_queue_google_drive(&db.conn, config.paths.backup_dir.clone())
-            .await
-            .unwrap_or(0);
 
-    if synced > 0 {
-        tracing::info!("{} backup(s) sincronizado(s) com o Google Drive.", synced);
-    }
 
     // Se for solicitado modo pontual (--once ou scan), finaliza aqui
     if args.iter().any(|a| a == "--once" || a == "scan") {
@@ -333,51 +305,7 @@ async fn run_resident_daemon(
 // Handlers de subcomandos
 // ---------------------------------------------------------------------------
 
-async fn handle_auth_command(sub: &str) -> anyhow::Result<()> {
-    let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
-        Some(p) => p,
-        None => {
-            eprintln!(
-                "Erro: variáveis de ambiente não definidas.\n\
-                Configure:\n  \
-                SAVEVAULT_GOOGLE_CLIENT_ID=<seu_client_id>\n  \
-                SAVEVAULT_GOOGLE_CLIENT_SECRET=<seu_client_secret>\n\n\
-                Obtenha as credenciais em: https://console.cloud.google.com/"
-            );
-            return Err(anyhow::anyhow!("Credenciais não configuradas"));
-        }
-    };
 
-    match sub {
-        "login" => {
-            if provider.is_authenticated() {
-                println!("Já autenticado. Use 'auth logout' primeiro para reconectar.");
-                return Ok(());
-            }
-            provider.login().await?;
-            println!("✅ Login realizado com sucesso! Suas saves serão sincronizadas com o Google Drive.");
-        }
-        "logout" => {
-            provider.logout()?;
-            println!("✅ Credenciais removidas. Google Drive desvinculado.");
-        }
-        "status" => {
-            if provider.is_authenticated() {
-                println!("✅ Autenticado no Google Drive.");
-            } else {
-                println!("❌ Não autenticado. Execute: savevault auth login");
-            }
-        }
-        other => {
-            eprintln!(
-                "Subcomando desconhecido: 'auth {}'. Use: login | logout | status",
-                other
-            );
-        }
-    }
-
-    Ok(())
-}
 
 fn handle_add_game(config: &Config, name: &str, path_str: &str) -> anyhow::Result<()> {
     let raw_path = std::path::PathBuf::from(path_str);

@@ -75,3 +75,40 @@ cargo test --workspace
 ## LicenÃ§a
 
 Este projeto Ã© distribuÃ­do sob a licenÃ§a MIT. Para mais detalhes, consulte o arquivo LICENSE.
+
+## Tutorial Rápido de Uso
+
+O SaveVault agora utiliza um motor de versionamento inteligente (latest e daily) voltado exclusivamente para sincronização nativa na nuvem (como o Google Drive).
+
+### Passo a Passo:
+1. **Configuração do Google Drive:**
+   - Instale o aplicativo oficial do **Google Drive Desktop** (ou OneDrive/Dropbox).
+   - O SaveVault salva os arquivos de backup localmente na sua pasta definida em config.toml (por padrão: C:\Users\SEU_USUARIO\Google Drive\SaveVault_Backups).
+
+2. **Iniciando o Monitoramento:**
+   - Abra um terminal e digite o comando abaixo para rodar o motor em segundo plano:
+     \\\ash
+     cargo run -p savevault-app
+     \\\
+   - O aplicativo fará uma varredura automática (via Manifest Oficial e Heurística) para descobrir todos os seus jogos e, em seguida, entrará em modo **Watcher**.
+
+3. **Iniciando o Dashboard (Interface Visual):**
+   - Para monitorar os saves através de um painel web no navegador, execute:
+     \\\ash
+     cargo run -p savevault-app -- ui
+     \\\
+   - Acesse http://127.0.0.1:4040 (ou a porta informada no terminal) para visualizar a lista de jogos protegidos, status do sistema e os últimos snapshots realizados.
+
+4. **Como funcionam os Saves (O motor de 2 pastas):**
+   - Quando você joga e o jogo realiza um save (auto-save ou save manual), o SaveVault detecta a modificação no arquivo.
+   - Ele fará um backup para a pasta latest (sobrescrevendo o anterior) e, se for o primeiro save do dia, fará uma cópia de segurança para a pasta daily.
+   - **Exemplo:** Google Drive/SaveVault_Backups/ELDEN RING/latest/ER0000.sl2
+   - Essa estrutura latest/daily não consome seu HD infinitamente, é extremamente leve (15MB de RAM), e usa o motor de versionamento e deduplicação nativo da própria nuvem (você pode restaurar saves antigos pelo histórico de versões no site do Google Drive).
+
+5. **Restaurando um Save Manualmente pelo SaveVault:**
+   - Se preferir restaurar o último save validado pelo SaveVault, você pode usar a CLI:
+     \\\ash
+     cargo run -p savevault-app -- restore list
+     cargo run -p savevault-app -- restore <id_do_snapshot>
+     \\\
+
