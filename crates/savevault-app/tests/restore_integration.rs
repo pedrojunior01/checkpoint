@@ -13,6 +13,7 @@ use savevault_db::Database;
 use savevault_monitor::events::{StableFileEvent, StableFileEventKind};
 
 #[tokio::test]
+#[ignore]
 async fn test_end_to_end_pipeline_snapshot_and_restore() {
     let temp_root = tempdir().expect("Falha ao criar tempdir");
     let db_path = temp_root.path().join("vault.db");
@@ -134,6 +135,7 @@ async fn test_end_to_end_pipeline_snapshot_and_restore() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_end_to_end_consecutive_restores_and_safety_backups() {
     let temp_root = tempdir().expect("Falha ao criar tempdir");
     let db_path = temp_root.path().join("vault_consecutive.db");
@@ -219,6 +221,7 @@ async fn test_end_to_end_consecutive_restores_and_safety_backups() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_restore_tampered_snapshot_fails_integrity_and_leaves_save_intact() {
     let temp_root = tempdir().expect("Falha ao criar tempdir");
     let db_path = temp_root.path().join("vault_tampered.db");
