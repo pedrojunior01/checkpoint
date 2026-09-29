@@ -45,6 +45,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("003_save_locations_nocase_index", MIGRATION_003),
     ("004_backups_drive_file_id", MIGRATION_004),
     ("005_games_unique_name_platform", MIGRATION_005),
+    ("006_files_and_backups_unique", MIGRATION_006),
 ];
 
 const MIGRATION_001: &str = "
@@ -154,6 +155,28 @@ WHERE id NOT IN (
 -- 4. Cria índice único por (name COLLATE NOCASE, platform)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_games_name_platform
     ON games(name COLLATE NOCASE, platform);
+";
+
+const MIGRATION_006: &str = "
+-- 1. Remove arquivos duplicados mantendo o menor ID por (save_location_id, LOWER(path))
+DELETE FROM files
+WHERE id NOT IN (
+    SELECT MIN(id) FROM files GROUP BY save_location_id, LOWER(path)
+);
+
+-- 2. Remove backups duplicados mantendo o menor ID por (file_id, version)
+DELETE FROM backups
+WHERE id NOT IN (
+    SELECT MIN(id) FROM backups GROUP BY file_id, version
+);
+
+-- 3. Índice único para files (save_location_id, path case-insensitive)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_location_path
+    ON files(save_location_id, path COLLATE NOCASE);
+
+-- 4. Índice único para backups (file_id, version)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_backups_file_version
+    ON backups(file_id, version);
 ";
 
 

@@ -37,6 +37,10 @@ impl SnapshotManager {
 
         let version_dir = self.backup_root
             .join(&safe_game_name)
+            .join(format!("v{}", next_version));
+
+        let latest_dir = self.backup_root
+            .join(&safe_game_name)
             .join("latest");
 
         let daily_dir = self.backup_root
@@ -44,10 +48,14 @@ impl SnapshotManager {
             .join("daily");
 
         tokio::fs::create_dir_all(&version_dir).await?;
+        tokio::fs::create_dir_all(&latest_dir).await?;
         tokio::fs::create_dir_all(&daily_dir).await?;
 
         let dest = version_dir.join(filename);
         tokio::fs::copy(source_path, &dest).await?;
+
+        let dest_latest = latest_dir.join(filename);
+        tokio::fs::copy(source_path, &dest_latest).await?;
 
         let dest_daily = daily_dir.join(filename);
         let mut update_daily = true;
@@ -123,12 +131,10 @@ impl SnapshotManager {
             version_path
         } else if version == 1 && daily_path.exists() {
             daily_path
-        } else if latest_path.exists() {
+        } else if version == 1 && latest_path.exists() {
             latest_path
-        } else if daily_path.exists() {
-            daily_path
         } else {
-            latest_path
+            version_path
         };
 
         if !source.exists() {
@@ -196,9 +202,15 @@ impl SnapshotManager {
 
     /// Remove o diretório físico do snapshot correspondente à versão.
     /// Ex.: `backup_root/file_id/v{version}`
-    pub async fn remove_snapshot_version(&self, _file_id: Uuid, _game_name: &str, _version: u32) -> Result<()> {
-        // O novo design não usa pastas v{}, usa apenas `latest` e `daily` que se sobrescrevem.
-        // A nuvem gerencia as versões. Nada a deletar localmente.
+    pub async fn remove_snapshot_version(&self, _file_id: Uuid, game_name: &str, version: u32) -> Result<()> {
+        let safe_game_name = sanitize_name(game_name);
+        let version_dir = self.backup_root
+            .join(&safe_game_name)
+            .join(format!("v{}", version));
+
+        if version_dir.exists() {
+            tokio::fs::remove_dir_all(&version_dir).await?;
+        }
         Ok(())
     }
 }

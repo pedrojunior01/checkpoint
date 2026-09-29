@@ -95,6 +95,14 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     .badge-danger { background: var(--danger-bg); color: var(--danger); }
     .badge-muted { background: #334155; color: var(--text-muted); }
 
+    /* Toggle Switch */
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background-color: #334155; transition: .2s; border-radius: 20px; }
+    .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .2s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--success); }
+    input:checked + .slider:before { transform: translateX(16px); }
+
     /* Modals & Dialogs */
     .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
     .modal-backdrop.open { display: flex; }
@@ -134,6 +142,14 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
       <span class="dev-badge">DEV-UI-01</span>
     </div>
     <div class="header-actions">
+      <div id="autostart-control" style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; background: #131d31; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+        <span style="color: var(--text-muted);">Windows Autostart:</span>
+        <label class="switch">
+          <input type="checkbox" id="autostart-switch" onchange="toggleAutostart(this)">
+          <span class="slider"></span>
+        </label>
+        <span id="autostart-badge" class="badge badge-muted">...</span>
+      </div>
       <div id="app-status-badge" class="status-pill online">
         <span class="status-dot"></span>
         <span id="app-status-text">Online</span>
@@ -203,6 +219,23 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
           <div class="info-item">
             <span class="info-label">Cofre de Backups</span>
             <span class="info-val" id="dash-backup-root">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Inicialização Automática com o Windows</span>
+          <button class="btn btn-secondary" id="dash-autostart-btn" onclick="toggleAutostartFromBtn(this)">Alternar</button>
+        </div>
+        <div class="info-list">
+          <div class="info-item">
+            <span class="info-label">Status no Registro (HKCU\Run)</span>
+            <span class="info-val" id="dash-autostart-status">Verificando...</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Comando Registrado</span>
+            <span class="info-val" id="dash-autostart-cmd">-</span>
           </div>
         </div>
       </div>
@@ -426,6 +459,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     }
 
     function refreshCurrentTab() {
+      loadAutostart();
       switch (activeTab) {
         case 'dashboard': loadDashboard(); break;
         case 'locations': loadLocations(); break;
@@ -489,8 +523,68 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
         } else {
           errCard.style.display = 'none';
         }
+
+        await loadAutostart();
       } catch (e) {
         console.error("Erro carregando dashboard:", e);
+      }
+    }
+
+    async function loadAutostart() {
+      try {
+        const res = await fetch('/api/autostart');
+        const data = await res.json();
+        const sw = document.getElementById('autostart-switch');
+        const badge = document.getElementById('autostart-badge');
+        const dashStatus = document.getElementById('dash-autostart-status');
+        const dashCmd = document.getElementById('dash-autostart-cmd');
+        const dashBtn = document.getElementById('dash-autostart-btn');
+
+        if (sw) sw.checked = !!data.enabled;
+        if (badge) {
+          badge.className = data.enabled ? 'badge badge-success' : 'badge badge-muted';
+          badge.textContent = data.enabled ? 'Ativo' : 'Inativo';
+        }
+        if (dashStatus) {
+          dashStatus.innerHTML = data.enabled
+            ? '<span class="badge badge-success">🟢 HABILITADA (Inicia com o Windows)</span>'
+            : '<span class="badge badge-muted">⚪ DESABILITADA</span>';
+        }
+        if (dashCmd) {
+          dashCmd.textContent = data.command || 'Nenhum comando registrado no Registro';
+        }
+        if (dashBtn) {
+          dashBtn.className = data.enabled ? 'btn btn-danger' : 'btn btn-success';
+          dashBtn.textContent = data.enabled ? 'Desabilitar Autostart' : 'Habilitar Autostart';
+        }
+      } catch (e) {
+        console.error("Erro carregando autostart:", e);
+      }
+    }
+
+    async function toggleAutostart(checkbox) {
+      try {
+        const res = await fetch('/api/autostart/toggle', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.enabled ? "Inicialização com o Windows HABILITADA!" : "Inicialização com o Windows DESABILITADA.");
+        await loadAutostart();
+      } catch (e) {
+        if (checkbox) checkbox.checked = !checkbox.checked;
+        showToast("Erro ao alternar autostart: " + e, true);
+      }
+    }
+
+    async function toggleAutostartFromBtn(btn) {
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/autostart/toggle', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.enabled ? "Inicialização com o Windows HABILITADA!" : "Inicialização com o Windows DESABILITADA.");
+        await loadAutostart();
+      } catch (e) {
+        showToast("Erro ao alternar autostart: " + e, true);
+      } finally {
+        btn.disabled = false;
       }
     }
 

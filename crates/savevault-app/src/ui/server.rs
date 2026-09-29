@@ -125,12 +125,9 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             if k == "content-length" {
                 content_length = v.parse::<usize>().unwrap_or(0);
             } else if k == "origin" {
-                // Origem permitida apenas de localhost/127.0.0.1
-                if !v.is_empty() {
-                    let v_lower = v.to_ascii_lowercase();
-                    if !v_lower.starts_with("http://127.0.0.1") && !v_lower.starts_with("http://localhost") {
-                        origin_valid = false;
-                    }
+                // Origem permitida apenas de localhost/127.0.0.1 com porta opcional
+                if !v.is_empty() && !is_valid_local_origin(v) {
+                    origin_valid = false;
                 }
             }
         }
@@ -529,3 +526,27 @@ async fn send_response(
     stream.flush().await?;
     Ok(())
 }
+
+/// Valida se uma origem pertence exclusivamente ao localhost (IPv4 ou nome de host local)
+/// rejeitando qualquer sufixo como domínios de invasores (ex: http://127.0.0.1.attacker.com).
+pub fn is_valid_local_origin(origin: &str) -> bool {
+    let lower = origin.trim().to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("http://127.0.0.1") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://localhost") {
+        r
+    } else {
+        return false;
+    };
+
+    if rest.is_empty() {
+        return true;
+    }
+
+    if let Some(port) = rest.strip_prefix(':') {
+        !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())
+    } else {
+        false
+    }
+}
+

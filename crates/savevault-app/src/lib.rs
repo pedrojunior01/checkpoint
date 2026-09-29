@@ -6,6 +6,7 @@ pub mod orchestrator;
 pub mod pipeline;
 pub mod reconciler;
 pub mod restore;
+pub mod tray;
 pub mod ui;
 
 pub use orchestrator::{discover_and_persist_saves, DiscoverySyncReport};

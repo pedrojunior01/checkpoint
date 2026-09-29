@@ -1,8 +1,8 @@
 # Relatório de Implementação e Arquitetura - SaveVault
 
-**Versão Atual:** v0.7.0  
+**Versão Atual:** v0.8.0  
 **Data do Relatório:** Setembro 2026  
-**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) + Multi-Discovery + Autostart Windows + Arquitetura 2-Folder Completo
+**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) + Multi-Discovery + Autostart Windows + Tray Icon + Correções de Auditoria Fases 1 a 3 (221 Testes Automatizados)
 
 ---
 
@@ -179,9 +179,15 @@ No ciclo de auditoria sistêmica e adversarial, foram eliminados os seguintes bu
   - [x] Integração com `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SaveVault`.
   - [x] Comandos CLI: `savevault autostart enable | disable | status`.
   - [x] Endpoints REST na DEV-UI: `GET /api/autostart` e `POST /api/autostart/toggle`.
-- [ ] **Interface Desktop Definitiva & System Tray (v1.0)**:
-  - Ícone na bandeja do Windows (System Tray) para monitoramento silencioso minimizado.
-  - Interface gráfica definitiva nativa (Tauri / egui) empacotada.
+- [x] **System Tray & Modo Silencioso Windows**:
+  - [x] Ícone na bandeja do Windows (`tray-icon`) com menu de contexto e ações rápidas.
+  - [x] Modo silencioso em segundo plano com flag `--tray`.
+- [x] **Correções Críticas de Auditoria (Fases 1 a 3)**:
+  - [x] Armazenamento físico versionado (`v{version}`) coexistindo com Cloud Sync e eliminação de fallback acidental a `latest`.
+  - [x] Migração 006: índices únicos e deduplicação para `files` e `backups` com `upsert` canônico.
+  - [x] Proteção CORS estrita contra prefix bypass na DEV-UI.
+  - [x] Detecção de emuladores integrada gerando `SaveLocation` automaticamente.
+  - [x] Suíte de 221 testes automatizados (0 falhas) cobrindo todo o workspace.
 - [ ] **Empacotamento e Distribuição**:
   - Criação de instalador executável para usuário final (`.msi` ou `.exe`).
 - [ ] **Provedores Secundários de Cloud (Pós-MVP)**:

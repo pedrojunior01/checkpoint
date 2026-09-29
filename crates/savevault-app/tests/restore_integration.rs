@@ -305,6 +305,68 @@ async fn test_restore_tampered_snapshot_fails_integrity_and_leaves_save_intact()
     );
 }
 
+#[tokio::test]
+async fn test_restore_version_greater_than_1_missing_fails_without_fallback_to_latest() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault_missing_v2.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+
+    let backup_dir = temp_root.path().join("backups");
+    let save_dir = temp_root.path().join("saves");
+    std::fs::create_dir_all(&save_dir).unwrap();
+
+    let save_file = save_dir.join("game.sav");
+    std::fs::write(&save_file, "current_save").unwrap();
+
+    let games_repo = GamesRepo::new(&db.conn);
+    let loc_repo = SaveLocationsRepo::new(&db.conn);
+    let files_repo = FilesRepo::new(&db.conn);
+    let backups_repo = BackupsRepo::new(&db.conn);
+
+    let game = Game::new("MissingV2Game", Platform::Generic, None, Confidence::High);
+    games_repo.insert(&game).unwrap();
+
+    let loc = SaveLocation::new(game.id, save_dir.clone(), SaveLocationType::Directory);
+    let saved_loc = loc_repo.upsert(&loc).unwrap();
+
+    let file_id = Uuid::new_v4();
+    files_repo
+        .upsert(&savevault_core::models::FileEntry {
+            id: file_id,
+            save_location_id: saved_loc.id,
+            path: save_file.clone(),
+            hash: "h".into(),
+            size_bytes: 8,
+            modified_at: Utc::now(),
+        })
+        .unwrap();
+
+    // Cria apenas "latest", NÃO cria "v2"
+    let latest_dir = backup_dir.join(&game.name).join("latest");
+    std::fs::create_dir_all(&latest_dir).unwrap();
+    std::fs::write(latest_dir.join("game.sav"), "latest_payload").unwrap();
+
+    let b2 = savevault_core::models::Backup {
+        id: Uuid::new_v4(),
+        file_id,
+        version: 2,
+        cloud_path: None,
+        drive_file_id: None,
+        sync_status: savevault_core::models::SyncStatus::Pending,
+        created_at: Utc::now(),
+    };
+    backups_repo.insert(&b2).unwrap();
+
+    // Tentar restaurar v2 quando não existe v2 fisicamente DEVE falhar e NÃO cair no fallback de latest
+    let res = restore_by_id(&db.conn, &backup_dir, b2.id).await;
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().to_string();
+    assert!(err_str.contains("não encontrado em"), "Erro: {}", err_str);
+
+    // E o arquivo original não deve ter sido sobrescrito por latest_payload
+    assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "current_save");
+}
+
 #[test]
 fn test_cli_restore_binary_execution() {
     let bin_path = env!("CARGO_BIN_EXE_savevault");

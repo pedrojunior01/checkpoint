@@ -14,29 +14,39 @@ impl<'a> FilesRepo<'a> {
         Self { conn }
     }
 
-    pub fn upsert(&self, entry: &FileEntry) -> Result<()> {
-        self.conn.execute(
+    pub fn upsert(&self, entry: &FileEntry) -> Result<FileEntry> {
+        let normalized_path = entry.path.to_string_lossy().replace('\\', "/");
+        let mut stmt = self.conn.prepare(
             "INSERT INTO files (id, save_location_id, path, hash, size_bytes, modified_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET hash=excluded.hash, size_bytes=excluded.size_bytes, modified_at=excluded.modified_at",
+             ON CONFLICT(save_location_id, path COLLATE NOCASE) DO UPDATE SET
+                 hash = excluded.hash,
+                 size_bytes = excluded.size_bytes,
+                 modified_at = excluded.modified_at
+             RETURNING id, save_location_id, path, hash, size_bytes, modified_at",
+        )?;
+
+        let row = stmt.query_row(
             params![
                 entry.id.to_string(),
                 entry.save_location_id.to_string(),
-                entry.path.to_string_lossy().to_string(),
+                normalized_path,
                 entry.hash,
                 entry.size_bytes as i64,
                 entry.modified_at.to_rfc3339(),
             ],
+            row_to_entry,
         )?;
-        Ok(())
+
+        Ok(row)
     }
 
     pub fn find_by_path(&self, path: &std::path::Path) -> Result<Option<FileEntry>> {
-        let path_str = path.to_string_lossy().to_string();
+        let normalized_path = path.to_string_lossy().replace('\\', "/");
         let mut stmt = self.conn.prepare(
-            "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE path = ?1"
+            "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE path = ?1 COLLATE NOCASE"
         )?;
-        let mut rows = stmt.query_map(params![path_str], row_to_entry)?;
+        let mut rows = stmt.query_map(params![normalized_path], row_to_entry)?;
         Ok(rows.next().transpose()?)
     }
 

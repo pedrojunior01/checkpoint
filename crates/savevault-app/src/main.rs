@@ -24,6 +24,11 @@ fn main() -> anyhow::Result<()> {
     // Parseia os argumentos da linha de comando
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Se solicitado modo silencioso/tray, oculta a janela do console imediatamente
+    if args.iter().any(|a| a == "--tray" || a == "--silent" || a == "--minimized") {
+        savevault_app::tray::hide_console_window();
+    }
+
     // Roteia subcomandos imediatos / help sem precisar subir runtime assíncrono
     match args.as_slice() {
         [flag] if flag == "--help" || flag == "-h" => {
@@ -40,6 +45,12 @@ fn main() -> anyhow::Result<()> {
         }
         [autostart_cmd] if autostart_cmd == "autostart" => {
             handle_autostart_cli("status")?;
+            return Ok(());
+        }
+        [auth_cmd, help_flag]
+            if auth_cmd == "auth" && (help_flag == "--help" || help_flag == "-h") =>
+        {
+            print_auth_help();
             return Ok(());
         }
         [restore_cmd, help_flag]
@@ -98,7 +109,21 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
-
+        // ----------------------------------------------------------------
+        // savevault auth / login — autenticação com provedores em nuvem
+        // ----------------------------------------------------------------
+        [auth_cmd, sub] if auth_cmd == "auth" => {
+            handle_auth_cli(sub).await?;
+            return Ok(());
+        }
+        [auth_cmd] if auth_cmd == "auth" => {
+            handle_auth_cli("status").await?;
+            return Ok(());
+        }
+        [login_cmd] if login_cmd == "login" => {
+            handle_auth_cli("login").await?;
+            return Ok(());
+        }
 
         // ----------------------------------------------------------------
         // savevault restore — restaura um snapshot para o save original
@@ -281,12 +306,38 @@ async fn run_resident_daemon(
     let recon_shutdown_rx = shutdown_tx.subscribe();
 
     let reconciler_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
-        reconciler,
+        reconciler.clone(),
         reconciler_config,
         recon_shutdown_rx,
     ));
 
-    tracing::info!("SaveVault monitorando em modo residente (Watcher + Reconciler). Pressione Ctrl+C para encerrar.");
+    // Inicializa a interface web DEV-UI em background para acesso via Tray ou navegador
+    let ui_state = std::sync::Arc::new(savevault_app::DevUiState::new(
+        db_conn.clone(),
+        config.paths.database_path.clone(),
+        config.paths.backup_dir.clone(),
+        Some(reconciler.clone()),
+        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+    ));
+
+    let server_shutdown_rx = shutdown_tx.subscribe();
+    let (ui_addr, server_handle) = match savevault_app::start_dev_ui_server(ui_state, 4040, server_shutdown_rx).await {
+        Ok((addr, handle)) => {
+            tracing::info!("Interface Web DEV-UI disponível em http://{}", addr);
+            (Some(addr), Some(handle))
+        }
+        Err(e) => {
+            tracing::warn!("Não foi possível iniciar DEV-UI em background: {}", e);
+            (None, None)
+        }
+    };
+
+    let ui_port = ui_addr.map(|a| a.port()).unwrap_or(4040);
+    let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), ui_port);
+
+    tracing::info!("SaveVault monitorando em modo residente (Watcher + Reconciler + Sync + Tray). Pressione Ctrl+C para encerrar.");
+
+    let mut tray_shutdown_rx = shutdown_tx.subscribe();
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -294,7 +345,25 @@ async fn run_resident_daemon(
             let _ = shutdown_tx.send(true);
             watcher.shutdown().await;
             let _ = reconciler_handle.await;
+            if let Some(h) = server_handle {
+                let _ = h.await;
+            }
             tracing::info!("Serviços de monitoramento e reconciliação encerrados com sucesso.");
+        }
+        _ = async {
+            while tray_shutdown_rx.changed().await.is_ok() {
+                if *tray_shutdown_rx.borrow() {
+                    break;
+                }
+            }
+        } => {
+            tracing::info!("Sinal de encerramento recebido via Tray. Iniciando shutdown gracioso...");
+            watcher.shutdown().await;
+            let _ = reconciler_handle.await;
+            if let Some(h) = server_handle {
+                let _ = h.await;
+            }
+            tracing::info!("Serviços encerrados com sucesso.");
         }
         res = savevault_app::pipeline::run_pipeline(
             db_conn.clone(),
@@ -310,6 +379,9 @@ async fn run_resident_daemon(
             let _ = shutdown_tx.send(true);
             watcher.shutdown().await;
             let _ = reconciler_handle.await;
+            if let Some(h) = server_handle {
+                let _ = h.await;
+            }
         }
     }
 
@@ -564,11 +636,13 @@ fn print_global_help() {
     println!();
     println!("USO:");
     println!("  savevault                                   Inicia o daemon de monitoramento contínuo");
+    println!("  savevault --tray                            Inicia minimizado na bandeja do sistema (silencioso)");
     println!("  savevault --once                            Executa descoberta e persiste sem manter ativo");
     println!("  savevault add <nome> <caminho>              Cadastra manualmente um jogo e pasta de save");
     println!("  savevault list                              Lista todos os jogos e diretórios monitorados");
     println!("  savevault restore <backup_id>               Restaura snapshot com safety backup");
     println!("  savevault restore list                      Lista snapshots históricos disponíveis");
+    println!("  savevault auth [login|status|logout]        Gerencia autenticação OAuth com o Google Drive");
     println!("  savevault autostart [enable|disable|status] Configura inicialização automática com o Windows");
     println!("  savevault --ui                              Inicia a interface de testes DEV-UI (porta 4040)");
     println!("  savevault --help                            Exibe esta ajuda");
@@ -728,9 +802,11 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     let (addr, server_handle) =
         savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
 
+    let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), addr.port());
+
     let ui_url = format!("http://{}", addr);
     println!("  DEV-UI ativa em: {}", ui_url);
-    println!("  Abrindo navegador... (Pressione Ctrl+C para encerrar)");
+    println!("  Abrindo navegador... (Pressione Ctrl+C ou use o menu da bandeja para encerrar)");
     println!("================================================================================");
 
     #[cfg(windows)]
@@ -740,9 +816,20 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
             .spawn();
     }
 
+    let mut tray_shutdown_rx = shutdown_tx.subscribe();
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("\nSinal de encerramento (Ctrl+C). Encerrando DEV-UI...");
+        }
+        _ = async {
+            while tray_shutdown_rx.changed().await.is_ok() {
+                if *tray_shutdown_rx.borrow() {
+                    break;
+                }
+            }
+        } => {
+            println!("\nSinal de encerramento recebido via Tray. Encerrando DEV-UI...");
         }
         res = async {
             if let Some((_w, rx)) = watcher_opt.take() {
@@ -772,3 +859,101 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     println!("DEV-UI encerrada com sucesso.");
     Ok(())
 }
+
+async fn handle_auth_cli(sub: &str) -> anyhow::Result<()> {
+    match sub {
+        "login" => {
+            println!("================================================================================");
+            println!("                    SaveVault — Autenticação Google Drive                       ");
+            println!("================================================================================");
+            let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
+                Some(p) => p,
+                None => {
+                    eprintln!("[AVISO] Variáveis de ambiente SAVEVAULT_GOOGLE_CLIENT_ID e SAVEVAULT_GOOGLE_CLIENT_SECRET não configuradas.");
+                    eprintln!("Por favor, defina-as no arquivo .env ou nas variáveis de ambiente do sistema.");
+                    std::process::exit(1);
+                }
+            };
+
+            if provider.is_authenticated() {
+                println!("[OK] Usuário já está autenticado no Google Drive.");
+                println!("Para reautenticar com outra conta, execute primeiro: savevault auth logout");
+                return Ok(());
+            }
+
+            println!("Iniciando fluxo de autorização OAuth 2.0 (PKCE com loopback local na porta 8085)...");
+            println!("Abrindo navegador padrão para consentimento...");
+            match provider.login().await {
+                Ok(()) => {
+                    println!("[SUCESSO] Autenticação realizada com sucesso!");
+                    println!("O refresh token foi armazenado com segurança no Windows Credential Manager.");
+                }
+                Err(e) => {
+                    eprintln!("[FALHA] Não foi possível completar o login: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "status" => {
+            println!("================================================================================");
+            println!("               SaveVault — Status de Autenticação Google Drive                  ");
+            println!("================================================================================");
+            match savevault_cloud::GoogleDriveProvider::from_env() {
+                Some(provider) => {
+                    if provider.is_authenticated() {
+                        println!("Status:     🟢 AUTENTICADO");
+                        println!("Provedor:   Google Drive");
+                        println!("Armazenamento de Token: Windows Credential Manager (SaveVault)");
+                        println!("A sincronização em segundo plano está habilitada.");
+                    } else {
+                        println!("Status:     🟡 NÃO AUTENTICADO");
+                        println!("Execute 'savevault auth login' para conectar sua conta.");
+                    }
+                }
+                None => {
+                    println!("Status:     ⚪ NÃO CONFIGURADO");
+                    println!("Variáveis SAVEVAULT_GOOGLE_CLIENT_ID e SAVEVAULT_GOOGLE_CLIENT_SECRET ausentes.");
+                }
+            }
+            println!("================================================================================");
+        }
+        "logout" => {
+            println!("SaveVault — Logout Google Drive");
+            match savevault_cloud::GoogleDriveProvider::from_env() {
+                Some(provider) => {
+                    match provider.logout() {
+                        Ok(()) => {
+                            println!("[SUCESSO] Credenciais removidas do Windows Credential Manager.");
+                        }
+                        Err(e) => {
+                            eprintln!("[AVISO] Nenhuma credencial para remover ou erro: {}", e);
+                        }
+                    }
+                }
+                None => {
+                    println!("Nenhuma credencial configurada.");
+                }
+            }
+        }
+        "help" | "--help" | "-h" => {
+            print_auth_help();
+        }
+        other => {
+            eprintln!("[FALHA] Subcomando de autenticação desconhecido: '{}'", other);
+            print_auth_help();
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+fn print_auth_help() {
+    println!("Uso: savevault auth <subcomando>");
+    println!();
+    println!("Subcomandos:");
+    println!("  login     Inicia o fluxo OAuth 2.0 no navegador padrão (porta 8085)");
+    println!("  status    Verifica o estado da autenticação com o Google Drive");
+    println!("  logout    Remove o token de acesso do Windows Credential Manager");
+    println!("  help      Exibe esta mensagem de ajuda");
+}
+

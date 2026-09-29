@@ -2,9 +2,16 @@
 //! Verifica as pastas padrão de dados de cada emulador.
 
 use anyhow::Result;
-use savevault_core::models::{Confidence, Game, Platform};
+use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use std::path::PathBuf;
 use tracing::debug;
+use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredEmulator {
+    pub game: Game,
+    pub save_locations: Vec<SaveLocation>,
+}
 
 #[derive(Default)]
 pub struct EmulatorDetector;
@@ -15,18 +22,33 @@ impl EmulatorDetector {
     }
 
     pub async fn detect(&self) -> Result<Vec<Game>> {
+        let emus = self.detect_with_locations().await?;
+        Ok(emus.into_iter().map(|e| e.game).collect())
+    }
+
+    pub async fn detect_with_locations(&self) -> Result<Vec<DiscoveredEmulator>> {
         let mut results = Vec::new();
 
         for (platform, name, paths) in emulator_profiles() {
             for path in paths {
                 if path.exists() {
                     debug!("{} encontrado em: {}", name, path.display());
-                    results.push(Game::new(
+                    let game = Game::new(
                         format!("{} (Emulador)", name),
                         platform.clone(),
                         None,
                         Confidence::High,
-                    ));
+                    );
+                    let location = SaveLocation {
+                        id: Uuid::new_v4(),
+                        game_id: game.id,
+                        path: path.clone(),
+                        location_type: SaveLocationType::Directory,
+                    };
+                    results.push(DiscoveredEmulator {
+                        game,
+                        save_locations: vec![location],
+                    });
                     break; // Uma entrada por emulador
                 }
             }

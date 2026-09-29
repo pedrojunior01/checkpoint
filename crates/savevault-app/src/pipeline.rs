@@ -63,19 +63,22 @@ pub fn persist_snapshot_and_sync(
         size_bytes: event.size_bytes,
         modified_at: Utc::now(),
     };
-    files_repo.upsert(&file_entry)?;
+    let saved_file = files_repo.upsert(&file_entry)?;
+
+    let mut canonical_backup = backup.clone();
+    canonical_backup.file_id = saved_file.id;
 
     let backups_repo = BackupsRepo::new(conn);
-    backups_repo.insert(backup)?;
+    backups_repo.insert(&canonical_backup)?;
 
     let mut pruned_backups = Vec::new();
     if max_versions > 0 {
-        match backups_repo.prune_old_versions(file_id, max_versions) {
+        match backups_repo.prune_old_versions(saved_file.id, max_versions) {
             Ok(pruned) => pruned_backups = pruned,
             Err(e) => {
                 tracing::warn!(
                     "Falha ao podar versões antigas do arquivo {}: {}",
-                    file_id,
+                    saved_file.id,
                     e
                 );
             }
@@ -261,12 +264,33 @@ pub async fn run_pipeline(
     mut shutdown_rx: watch::Receiver<bool>,
     trigger_sync: bool,
 ) -> Result<()> {
+    // Drenagem inicial de itens pendentes de sincronização
+    if trigger_sync {
+        let conn = db.lock().await;
+        if let Err(e) = savevault_sync::process_queue_google_drive(&conn, backup_root.clone()).await {
+            tracing::debug!("Sync em nuvem inicial: {}", e);
+        }
+    }
+
+    let mut sync_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
                     tracing::info!("Shutdown recebido no processador de eventos do pipeline.");
                     break;
+                }
+            }
+            _ = sync_interval.tick() => {
+                if trigger_sync {
+                    let conn = db.lock().await;
+                    if let Err(e) = savevault_sync::process_queue_google_drive(
+                        &conn,
+                        backup_root.clone(),
+                    ).await {
+                        tracing::debug!("Sync periódico em nuvem: {}", e);
+                    }
                 }
             }
             event_opt = stable_rx.recv() => {
@@ -313,6 +337,11 @@ pub async fn run_pipeline(
     // Drenagem final no encerramento limpo
     while let Ok(event) = stable_rx.try_recv() {
         let _ = process_file(&db, &event, &backup_root, max_versions).await;
+    }
+
+    if trigger_sync {
+        let conn = db.lock().await;
+        let _ = savevault_sync::process_queue_google_drive(&conn, backup_root).await;
     }
 
     Ok(())

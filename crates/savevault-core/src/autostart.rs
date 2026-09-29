@@ -83,7 +83,7 @@ mod windows_impl {
     /// Se `custom_exe_path` for `None`, utiliza o caminho do executável do processo atual (`std::env::current_exe`).
     pub fn enable(custom_exe_path: Option<&Path>) -> Result<AutostartStatus> {
         let exe_path = match custom_exe_path {
-            Some(p) => p.to_path_buf(),
+            Some(p) => extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf()),
             None => std::env::current_exe()
                 .context("Falha ao obter o caminho do executável atual do SaveVault")?,
         };
@@ -96,8 +96,8 @@ mod windows_impl {
         };
         let normalized = crate::path::normalize_windows_path(&canonical_path).unwrap_or(canonical_path);
 
-        // Formata o comando com aspas para suportar caminhos com espaços
-        let command_str = format!("\"{}\"", normalized.display());
+        // Formata o comando com aspas para suportar caminhos com espaços e flag --tray para iniciar silencioso na bandeja
+        let command_str = format!("\"{}\" --tray", normalized.display());
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let (run_key, _) = hkcu
@@ -163,12 +163,13 @@ mod non_windows_impl {
     }
 
     pub fn enable(custom_exe_path: Option<&Path>) -> Result<AutostartStatus> {
-        let exe = custom_exe_path
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("savevault"));
+        let exe = match custom_exe_path {
+            Some(p) => extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf()),
+            None => PathBuf::from("savevault"),
+        };
         Ok(AutostartStatus {
             enabled: true,
-            command: Some(exe.to_string_lossy().into_owned()),
+            command: Some(format!("\"{}\" --tray", exe.display())),
             executable_path: Some(exe),
         })
     }
@@ -195,9 +196,9 @@ pub fn extract_executable_path(command: &str) -> Option<PathBuf> {
         return None;
     }
 
-    if trimmed.starts_with('"') {
-        if let Some(end_quote) = trimmed[1..].find('"') {
-            return Some(PathBuf::from(&trimmed[1..=end_quote]));
+    if let Some(without_prefix) = trimmed.strip_prefix('"') {
+        if let Some(end_quote) = without_prefix.find('"') {
+            return Some(PathBuf::from(&without_prefix[..end_quote]));
         }
     }
 

@@ -1134,6 +1134,98 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, g1.id);
     }
+
+    #[test]
+    fn files_repo_upsert_idempotent_with_case_insensitivity() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+
+        let game = Game::new("Case Game", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Saves\CaseTest", SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        let entry1 = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\Saves\CaseTest\save.dat"),
+            hash: "hash_initial".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
+        };
+        let saved1 = files_repo.upsert(&entry1).unwrap();
+        assert_eq!(saved1.id, entry1.id);
+        assert_eq!(saved1.hash, "hash_initial");
+
+        // Upsert com caminho em casing diferente e ID diferente
+        let entry2 = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"c:\saves\casetest\SAVE.DAT"),
+            hash: "hash_updated".into(),
+            size_bytes: 200,
+            modified_at: Utc::now(),
+        };
+        let saved2 = files_repo.upsert(&entry2).unwrap();
+        // Deve reutilizar o id canônico original e atualizar hash/size
+        assert_eq!(saved2.id, entry1.id);
+        assert_eq!(saved2.hash, "hash_updated");
+        assert_eq!(saved2.size_bytes, 200);
+
+        let list = files_repo.list_by_location(loc.id).unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn backups_unique_constraint_on_file_and_version() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new("Unique Backup Game", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Saves\UniqueTest", SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        let file = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\Saves\UniqueTest\save.dat"),
+            hash: "hash1".into(),
+            size_bytes: 50,
+            modified_at: Utc::now(),
+        };
+        files_repo.upsert(&file).unwrap();
+
+        let b1 = Backup {
+            id: Uuid::new_v4(),
+            file_id: file.id,
+            version: 1,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b1).unwrap();
+
+        let b2 = Backup {
+            id: Uuid::new_v4(),
+            file_id: file.id,
+            version: 1, // Mesma versão
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
+        };
+        // Deve falhar por violação de constraint única (idx_backups_file_version)
+        assert!(backups_repo.insert(&b2).is_err());
+    }
 }
 
 

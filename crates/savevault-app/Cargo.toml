@@ -37,6 +37,9 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 dotenvy = "0.15.7"
 
+[target.'cfg(windows)'.dependencies]
+tray-item = "0.10.0"
+windows-sys = { version = "0.52", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

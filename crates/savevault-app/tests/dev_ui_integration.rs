@@ -374,6 +374,18 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
     assert!(!restore_resp.success);
     assert!(restore_resp.error.unwrap().contains("não encontrado"));
 
+    // 7.1 Testa GET /api/autostart
+    let (status, autostart_body) = http_get(addr, "/api/autostart").await;
+    assert_eq!(status, 200);
+    assert!(autostart_body.contains("enabled"));
+
+    // 7.2 Testa POST /api/autostart/toggle
+    let (status, toggle_body) = http_post(addr, "/api/autostart/toggle", "{}").await;
+    assert_eq!(status, 200);
+    assert!(toggle_body.contains("enabled"));
+    // Reverte o toggle para manter o estado limpo
+    let _ = http_post(addr, "/api/autostart/toggle", "{}").await;
+
     // 8. Testa rota 404
     let (status, _) = http_get(addr, "/api/rota_inexistente").await;
     assert_eq!(status, 404);
@@ -382,4 +394,60 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
     let _ = shutdown_tx.send(true);
     let server_res = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
     assert!(server_res.is_ok(), "Servidor demorou para encerrar");
+}
+
+#[tokio::test]
+async fn test_dev_ui_cors_origin_protection() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
+
+    let db_mutex = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(DevUiState::new(
+        db_mutex,
+        db_path,
+        backup_dir,
+        None,
+        Duration::from_secs(30),
+    ));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (addr, server_handle) = start_dev_ui_server(state.clone(), 0, shutdown_rx)
+        .await
+        .expect("Falha ao iniciar servidor DEV-UI");
+
+    async fn send_raw_origin(addr: SocketAddr, origin: &str) -> u16 {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /api/dashboard HTTP/1.1\r\nHost: {}\r\nOrigin: {}\r\nConnection: close\r\n\r\n",
+            addr, origin
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).await.unwrap();
+        resp.lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap()
+    }
+
+    // 1. Origens permitidas
+    assert_eq!(send_raw_origin(addr, "http://127.0.0.1").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://localhost").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://127.0.0.1:4040").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://localhost:3000").await, 200);
+
+    // 2. Origens maliciosas bloqueadas (403 Forbidden)
+    assert_eq!(send_raw_origin(addr, "http://127.0.0.1.attacker.com").await, 403);
+    assert_eq!(send_raw_origin(addr, "http://localhost.evil.com").await, 403);
+    assert_eq!(send_raw_origin(addr, "http://evil.com").await, 403);
+    assert_eq!(send_raw_origin(addr, "https://127.0.0.1").await, 403);
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
 }

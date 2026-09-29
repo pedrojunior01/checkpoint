@@ -21,6 +21,18 @@ pub struct DiscoveryResult {
     pub save_locations: Vec<SaveLocation>,
 }
 
+/// Infere o SaveLocationType apropriado com base no padrão e características do caminho.
+pub fn infer_location_type(path: &std::path::Path) -> SaveLocationType {
+    let s = path.to_string_lossy();
+    if s.contains('*') || s.contains('?') {
+        SaveLocationType::Glob
+    } else if path.is_file() || (path.extension().is_some() && !path.is_dir()) {
+        SaveLocationType::File
+    } else {
+        SaveLocationType::Directory
+    }
+}
+
 /// Executa todos os detectors disponíveis e retorna os jogos e saves encontrados.
 ///
 /// O `cache_dir` é usado para armazenar o manifest.yaml do Ludusavi.
@@ -71,10 +83,13 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     // ------------------------------------------------------------------
     // 3. Emuladores (Dolphin, PCSX2, PPSSPP, RetroArch)
     // ------------------------------------------------------------------
-    match emulators::EmulatorDetector::new().detect().await {
-        Ok(mut found) => {
+    match emulators::EmulatorDetector::new().detect_with_locations().await {
+        Ok(found) => {
             tracing::info!("Emuladores: {} entrada(s) encontrada(s)", found.len());
-            games.append(&mut found);
+            for emu in found {
+                save_locations.extend(emu.save_locations);
+                games.push(emu.game);
+            }
         }
         Err(e) => tracing::warn!("Emulator detector falhou: {}", e),
     }
@@ -114,11 +129,12 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         };
 
                         for path in paths {
+                            let location_type = infer_location_type(&path);
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
                                 game_id: game.id,
                                 path,
-                                location_type: SaveLocationType::Directory,
+                                location_type,
                             });
                         }
 
@@ -141,11 +157,12 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         }
 
                         for path in paths {
+                            let location_type = infer_location_type(&path);
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
                                 game_id: game.id,
                                 path,
-                                location_type: SaveLocationType::Directory,
+                                location_type,
                             });
                         }
 

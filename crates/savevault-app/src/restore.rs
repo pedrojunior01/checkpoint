@@ -287,12 +287,10 @@ pub fn validate_snapshot_security(
         version_path
     } else if version == 1 && daily_path.exists() {
         daily_path
-    } else if latest_path.exists() {
+    } else if version == 1 && latest_path.exists() {
         latest_path
-    } else if daily_path.exists() {
-        daily_path
     } else {
-        latest_path
+        version_path
     };
 
     if !source_path.starts_with(backup_root) {
