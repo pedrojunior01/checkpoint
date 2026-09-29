@@ -115,13 +115,13 @@ mod tests {
         std::fs::write(&save_file, "game save data v1").unwrap();
 
         let file_id = uuid::Uuid::new_v4();
-        let backup = manager.create_snapshot(file_id, &save_file, 1).await.unwrap();
+        let backup = manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
 
         assert_eq!(backup.version, 1);
         assert_eq!(backup.file_id, file_id);
 
         // Verificar que o arquivo foi copiado
-        let expected_path = backup_root.join(file_id.to_string()).join("v1").join("save.dat");
+        let expected_path = backup_root.join("TestGame").join("v1").join("save.dat");
         assert!(expected_path.exists(), "Arquivo de backup deve existir em {}", expected_path.display());
 
         let content = std::fs::read_to_string(&expected_path).unwrap();
@@ -141,11 +141,11 @@ mod tests {
         let file_id = uuid::Uuid::new_v4();
         for version in 1..=3u32 {
             std::fs::write(&save_file, format!("shared data v{}", version)).unwrap();
-            manager.create_snapshot(file_id, &save_file, version).await.unwrap();
+            manager.create_snapshot(file_id, "TestGame", &save_file, version).await.unwrap();
         }
 
         for version in 1..=3u32 {
-            let path = backup_root.join(file_id.to_string()).join(format!("v{}", version)).join("progress.sav");
+            let path = backup_root.join("TestGame").join(format!("v{}", version)).join("progress.sav");
             assert!(path.exists(), "Versão {} deve existir", version);
             let content = std::fs::read_to_string(&path).unwrap();
             assert_eq!(content, format!("shared data v{}", version));
@@ -165,13 +165,13 @@ mod tests {
         // Versão 1 — cria snapshot
         std::fs::write(&save_file, "versão 1 do save").unwrap();
         let file_id = uuid::Uuid::new_v4();
-        manager.create_snapshot(file_id, &save_file, 1).await.unwrap();
+        manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
 
         // Simula progresso posterior (versão atual)
         std::fs::write(&save_file, "versão atual (pode estar corrompida)").unwrap();
 
         // Restaura a versão 1
-        let safety_path = manager.restore_snapshot(file_id, 1, &save_file).await.unwrap();
+        let safety_path = manager.restore_snapshot(file_id, "TestGame", 1, &save_file).await.unwrap();
 
         // Verifica que o save foi restaurado
         let restored = std::fs::read_to_string(&save_file).unwrap();
@@ -198,27 +198,27 @@ mod tests {
 
         // Cria snapshots das versões 1, 2 e 3
         std::fs::write(&save_file, "conteúdo da versão 1").unwrap();
-        manager.create_snapshot(file_id, &save_file, 1).await.unwrap();
+        manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
 
         std::fs::write(&save_file, "conteúdo da versão 2").unwrap();
-        manager.create_snapshot(file_id, &save_file, 2).await.unwrap();
+        manager.create_snapshot(file_id, "TestGame", &save_file, 2).await.unwrap();
 
         std::fs::write(&save_file, "conteúdo da versão 3").unwrap();
-        manager.create_snapshot(file_id, &save_file, 3).await.unwrap();
+        manager.create_snapshot(file_id, "TestGame", &save_file, 3).await.unwrap();
 
         // Estado inicial do save no disco antes dos restores (Save Original)
         std::fs::write(&save_file, "save original ativo").unwrap();
 
         // 1. Restore A (versão 1)
-        let safety_a = manager.restore_snapshot(file_id, 1, &save_file).await.unwrap().unwrap();
+        let safety_a = manager.restore_snapshot(file_id, "TestGame", 1, &save_file).await.unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "conteúdo da versão 1");
 
         // 2. Restore B (versão 2)
-        let safety_b = manager.restore_snapshot(file_id, 2, &save_file).await.unwrap().unwrap();
+        let safety_b = manager.restore_snapshot(file_id, "TestGame", 2, &save_file).await.unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "conteúdo da versão 2");
 
         // 3. Restore C (versão 3)
-        let safety_c = manager.restore_snapshot(file_id, 3, &save_file).await.unwrap().unwrap();
+        let safety_c = manager.restore_snapshot(file_id, "TestGame", 3, &save_file).await.unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "conteúdo da versão 3");
 
         // PROVA CRÍTICA: Os três safety backups devem existir simultaneamente e ser distintos!
@@ -250,7 +250,7 @@ mod tests {
         let file_id = uuid::Uuid::new_v4();
 
         // Tentar restaurar versão 999 que não existe
-        let result = manager.restore_snapshot(file_id, 999, &save_file).await;
+        let result = manager.restore_snapshot(file_id, "TestGame", 999, &save_file).await;
         assert!(result.is_err(), "Restauração de versão inexistente deve retornar erro");
 
         // Destino deve permanecer completamente intacto

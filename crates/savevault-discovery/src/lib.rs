@@ -177,11 +177,28 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     }
 
     // ------------------------------------------------------------------
-    // 6. Adiciona jogos e locais do Detector Genérico
+    // 6. Adiciona jogos e locais do Detector Genérico (Com Deduplicação)
     // ------------------------------------------------------------------
     for info in generic_infos {
-        save_locations.extend(info.save_locations);
-        games.push(info.game);
+        let mut is_duplicate = false;
+        for loc in &info.save_locations {
+            for existing in &save_locations {
+                let existing_str = existing.path.to_string_lossy().to_lowercase();
+                let loc_str = loc.path.to_string_lossy().to_lowercase();
+                if existing_str.contains(&loc_str) || loc_str.contains(&existing_str) {
+                    is_duplicate = true;
+                    break;
+                }
+            }
+            if is_duplicate { break; }
+        }
+        
+        if !is_duplicate {
+            save_locations.extend(info.save_locations);
+            games.push(info.game);
+        } else {
+            tracing::info!("Jogo genérico '{}' ignorado por sobrepor caminho de jogo oficial.", info.game.name);
+        }
     }
 
     tracing::info!(

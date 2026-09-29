@@ -23,8 +23,8 @@ use walkdir::WalkDir;
 
 /// Extensões de arquivo que indicam save games com alta probabilidade.
 const SAVE_EXTENSIONS: &[&str] = &[
-    "sav", "save", "dat", "sg", "sg0", "sg1", "sg2", "sg3",
-    "slot", "gam", "savegame", "sfs", "bak",
+    "sav", "save", "sg", "sg0", "sg1", "sg2", "sg3",
+    "slot", "gam", "savegame", "sfs",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
@@ -316,7 +316,9 @@ fn should_skip_dir(path: &Path, root: &Path) -> bool {
         "steamapps", "gog galaxy", "epic games", "origin", "ea",
         "ubisoft", "blizzard", "battlenet", "rockstar", "2k games",
         ".git", "node_modules", "target", "debug", "release",
-        "assembly", "icloud", "dropbox", "onedrive",
+        "assembly", "icloud", "dropbox", "onedrive", "utorrent", "bittorrent",
+        "telegram", "obs-studio", "obs", "comfy", "wtablet", "whatsapp",
+        "postman", "vlc", "docker"
     ];
 
     for comp in relative.components() {

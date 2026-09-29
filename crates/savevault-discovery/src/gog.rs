@@ -14,7 +14,7 @@
 
 use anyhow::Result;
 use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
@@ -273,7 +273,7 @@ fn scan_gog_games_folder(root: &PathBuf) -> Vec<GogGameInfo> {
 }
 
 /// Detecta save folders dentro de um diretório de instalação de jogo.
-fn detect_save_paths_in_folder(game_id: Uuid, base: &PathBuf) -> Vec<SaveLocation> {
+fn detect_save_paths_in_folder(game_id: Uuid, base: &Path) -> Vec<SaveLocation> {
     let mut paths = Vec::new();
     for subfolder in &["saves", "save", "Saves", "Save", "savegames", "SaveGames"] {
         let candidate = base.join(subfolder);
@@ -359,7 +359,7 @@ mod tests {
         std::fs::create_dir_all(&saves_dir).unwrap();
 
         let game_id = Uuid::new_v4();
-        let paths = detect_save_paths_in_folder(game_id, &dir.path().to_path_buf());
+        let paths = detect_save_paths_in_folder(game_id, dir.path());
 
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].path, saves_dir);
@@ -370,7 +370,7 @@ mod tests {
     fn detect_save_paths_in_folder_returns_empty_when_no_save_subfolder() {
         let dir = tempfile::tempdir().unwrap();
         let game_id = Uuid::new_v4();
-        let paths = detect_save_paths_in_folder(game_id, &dir.path().to_path_buf());
+        let paths = detect_save_paths_in_folder(game_id, dir.path());
         assert!(paths.is_empty());
     }
 

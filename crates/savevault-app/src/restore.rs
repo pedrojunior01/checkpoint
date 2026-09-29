@@ -250,8 +250,8 @@ pub fn validate_destination_security(
 /// Valida que o caminho do snapshot físico está estritamente contido no diretório raiz de backups.
 pub fn validate_snapshot_security(
     backup_root: &Path,
-    file_id: Uuid,
-    version: u32,
+    game_name: &str,
+    _version: u32,
     filename: &str,
 ) -> Result<PathBuf, RestoreError> {
     if filename.is_empty()
@@ -266,9 +266,11 @@ pub fn validate_snapshot_security(
         )));
     }
 
+    let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
+
     let version_dir = backup_root
-        .join(file_id.to_string())
-        .join(format!("v{}", version));
+        .join(&safe_game_name)
+        .join("latest");
     let source_path = version_dir.join(filename);
 
     if !source_path.starts_with(backup_root) {
@@ -299,28 +301,25 @@ pub struct RestoreMetadata {
     pub backup: savevault_core::models::Backup,
     pub file_entry: FileEntry,
     pub save_location: SaveLocation,
+    pub game: savevault_core::models::Game,
 }
 
-/// Carrega e valida os metadados do snapshot a partir da conexão SQLite.
 pub fn load_restore_metadata(
     conn: &Connection,
     snapshot_id: Uuid,
 ) -> Result<RestoreMetadata, RestoreError> {
-    // 1. Localiza metadados do snapshot
     let backups_repo = BackupsRepo::new(conn);
     let backup = backups_repo
         .find_by_id(snapshot_id)
         .map_err(|e| RestoreError::Other(e.to_string()))?
         .ok_or(RestoreError::SnapshotNotFound(snapshot_id))?;
 
-    // 2. Localiza metadados do arquivo original
     let files_repo = FilesRepo::new(conn);
     let file_entry = files_repo
         .find_by_id(backup.file_id)
         .map_err(|e| RestoreError::Other(e.to_string()))?
         .ok_or(RestoreError::FileNotFound(backup.file_id))?;
 
-    // 3. Localiza o SaveLocation autorizado
     let locations_repo = SaveLocationsRepo::new(conn);
     let save_location = locations_repo
         .find_by_id(file_entry.save_location_id)
@@ -329,10 +328,17 @@ pub fn load_restore_metadata(
             file_entry.save_location_id,
         ))?;
 
+    let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+    let game = games_repo
+        .find_by_id(save_location.game_id)
+        .map_err(|e| RestoreError::Other(e.to_string()))?
+        .ok_or_else(|| RestoreError::Other("Game não encontrado".to_string()))?;
+
     Ok(RestoreMetadata {
         backup,
         file_entry,
         save_location,
+        game,
     })
 }
 
@@ -379,7 +385,7 @@ pub async fn execute_restore_filesystem(
 
     let source_path = validate_snapshot_security(
         backup_root,
-        metadata.backup.file_id,
+        metadata.game.name.as_str(),
         metadata.backup.version,
         filename,
     )?;
@@ -626,7 +632,7 @@ mod tests {
         files_repo.upsert(&file_entry).unwrap();
 
         // Cria snapshot v1 no disco
-        let v1_dir = backup_root.join(file_id.to_string()).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("player.sav");
         std::fs::write(&v1_file, "save_conteudo_original_v1").unwrap();
@@ -708,7 +714,7 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(file_id.to_string()).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("lost_save.dat");
         std::fs::write(&v1_file, "conteudo_recuperado").unwrap();
@@ -842,7 +848,7 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(file_id.to_string()).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("save.dat");
         std::fs::write(&v1_file, "conteudo_corrompido_ou_alterado").unwrap();
@@ -912,7 +918,7 @@ mod tests {
             .unwrap();
 
         // Snapshots v1 e v2
-        let v1_dir = backup_root.join(file_id.to_string()).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "dados_versao_1").unwrap();
         let b1 = Backup {
@@ -926,7 +932,7 @@ mod tests {
         };
         backups_repo.insert(&b1).unwrap();
 
-        let v2_dir = backup_root.join(file_id.to_string()).join("v2");
+        let v2_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v2");
         std::fs::create_dir_all(&v2_dir).unwrap();
         std::fs::write(v2_dir.join("save.dat"), "dados_versao_2").unwrap();
         let b2 = Backup {
@@ -999,7 +1005,7 @@ mod tests {
             })
             .unwrap();
 
-        let v1_dir = backup_root.join(file_id.to_string()).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "conteudo_v1").unwrap();
 

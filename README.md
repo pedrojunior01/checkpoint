@@ -42,17 +42,16 @@ flowchart TD
     D -- Sim (Arquivo liberado) --> E[🔑 Calcula hash BLAKE3]
     E --> F{Save realmente mudou?}
     F -- Não (Falso positivo) --> Z[Ignora]
-    F -- Sim --> G[📦 Cria Snapshot Versionado local v1, v2...]
-    G --> H[☁️ Enfileira para o Google Drive]
-    H --> I[📤 Sincronização em nuvem segura]
+    F -- Sim --> G[📦 Cria Snapshot Versionado local latest e daily]
+    G --> H[☁️ Sincronização em nuvem segura]
 ```
 
 1. **Descoberta Inteligente**: Ao iniciar, o SaveVault rastreia seus discos para localizar jogos instalados e mapear exatamente onde os saves de cada um ficam gravados.
 2. **Monitoramento por Eventos (Sem Polling)**: Em vez de ficar lendo o HD continuamente (o que causaria lentidão e consumo de disco), o SaveVault usa APIs nativas do Windows (`ReadDirectoryChangesW` via crate `notify`) para ser acordado apenas quando um arquivo for realmente tocado.
 3. **Proteção Contra Saves Incompletos (*StabilityChecker*)**: Jogos costumam manter arquivos abertos e bloqueados durante a escrita. Se um backup tentar ler esse arquivo imediatamente, ele geraria um save corrompido ou cortado pela metade. O SaveVault detecta códigos nativos de travamento do Windows (`ERROR_SHARING_VIOLATION` 32 e 33) e aguarda o jogo fechar o arquivo antes de agir.
-4. **Histórico Versionado**: Cada alteração gera uma versão histórica (`v1`, `v2`, `v3`...). Se um save quebrar, você pode voltar no tempo para o estado de 10 minutos atrás ou do dia anterior.
+4. **Histórico Versionado**: Cada alteração gera versões no motor de 2 pastas (`latest` e `daily`). Se um save quebrar, você pode voltar no tempo para o estado de minutos atrás ou do primeiro save do dia.
 5. **Restauração com Cinto de Segurança**: Antes de restaurar qualquer versão antiga por cima do save atual, o SaveVault gera automaticamente um arquivo de segurança (`.savevault_safety_bak`). Nada é sobrescrito sem volta.
-6. **Sincronização em Nuvem Tolerante a Falhas**: Os snapshots são enviados para a sua conta do Google Drive via fila assíncrona. Se você estiver sem internet, o SaveVault guarda os backups localmente e sincroniza tudo de forma transparente assim que a conexão retornar.
+6. **Sincronização em Nuvem Tolerante a Falhas**: Os snapshots são integrados ao Google Drive Desktop / nuvem pessoal de forma assíncrona e transparente.
 
 ---
 
@@ -64,9 +63,9 @@ flowchart TD
 | **Jogos Fora da Steam (GOG, Emuladores, Indústria)** | ❌ Não | ✅ Sim | ✅ Sim | ✅ **Sim (Multi-plataforma)** |
 | **Múltiplas Versões Históricas (Rollback)** | ❌ (Apenas última versão) | ✅ Sim | ✅ Sim | ✅ **Sim (Configurável)** |
 | **Proteção Contra Escrita Incompleta (Lock Win32)** | ❌ | ❌ | ❌ | ✅ **Sim (StabilityChecker nativo)** |
-| **Sincronização Direta com Nuvem Pessoal** | ❌ (Apenas nuvem Steam) | ⚠️ (Requer Rclone ou cloud tools) | ⚠️ (Upload manual via FTP/Dropbox antigo) | ✅ **Nativo (Google Drive via OAuth)** |
+| **Sincronização Direta com Nuvem Pessoal** | ❌ (Apenas nuvem Steam) | ⚠️ (Requer Rclone ou cloud tools) | ⚠️ (Upload manual via FTP/Dropbox antigo) | ✅ **Nativo (Google Drive)** |
 | **Segurança de Credenciais** | Própria | N/A | Texto plano | ✅ **Windows Credential Manager** |
-| **Consumo de Recursos** | Baixo | Médio | Alto | ✅ **Mínimo (100% Rust nativo)** |
+| **Consumo de Recursos** | Baixo | Médio | Alto | ✅ **Mínimo (~15MB RAM em Rust nativo)** |
 
 ---
 
@@ -79,6 +78,7 @@ O SaveVault combina múltiplos motores de descoberta para garantir que nenhum jo
 - **Emuladores Dedicados**: Suporte estruturado e perfis pré-configurados para **Dolphin** (GameCube/Wii), **PCSX2** (PS2), **PPSSPP** (PSP) e **RetroArch**.
 - **Catálogo Oficial Ludusavi**: Integração com a base de conhecimento de mais de **53.000 jogos**, resolvendo dinamicamente variáveis do Windows (`<winAppData>`, `<winDocuments>`, `<storeUserId>`, etc.).
 - **Heurística Genérica Inteligente (`generic.rs`)**: Detecta jogos independentes e avulsos em `%APPDATA%`, `%LOCALAPPDATA%`, `Saved Games` e `Documents`, utilizando algoritmos de pontuação e listas estritas de exclusão para **eliminar falsos-positivos** (pastas do sistema, navegadores, Discord, etc.).
+- **Deduplicação Cruzada**: Se o motor genérico encontrar uma pasta que sobreponha o caminho oficial do jogo encontrado via Catálogo/Loja, a entrada genérica é ignorada para evitar registros duplicados.
 - **Cadastro Manual**: Caso tenha algum jogo personalizado ou pasta específica, você pode registrá-lo com um único comando na CLI.
 
 ---
@@ -93,7 +93,7 @@ crates/
 ├── savevault-db/         # Banco SQLite local (rusqlite bundled) com migrações 001 a 005
 ├── savevault-discovery/  # Detectores: Steam, GOG, Emuladores, Heurística e Ludusavi
 ├── savevault-monitor/    # Watcher assíncrono (notify), Debouncer e StabilityChecker Win32
-├── savevault-backup/     # Assinaturas BLAKE3, gerenciamento de snapshots locais e pruning físico
+├── savevault-backup/     # Assinaturas BLAKE3, gerenciamento de snapshots (latest/daily)
 ├── savevault-cloud/      # Integração Google Drive, OAuth 2.0 PKCE e Windows Credential Manager
 ├── savevault-sync/       # Fila transacional de sincronização com retentativas exponenciais
 └── savevault-app/        # CLI, orquestrador do daemon de monitoramento contínuo e DEV-UI
@@ -105,7 +105,7 @@ crates/
 
 - **Sistema Operacional**: Windows 10 ou Windows 11 (64-bit).
 - **Rust Toolchain**: Rust 1.80+ (compatível com `stable-x86_64-pc-windows-gnu` / MinGW e `stable-x86_64-pc-windows-msvc`).
-- **Conta Google**: Apenas caso deseje sincronizar com o Google Drive (opcional; o backup e versionamento local funcionam 100% offline).
+- **Google Drive Desktop** ou conta do Google Drive para sincronização em nuvem.
 
 ---
 
@@ -118,7 +118,7 @@ cd Savevalt
 
 # 2. Configurar variáveis para Google Drive (Opcional)
 copy .env.example .env
-# Preencha GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env caso vá usar a sincronização em nuvem
+# Preencha GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env caso vá usar a sincronização em nuvem direta
 
 # 3. Compilar em modo release
 cargo build --release
@@ -130,8 +130,6 @@ O executável otimizado estará disponível em: `target/release/savevault.exe`.
 
 ## 📖 Como Usar a CLI
 
-O SaveVault pode ser executado como um daemon contínuo ou utilizado através de comandos pontuais:
-
 | Comando | Descrição |
 |:---|:---|
 | `savevault` | Inicia o **daemon residente**: varre os jogos instalados e entra no loop contínuo de monitoramento em tempo real com reconciliação periódica offline. |
@@ -140,11 +138,50 @@ O SaveVault pode ser executado como um daemon contínuo ou utilizado através de
 | `savevault list` | Lista todos os jogos e diretórios atualmente monitorados e registrados no banco SQLite. |
 | `savevault restore list` | Exibe a lista de todos os snapshots históricos disponíveis para restauração. |
 | `savevault restore <BACKUP_ID>` | Restaura um snapshot específico no disco com criação prévia de *safety backup*. |
-| `savevault auth login` | Abre o navegador padrão e autentica o SaveVault na sua conta do Google Drive via OAuth 2.0 com PKCE. |
-| `savevault auth status` | Informa se o usuário está autenticado na nuvem e o status das credenciais. |
-| `savevault auth logout` | Remove os tokens de acesso e purga as credenciais do Windows Credential Manager. |
-| `savevault sync` | Força o processamento imediato de todos os uploads pendentes na fila de nuvem. |
 | `savevault --ui` | Inicia a **DEV-UI**: servidor HTTP local em `http://127.0.0.1:4040` para inspecionar jogos, status e fila no navegador. |
+| `savevault --help` | Exibe as opções de ajuda da CLI. |
+| `savevault --version` | Exibe a versão instalada do SaveVault. |
+
+---
+
+## 🚀 Tutorial Rápido de Uso
+
+O SaveVault agora utiliza um motor de versionamento inteligente (**`latest`** e **`daily`**) voltado para sincronização nativa na nuvem (Google Drive Desktop, OneDrive ou Dropbox).
+
+### Passo a Passo:
+
+1. **Configuração da Nuvem (Google Drive Desktop):**
+   - Instale o aplicativo oficial do **Google Drive Desktop** (ou OneDrive/Dropbox).
+   - O SaveVault salva os arquivos de backup localmente na pasta definida em `config.toml` (por padrão: `%APPDATA%\SaveVault\backups` ou sua pasta do Drive sincronizada).
+
+2. **Iniciando o Monitoramento:**
+   - Abra um terminal e execute:
+     ```powershell
+     cargo run -p savevault-app
+     # Ou simplesmente:
+     savevault
+     ```
+   - O aplicativo fará uma varredura automática (via Catálogo Ludusavi e Heurística) para descobrir todos os seus jogos e, em seguida, entrará em modo **Watcher**.
+
+3. **Iniciando o Dashboard (Interface Visual):**
+   - Para monitorar os saves através de um painel web no navegador, execute:
+     ```powershell
+     savevault --ui
+     ```
+   - Acesse **`http://127.0.0.1:4040`** para visualizar a lista de jogos protegidos, status do sistema e os últimos snapshots realizados.
+
+4. **Como funcionam os Saves (O motor de 2 pastas: `latest` e `daily`):**
+   - Quando você joga e o jogo realiza um save (*auto-save* ou save manual), o SaveVault detecta a modificação no arquivo.
+   - Ele cria um backup na pasta **`latest`** (sobrescrevendo o anterior) e, se for o primeiro save do dia, gera uma cópia de segurança na pasta **`daily`**.
+   - **Exemplo:** `Google Drive/SaveVault_Backups/ELDEN RING/latest/ER0000.sl2`
+   - Essa estrutura não consome espaço infinito em disco, mantém o processo extremamente leve (~15MB de RAM) e aproveita o histórico de versões nativo do Google Drive (você pode restaurar versões anteriores direto pelo site do Drive).
+
+5. **Restaurando um Save Manualmente pelo SaveVault:**
+   - Para restaurar um snapshot registrado pelo SaveVault:
+     ```powershell
+     savevault restore list
+     savevault restore <id_do_snapshot>
+     ```
 
 ---
 
