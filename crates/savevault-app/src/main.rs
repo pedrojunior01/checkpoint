@@ -18,8 +18,20 @@ use savevault_db::{
 };
 use std::path::PathBuf;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(async_main())
+        })?
+        .join()
+        .map_err(|_| anyhow::anyhow!("Thread panicked"))?
+}
+
+async fn async_main() -> anyhow::Result<()> {
     // Parseia os argumentos da linha de comando
     let args: Vec<String> = std::env::args().skip(1).collect();
 

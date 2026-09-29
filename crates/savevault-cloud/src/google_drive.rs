@@ -11,8 +11,11 @@
 
 use anyhow::{anyhow, Result};
 use reqwest::header::AUTHORIZATION;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::auth::AuthService;
@@ -86,6 +89,7 @@ pub struct GoogleDriveProvider {
     client: reqwest::Client,
     api_base: String,
     upload_base: String,
+    folder_cache: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl GoogleDriveProvider {
@@ -96,6 +100,7 @@ impl GoogleDriveProvider {
             client: build_default_http_client(),
             api_base: DRIVE_API_BASE.to_string(),
             upload_base: DRIVE_UPLOAD_BASE.to_string(),
+            folder_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -111,6 +116,7 @@ impl GoogleDriveProvider {
             client: build_default_http_client(),
             api_base,
             upload_base,
+            folder_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -162,9 +168,7 @@ impl GoogleDriveProvider {
         let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
-            let error_msg = body["error"]["message"]
-                .as_str()
-                .unwrap_or(if text.is_empty() { "desconhecido" } else { &text });
+            let error_msg = extract_drive_error(&body, &text);
             return Err(anyhow!(
                 "Drive API GET erro {}: {}",
                 status,
@@ -180,13 +184,22 @@ impl GoogleDriveProvider {
     }
 
     /// Busca ou cria uma pasta no Drive com o nome especificado.
-    /// Retorna o ID da pasta.
+    /// Retorna o ID da pasta. Utiliza cache em memória para evitar round-trips HTTP desnecessários.
     async fn get_or_create_folder(
         &self,
         token: &str,
         name: &str,
         parent_id: Option<&str>,
     ) -> Result<String> {
+        let cache_key = format!("{}:{}", parent_id.unwrap_or("root"), name);
+        {
+            let cache = self.folder_cache.read().await;
+            if let Some(id) = cache.get(&cache_key) {
+                debug!("Cache hit para pasta '{}' no Drive: {}", name, id);
+                return Ok(id.clone());
+            }
+        }
+
         // Monta a query de busca
         let parent_clause = parent_id
             .map(|id| format!(" and '{}' in parents", id))
@@ -209,6 +222,8 @@ impl GoogleDriveProvider {
             if let Some(first) = files.first() {
                 if let Some(id) = first["id"].as_str() {
                     debug!("Pasta '{}' encontrada no Drive: {}", name, id);
+                    let mut cache = self.folder_cache.write().await;
+                    cache.insert(cache_key, id.to_string());
                     return Ok(id.to_string());
                 }
             }
@@ -237,9 +252,7 @@ impl GoogleDriveProvider {
         let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
-            let error_msg = body["error"]["message"]
-                .as_str()
-                .unwrap_or(if text.is_empty() { "erro desconhecido" } else { &text });
+            let error_msg = extract_drive_error(&body, &text);
             return Err(anyhow!(
                 "Falha ao criar pasta '{}': HTTP {}: {}",
                 name,
@@ -254,6 +267,10 @@ impl GoogleDriveProvider {
             .to_string();
 
         info!("Pasta '{}' criada no Drive: {}", name, id);
+        {
+            let mut cache = self.folder_cache.write().await;
+            cache.insert(cache_key, id.clone());
+        }
         Ok(id)
     }
 
@@ -420,10 +437,8 @@ impl CloudProvider for GoogleDriveProvider {
         let text = res.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            let error_msg = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| if text.is_empty() { "erro desconhecido".to_string() } else { text });
+            let body_val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+            let error_msg = extract_drive_error(&body_val, &text);
             return Err(anyhow!(
                 "Falha no upload de '{}' para o Drive: HTTP {}: {}",
                 filename,
@@ -475,14 +490,30 @@ impl CloudProvider for GoogleDriveProvider {
 
         let bytes = res.bytes().await?;
 
-        if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        let parent_dir = local_path.parent().unwrap_or_else(|| Path::new("."));
+        if !parent_dir.exists() {
+            tokio::fs::create_dir_all(parent_dir).await?;
         }
 
-        tokio::fs::write(local_path, &bytes).await?;
+        // Escrita atômica via arquivo temporário de staging no mesmo diretório
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_file = parent_dir.join(format!(".savevault_dl_tmp_{:x}", nanos));
+
+        if let Err(e) = tokio::fs::write(&temp_file, &bytes).await {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(anyhow!("Falha ao gravar arquivo temporário de download: {}", e));
+        }
+
+        if let Err(e) = tokio::fs::rename(&temp_file, local_path).await {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(anyhow!("Falha ao mover arquivo baixado para destino final: {}", e));
+        }
 
         info!(
-            "Download concluído: Drive/{} → '{}'",
+            "Download concluído com escrita atômica: Drive/{} → '{}'",
             remote_file_id,
             local_path.display()
         );
@@ -530,22 +561,43 @@ impl CloudProvider for GoogleDriveProvider {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Extrai a mensagem de erro da resposta da Google Drive API de forma consistente.
+fn extract_drive_error(body: &serde_json::Value, raw_text: &str) -> String {
+    body["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| if raw_text.trim().is_empty() { "erro desconhecido" } else { raw_text })
+        .to_string()
+}
+
 /// Retorna o MIME type baseado na extensão do arquivo.
 fn mime_from_extension(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("zip") => "application/zip",
         Some("json") => "application/json",
-        Some("toml") => "text/plain",
+        Some("toml") | Some("txt") | Some("log") | Some("ini") | Some("cfg") => "text/plain",
+        Some("xml") => "application/xml",
+        Some("sqlite") | Some("db") | Some("sqlite3") => "application/vnd.sqlite3",
         _ => "application/octet-stream",
     }
 }
 
-/// Percent-encoding simples para uso em parâmetros de query da URL.
+/// Percent-encoding simples e eficiente para uso em parâmetros de query da URL.
+/// Otimizado com buffer pré-alocado para evitar alocações por caractere.
 fn urlencoding_query(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut result = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(result, "%{:02X}", c as u32);
+            }
+        }
+    }
+    result
 }
