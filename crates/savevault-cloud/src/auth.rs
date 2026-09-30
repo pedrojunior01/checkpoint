@@ -13,9 +13,11 @@ use anyhow::{anyhow, Result};
 use keyring::Entry;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 /// Timeout padrão para handshake de conexão OAuth.
@@ -32,7 +34,7 @@ fn build_auth_http_client() -> reqwest::Client {
 }
 
 /// Nome do serviço registrado no Windows Credential Manager.
-const KEYRING_SERVICE: &str = "SaveVault";
+pub(crate) const KEYRING_SERVICE: &str = "SaveVault";
 /// Chave do refresh token do Google Drive.
 const KEYRING_GOOGLE_REFRESH: &str = "google_drive_refresh_token";
 /// Escopo de acesso: apenas arquivos criados pelo próprio SaveVault.
@@ -52,6 +54,12 @@ struct TokenResponse {
     expires_in: u64,
 }
 
+#[derive(Clone, Debug)]
+struct CachedAccessToken {
+    token: String,
+    expires_at: std::time::Instant,
+}
+
 // ---------------------------------------------------------------------------
 // AuthService
 // ---------------------------------------------------------------------------
@@ -65,6 +73,7 @@ pub struct AuthService {
     token_url: String,
     fixed_token: Option<String>,
     mock_refresh_token: Option<String>,
+    cached_token: Arc<RwLock<Option<CachedAccessToken>>>,
 }
 
 impl AuthService {
@@ -77,6 +86,7 @@ impl AuthService {
             token_url: "https://oauth2.googleapis.com/token".to_string(),
             fixed_token: None,
             mock_refresh_token: None,
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -90,6 +100,7 @@ impl AuthService {
             token_url: "https://oauth2.googleapis.com/token".to_string(),
             fixed_token: Some(token),
             mock_refresh_token: None,
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -108,6 +119,7 @@ impl AuthService {
             token_url,
             fixed_token: None,
             mock_refresh_token: Some(refresh_token),
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -262,9 +274,22 @@ impl AuthService {
 
     /// Obtém um access_token válido renovando via refresh_token armazenado.
     /// Deve ser chamado antes de qualquer operação na API do Google Drive.
+    ///
+    /// Otimização: reutiliza tokens em cache válidos para evitar chamadas de rede redundantes.
     pub async fn get_fresh_access_token(&self) -> Result<String> {
         if let Some(ref fixed) = self.fixed_token {
             return Ok(fixed.clone());
+        }
+
+        // 1. Verifica se temos um token em cache ainda válido (com margem de segurança de 60s)
+        {
+            let cache = self.cached_token.read().await;
+            if let Some(ref cached) = *cache {
+                if std::time::Instant::now() + Duration::from_secs(60) < cached.expires_at {
+                    debug!("Reutilizando access token em cache válido.");
+                    return Ok(cached.token.clone());
+                }
+            }
         }
 
         let refresh_token = if let Some(ref rt) = self.mock_refresh_token {
@@ -300,12 +325,26 @@ impl AuthService {
         }
 
         let token_resp: TokenResponse = res.json().await?;
-        debug!("Access token renovado com sucesso.");
+        let expires_in_secs = if token_resp.expires_in > 0 { token_resp.expires_in } else { 3600 };
+        let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
+
+        {
+            let mut cache = self.cached_token.write().await;
+            *cache = Some(CachedAccessToken {
+                token: token_resp.access_token.clone(),
+                expires_at,
+            });
+        }
+
+        debug!("Access token renovado com sucesso e armazenado em cache (válido por {}s).", expires_in_secs);
         Ok(token_resp.access_token)
     }
 
-    /// Remove o refresh token salvo (logout).
+    /// Remove o refresh token salvo (logout) e invalida tokens em cache.
     pub fn logout(&self) -> Result<()> {
+        if let Ok(mut cache) = self.cached_token.try_write() {
+            *cache = None;
+        }
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
             .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
         entry
@@ -321,7 +360,7 @@ impl AuthService {
 // ---------------------------------------------------------------------------
 
 /// Abre uma URL no navegador padrão do Windows.
-fn open_url_windows(url: &str) {
+pub(crate) fn open_url_windows(url: &str) {
     let _ = std::process::Command::new("cmd")
         .args(["/C", "start", "", url])
         .spawn();
@@ -329,7 +368,7 @@ fn open_url_windows(url: &str) {
 
 /// Extrai o valor de um parâmetro de query string de um request HTTP cru.
 /// Ex: extrai "abc" de "GET /oauth/callback?code=abc&state=... HTTP/1.1"
-fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
+pub(crate) fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
     let first_line = raw_request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split('?').nth(1)?;
@@ -347,19 +386,25 @@ fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
 }
 
 /// Encoding mínimo de URL (apenas os caracteres que a RFC exige para query params).
-fn urlencoding_simple(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ':' => "%3A".to_string(),
-            '/' => "%2F".to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+/// Otimizado com buffer único pré-alocado para evitar alocações por caractere.
+pub(crate) fn urlencoding_simple(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
+            ':' => result.push_str("%3A"),
+            '/' => result.push_str("%2F"),
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(result, "%{:02X}", c as u32);
+            }
+        }
+    }
+    result
 }
 
 /// Decodificação simples de percent-encoding (%XX → char).
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

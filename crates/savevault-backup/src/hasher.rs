@@ -120,11 +120,13 @@ mod tests {
         assert_eq!(backup.version, 1);
         assert_eq!(backup.file_id, file_id);
 
-        // Verificar que o arquivo foi copiado
-        let expected_path = backup_root.join("TestGame").join("latest").join("save.dat");
-        assert!(expected_path.exists(), "Arquivo de backup deve existir em {}", expected_path.display());
+        // Verificar que o arquivo foi copiado para latest e daily
+        let latest_path = backup_root.join("TestGame").join("latest").join("save.dat");
+        assert!(latest_path.exists(), "Arquivo de backup deve existir em {}", latest_path.display());
+        let daily_path = backup_root.join("TestGame").join("daily").join("save.dat");
+        assert!(daily_path.exists(), "Backup daily deve existir em {}", daily_path.display());
 
-        let content = std::fs::read_to_string(&expected_path).unwrap();
+        let content = std::fs::read_to_string(&latest_path).unwrap();
         assert_eq!(content, "game save data v1");
     }
 
@@ -144,12 +146,17 @@ mod tests {
             manager.create_snapshot(file_id, "TestGame", &save_file, version).await.unwrap();
         }
 
-        let daily_path = backup_root.join("TestGame").join("daily").join("progress.sav");
+        // Latest deve ter a versão mais recente (v3)
         let latest_path = backup_root.join("TestGame").join("latest").join("progress.sav");
-        assert!(daily_path.exists(), "Daily deve existir");
         assert!(latest_path.exists(), "Latest deve existir");
-        assert_eq!(std::fs::read_to_string(&daily_path).unwrap(), "shared data v1");
-        assert_eq!(std::fs::read_to_string(&latest_path).unwrap(), "shared data v3");
+        let content = std::fs::read_to_string(&latest_path).unwrap();
+        assert_eq!(content, "shared data v3");
+
+        // Daily deve manter o primeiro snapshot do dia (v1)
+        let daily_path = backup_root.join("TestGame").join("daily").join("progress.sav");
+        assert!(daily_path.exists(), "Daily deve existir");
+        let daily_content = std::fs::read_to_string(&daily_path).unwrap();
+        assert_eq!(daily_content, "shared data v1");
     }
 
     #[tokio::test]
@@ -189,20 +196,25 @@ mod tests {
     async fn snapshot_restore_consecutive_restores_preserve_all_safety_backups() {
         let dir = tempdir().unwrap();
         let backup_root = dir.path().join("backups");
-        let manager = crate::SnapshotManager::new(backup_root, 10);
+        let manager = crate::SnapshotManager::new(backup_root.clone(), 10);
 
         let save_dir = dir.path().join("saves");
         std::fs::create_dir_all(&save_dir).unwrap();
         let save_file = save_dir.join("save.dat");
         let file_id = uuid::Uuid::new_v4();
 
-        // Cria snapshots das versões 1 e 2
-        std::fs::write(&save_file, "conteúdo da versão 1").unwrap();
-        manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
+        // Cria snapshots versionados das versões 1, 2 e 3
+        let v1_dir = backup_root.join("TestGame").join("v1");
+        std::fs::create_dir_all(&v1_dir).unwrap();
+        std::fs::write(v1_dir.join("save.dat"), "conteúdo da versão 1").unwrap();
 
-        std::fs::write(&save_file, "conteúdo da versão 2").unwrap();
-        manager.create_snapshot(file_id, "TestGame", &save_file, 2).await.unwrap();
+        let v2_dir = backup_root.join("TestGame").join("v2");
+        std::fs::create_dir_all(&v2_dir).unwrap();
+        std::fs::write(v2_dir.join("save.dat"), "conteúdo da versão 2").unwrap();
 
+        let v3_dir = backup_root.join("TestGame").join("v3");
+        std::fs::create_dir_all(&v3_dir).unwrap();
+        std::fs::write(v3_dir.join("save.dat"), "conteúdo da versão 3").unwrap();
         // Estado inicial do save no disco antes dos restores (Save Original)
         std::fs::write(&save_file, "save original ativo").unwrap();
 

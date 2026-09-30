@@ -892,3 +892,118 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
         err
     );
 }
+
+#[tokio::test]
+async fn test_opt_01_folder_caching_eliminates_redundant_folder_queries() {
+    let folder_queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let q_clone = folder_queries.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, _| {
+        if method == "GET" && path.contains("mimeType") {
+            q_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[{"id":"cached-folder-id","name":"mock"}]}"#.to_string(),
+            }
+        } else if method == "GET" && path.contains("/files?q=") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[]}"#.to_string(),
+            }
+        } else if method == "POST" && path.contains("uploadType=multipart") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"drive-id-123","name":"save.dat","size":"100"}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: "Not Found".to_string(),
+            }
+        }
+    }).await;
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        server.base_url.clone(),
+        server.base_url.clone(),
+    );
+
+    let tmp = NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), b"save content").unwrap();
+
+    // Primeiro upload: consulta 3 pastas (root, game, file)
+    let res1 = provider.upload(tmp.path(), "game_uuid/file_uuid/v1_save.dat").await;
+    assert!(res1.is_ok());
+    let queries_first = folder_queries.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(queries_first, 3, "Primeiro upload deve consultar as 3 pastas");
+
+    // Segundo upload na mesma hierarquia: deve usar o cache sem novas queries de pasta!
+    let res2 = provider.upload(tmp.path(), "game_uuid/file_uuid/v2_save.dat").await;
+    assert!(res2.is_ok());
+    let queries_second = folder_queries.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        queries_second, 3,
+        "Segundo upload DEVE reutilizar o cache de pastas em memória sem novas requisições de pasta HTTP"
+    );
+}
+
+#[tokio::test]
+async fn test_opt_02_access_token_caching_eliminates_redundant_token_refreshes() {
+    let refresh_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_clone = refresh_calls.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, req| {
+        if method == "POST" && path == "/oauth2/token" {
+            calls_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(req.contains("grant_type=refresh_token"));
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"access_token":"cached_token_abc123","expires_in":3600}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: "Not Found".to_string(),
+            }
+        }
+    }).await;
+
+    let token_endpoint = format!("{}/oauth2/token", server.base_url);
+    let auth = AuthService::with_mock_refresh(
+        "test-client-id".to_string(),
+        "test-client-secret".to_string(),
+        token_endpoint,
+        "refresh_token_xyz".to_string(),
+    );
+
+    // 1ª chamada: busca da rede
+    let t1 = auth.get_fresh_access_token().await.unwrap();
+    assert_eq!(t1, "cached_token_abc123");
+
+    // 2ª e 3ª chamadas subsequentes: devem usar cache sem chamada HTTP
+    let t2 = auth.get_fresh_access_token().await.unwrap();
+    let t3 = auth.get_fresh_access_token().await.unwrap();
+    assert_eq!(t2, "cached_token_abc123");
+    assert_eq!(t3, "cached_token_abc123");
+
+    assert_eq!(
+        refresh_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "O endpoint de token deve ser chamado apenas UMA vez para múltiplos acessos dentro da validade"
+    );
+}
+

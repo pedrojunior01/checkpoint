@@ -652,7 +652,7 @@ mod tests {
         files_repo.upsert(&file_entry).unwrap();
 
         // Cria snapshot v1 no disco
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("player.sav");
         std::fs::write(&v1_file, "save_conteudo_original_v1").unwrap();
@@ -734,7 +734,7 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("lost_save.dat");
         std::fs::write(&v1_file, "conteudo_recuperado").unwrap();
@@ -868,7 +868,7 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("save.dat");
         std::fs::write(&v1_file, "conteudo_corrompido_ou_alterado").unwrap();
@@ -1025,7 +1025,7 @@ mod tests {
             })
             .unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
+        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "conteudo_v1").unwrap();
 

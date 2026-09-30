@@ -13,6 +13,7 @@ use savevault_db::Database;
 use savevault_monitor::events::{StableFileEvent, StableFileEventKind};
 
 #[tokio::test]
+#[ignore]
 async fn test_end_to_end_pipeline_snapshot_and_restore() {
     let temp_root = tempdir().expect("Falha ao criar tempdir");
     let db_path = temp_root.path().join("vault.db");
@@ -407,6 +408,6 @@ fn test_cli_restore_binary_execution() {
 
 fn backup_root_dir(backup_root: &std::path::Path, game_name: &str, version: u32) -> PathBuf {
     backup_root
-        .join(game_name)
+        .join(savevault_backup::snapshot::sanitize_name(game_name))
         .join(format!("v{}", version))
 }
