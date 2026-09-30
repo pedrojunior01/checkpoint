@@ -129,4 +129,5 @@ Atualmente a suíte conta com **121 testes automatizados (100% de aprovação)**
   - Implementar heurísticas para busca de saves em jogos independentes fora do manifesto.
 - [ ] **Interface Desktop & System Tray (v1.0)**:
   - Ícone na bandeja do Windows (System Tray) para monitoramento silencioso.
-  - Interface gráfica opcional (Tauri / egui) para visualização amigável de status e backups.
+  - Interface gráfica opcional (Tauri / egui) para visualização amigável de status e backups gugu.
+
