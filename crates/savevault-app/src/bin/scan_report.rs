@@ -2,11 +2,11 @@
 //! Uso: cargo run --bin scan_report
 
 use savevault_core::config::Config;
-use savevault_db::{
-    Database,
-    repositories::{GamesRepo, SaveLocationsRepo},
-};
 use savevault_core::models::Confidence;
+use savevault_db::{
+    repositories::{GamesRepo, SaveLocationsRepo},
+    Database,
+};
 
 fn main() -> anyhow::Result<()> {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
@@ -40,9 +40,9 @@ fn main() -> anyhow::Result<()> {
     for game in &games {
         let locations = loc_repo.list_by_game(game.id)?;
         let confidence_str = match game.confidence {
-            Confidence::High   => "Alta",
+            Confidence::High => "Alta",
             Confidence::Medium => "Media",
-            Confidence::Low    => "Baixa",
+            Confidence::Low => "Baixa",
         };
         let app_id = game.platform_id.as_deref().unwrap_or("—");
 
@@ -62,7 +62,11 @@ fn main() -> anyhow::Result<()> {
         } else {
             games_with_saves += 1;
             for loc in &locations {
-                let exists = if loc.path.exists() { "OK     " } else { "Ausente" };
+                let exists = if loc.path.exists() {
+                    "OK     "
+                } else {
+                    "Ausente"
+                };
                 println!("           Save [{}]: {}", exists, loc.path.display());
                 total_saves += 1;
             }
@@ -72,7 +76,11 @@ fn main() -> anyhow::Result<()> {
 
     println!("  {}", "─".repeat(72));
     println!("  Resumo:");
-    println!("    Jogos com saves detectados : {}/{}", games_with_saves, games.len());
+    println!(
+        "    Jogos com saves detectados : {}/{}",
+        games_with_saves,
+        games.len()
+    );
     println!("    Total de caminhos de save  : {}", total_saves);
     println!();
     println!("  LEGENDA DE STATUS DOS SAVES:");

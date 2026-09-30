@@ -83,7 +83,9 @@ mod windows_impl {
     /// Se `custom_exe_path` for `None`, utiliza o caminho do executável do processo atual (`std::env::current_exe`).
     pub fn enable(custom_exe_path: Option<&Path>) -> Result<AutostartStatus> {
         let exe_path = match custom_exe_path {
-            Some(p) => extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf()),
+            Some(p) => {
+                extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf())
+            }
             None => std::env::current_exe()
                 .context("Falha ao obter o caminho do executável atual do SaveVault")?,
         };
@@ -94,7 +96,8 @@ mod windows_impl {
         } else {
             exe_path
         };
-        let normalized = crate::path::normalize_windows_path(&canonical_path).unwrap_or(canonical_path);
+        let normalized =
+            crate::path::normalize_windows_path(&canonical_path).unwrap_or(canonical_path);
 
         // Formata o comando com aspas para suportar caminhos com espaços e flag --tray para iniciar silencioso na bandeja
         let command_str = format!("\"{}\" --tray", normalized.display());
@@ -164,7 +167,9 @@ mod non_windows_impl {
 
     pub fn enable(custom_exe_path: Option<&Path>) -> Result<AutostartStatus> {
         let exe = match custom_exe_path {
-            Some(p) => extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf()),
+            Some(p) => {
+                extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf())
+            }
             None => PathBuf::from("savevault"),
         };
         Ok(AutostartStatus {
@@ -242,8 +247,7 @@ mod tests {
             executable_path: Some(PathBuf::from(r"C:\savevault.exe")),
         };
         let json = serde_json::to_string(&status).expect("Serialization failed");
-        let decoded: AutostartStatus =
-            serde_json::from_str(&json).expect("Deserialization failed");
+        let decoded: AutostartStatus = serde_json::from_str(&json).expect("Deserialization failed");
         assert_eq!(status, decoded);
     }
 

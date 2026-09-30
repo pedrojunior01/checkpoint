@@ -100,5 +100,6 @@ pub trait SaveDetector: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Descobre locais de save para o jogo fornecido.
-    fn detect_save_locations(&self, game: &Game) -> Result<SaveDiscoveryResult, SaveDiscoveryError>;
+    fn detect_save_locations(&self, game: &Game)
+        -> Result<SaveDiscoveryResult, SaveDiscoveryError>;
 }

@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use anyhow::Result;
+use rusqlite::Connection;
 
 /// Executa as migrações do banco de dados em ordem.
 /// Novas migrações devem ser adicionadas no final do array `MIGRATIONS`.
@@ -210,5 +210,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_games_platform_platform_id
     ON games(platform, platform_id)
     WHERE platform_id IS NOT NULL;
 ";
-
-

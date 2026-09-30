@@ -1,9 +1,9 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
-use savevault_core::models::FileEntry;
-use uuid::Uuid;
-use std::path::PathBuf;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use savevault_core::models::FileEntry;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 pub struct FilesRepo<'a> {
     pub conn: &'a Connection,
@@ -71,7 +71,8 @@ impl<'a> FilesRepo<'a> {
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM files WHERE id = ?1", params![id.to_string()])?;
+        self.conn
+            .execute("DELETE FROM files WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 }

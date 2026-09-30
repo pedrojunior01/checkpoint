@@ -55,7 +55,9 @@ pub fn validate_drive_file_id(remote_file_id: &str) -> Result<()> {
         || remote_file_id.contains('?')
         || remote_file_id.contains('#')
         || remote_file_id.contains('&')
-        || remote_file_id.chars().any(|c| c.is_control() || c.is_whitespace())
+        || remote_file_id
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace())
     {
         return Err(anyhow!(
             "Identificador remoto inválido: '{}'. Esperado Google Drive File ID opaco, não caminho ou parâmetros de URL.",
@@ -106,11 +108,7 @@ impl GoogleDriveProvider {
 
     /// Cria um provider para testes apontando para endpoints mockados.
     #[doc(hidden)]
-    pub fn with_custom_endpoints(
-        auth: AuthService,
-        api_base: String,
-        upload_base: String,
-    ) -> Self {
+    pub fn with_custom_endpoints(auth: AuthService, api_base: String, upload_base: String) -> Self {
         Self {
             auth,
             client: build_default_http_client(),
@@ -165,15 +163,12 @@ impl GoogleDriveProvider {
 
         let status = res.status();
         let text = res.text().await.unwrap_or_default();
-        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
             let error_msg = extract_drive_error(&body, &text);
-            return Err(anyhow!(
-                "Drive API GET erro {}: {}",
-                status,
-                error_msg
-            ));
+            return Err(anyhow!("Drive API GET erro {}: {}", status, error_msg));
         }
 
         if body.is_null() && !text.is_empty() {
@@ -249,7 +244,8 @@ impl GoogleDriveProvider {
 
         let status = res.status();
         let text = res.text().await.unwrap_or_default();
-        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
             let error_msg = extract_drive_error(&body, &text);
@@ -312,9 +308,12 @@ impl GoogleDriveProvider {
             .map_err(|e| anyhow!("Base URL da API inválida '{}': {}", self.api_base, e))?;
 
         {
-            let mut segments = url
-                .path_segments_mut()
-                .map_err(|_| anyhow!("Não é possível manipular segmentos de caminho na URL base: {}", self.api_base))?;
+            let mut segments = url.path_segments_mut().map_err(|_| {
+                anyhow!(
+                    "Não é possível manipular segmentos de caminho na URL base: {}",
+                    self.api_base
+                )
+            })?;
             segments.pop_if_empty().push("files").push(remote_file_id);
         }
 
@@ -437,7 +436,8 @@ impl CloudProvider for GoogleDriveProvider {
         let text = res.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            let body_val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+            let body_val: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
             let error_msg = extract_drive_error(&body_val, &text);
             return Err(anyhow!(
                 "Falha no upload de '{}' para o Drive: HTTP {}: {}",
@@ -447,8 +447,13 @@ impl CloudProvider for GoogleDriveProvider {
             ));
         }
 
-        let upload_resp: DriveUploadResponse = serde_json::from_str(&text)
-            .map_err(|e| anyhow!("Resposta de upload inválida do Google Drive: {}. Body: {}", e, text))?;
+        let upload_resp: DriveUploadResponse = serde_json::from_str(&text).map_err(|e| {
+            anyhow!(
+                "Resposta de upload inválida do Google Drive: {}. Body: {}",
+                e,
+                text
+            )
+        })?;
 
         if upload_resp.id.trim().is_empty() {
             return Err(anyhow!("Google Drive retornou upload com campo 'id' vazio"));
@@ -504,12 +509,18 @@ impl CloudProvider for GoogleDriveProvider {
 
         if let Err(e) = tokio::fs::write(&temp_file, &bytes).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!("Falha ao gravar arquivo temporário de download: {}", e));
+            return Err(anyhow!(
+                "Falha ao gravar arquivo temporário de download: {}",
+                e
+            ));
         }
 
         if let Err(e) = tokio::fs::rename(&temp_file, local_path).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!("Falha ao mover arquivo baixado para destino final: {}", e));
+            return Err(anyhow!(
+                "Falha ao mover arquivo baixado para destino final: {}",
+                e
+            ));
         }
 
         info!(
@@ -565,7 +576,13 @@ impl CloudProvider for GoogleDriveProvider {
 fn extract_drive_error(body: &serde_json::Value, raw_text: &str) -> String {
     body["error"]["message"]
         .as_str()
-        .unwrap_or_else(|| if raw_text.trim().is_empty() { "erro desconhecido" } else { raw_text })
+        .unwrap_or_else(|| {
+            if raw_text.trim().is_empty() {
+                "erro desconhecido"
+            } else {
+                raw_text
+            }
+        })
         .to_string()
 }
 

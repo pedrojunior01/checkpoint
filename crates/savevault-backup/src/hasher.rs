@@ -44,7 +44,11 @@ mod tests {
         write!(tmp.as_file(), "versão 1").unwrap();
         let h1 = hash_file(tmp.path()).await.unwrap();
 
-        let mut f = std::fs::OpenOptions::new().write(true).truncate(true).open(tmp.path()).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(tmp.path())
+            .unwrap();
         write!(f, "versão 2").unwrap();
         let h2 = hash_file(tmp.path()).await.unwrap();
 
@@ -56,7 +60,10 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         // Arquivo criado vazio
         let hash = hash_file(tmp.path()).await.unwrap();
-        assert!(!hash.is_empty(), "Hash de arquivo vazio não deve ser string vazia");
+        assert!(
+            !hash.is_empty(),
+            "Hash de arquivo vazio não deve ser string vazia"
+        );
         assert_eq!(hash.len(), 64, "BLAKE3 hex deve ter 64 caracteres");
     }
 
@@ -65,7 +72,10 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "test").unwrap();
         let hash = hash_file(tmp.path()).await.unwrap();
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash deve ser hex válido");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash deve ser hex válido"
+        );
     }
 
     #[tokio::test]
@@ -115,16 +125,27 @@ mod tests {
         std::fs::write(&save_file, "game save data v1").unwrap();
 
         let file_id = uuid::Uuid::new_v4();
-        let backup = manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
+        let backup = manager
+            .create_snapshot(file_id, "TestGame", &save_file, 1)
+            .await
+            .unwrap();
 
         assert_eq!(backup.version, 1);
         assert_eq!(backup.file_id, file_id);
 
         // Verificar que o arquivo foi copiado para latest e daily
         let latest_path = backup_root.join("TestGame").join("latest").join("save.dat");
-        assert!(latest_path.exists(), "Arquivo de backup deve existir em {}", latest_path.display());
+        assert!(
+            latest_path.exists(),
+            "Arquivo de backup deve existir em {}",
+            latest_path.display()
+        );
         let daily_path = backup_root.join("TestGame").join("daily").join("save.dat");
-        assert!(daily_path.exists(), "Backup daily deve existir em {}", daily_path.display());
+        assert!(
+            daily_path.exists(),
+            "Backup daily deve existir em {}",
+            daily_path.display()
+        );
 
         let content = std::fs::read_to_string(&latest_path).unwrap();
         assert_eq!(content, "game save data v1");
@@ -143,17 +164,26 @@ mod tests {
         let file_id = uuid::Uuid::new_v4();
         for version in 1..=3u32 {
             std::fs::write(&save_file, format!("shared data v{}", version)).unwrap();
-            manager.create_snapshot(file_id, "TestGame", &save_file, version).await.unwrap();
+            manager
+                .create_snapshot(file_id, "TestGame", &save_file, version)
+                .await
+                .unwrap();
         }
 
         // Latest deve ter a versão mais recente (v3)
-        let latest_path = backup_root.join("TestGame").join("latest").join("progress.sav");
+        let latest_path = backup_root
+            .join("TestGame")
+            .join("latest")
+            .join("progress.sav");
         assert!(latest_path.exists(), "Latest deve existir");
         let content = std::fs::read_to_string(&latest_path).unwrap();
         assert_eq!(content, "shared data v3");
 
         // Daily deve manter o primeiro snapshot do dia (v1)
-        let daily_path = backup_root.join("TestGame").join("daily").join("progress.sav");
+        let daily_path = backup_root
+            .join("TestGame")
+            .join("daily")
+            .join("progress.sav");
         assert!(daily_path.exists(), "Daily deve existir");
         let daily_content = std::fs::read_to_string(&daily_path).unwrap();
         assert_eq!(daily_content, "shared data v1");
@@ -172,22 +202,34 @@ mod tests {
         // Versão 1 — cria snapshot
         std::fs::write(&save_file, "versão 1 do save").unwrap();
         let file_id = uuid::Uuid::new_v4();
-        manager.create_snapshot(file_id, "TestGame", &save_file, 1).await.unwrap();
+        manager
+            .create_snapshot(file_id, "TestGame", &save_file, 1)
+            .await
+            .unwrap();
 
         // Simula progresso posterior (versão atual)
         std::fs::write(&save_file, "versão atual (pode estar corrompida)").unwrap();
 
         // Restaura a versão 1
-        let safety_path = manager.restore_snapshot(file_id, "TestGame", 1, &save_file).await.unwrap();
+        let safety_path = manager
+            .restore_snapshot(file_id, "TestGame", 1, &save_file)
+            .await
+            .unwrap();
 
         // Verifica que o save foi restaurado
         let restored = std::fs::read_to_string(&save_file).unwrap();
         assert_eq!(restored, "versão 1 do save");
 
         // Verifica que o backup de segurança foi criado de forma identificável
-        assert!(safety_path.is_some(), "Caminho do safety backup deve ser retornado");
+        assert!(
+            safety_path.is_some(),
+            "Caminho do safety backup deve ser retornado"
+        );
         let safety_path = safety_path.unwrap();
-        assert!(safety_path.exists(), "Backup de segurança deve existir no disco");
+        assert!(
+            safety_path.exists(),
+            "Backup de segurança deve existir no disco"
+        );
         let safety_content = std::fs::read_to_string(&safety_path).unwrap();
         assert_eq!(safety_content, "versão atual (pode estar corrompida)");
     }
@@ -219,21 +261,50 @@ mod tests {
         std::fs::write(&save_file, "save original ativo").unwrap();
 
         // 1. Restore A (versão 1)
-        let safety_a = manager.restore_snapshot(file_id, "TestGame", 1, &save_file).await.unwrap().unwrap();
-        assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "conteúdo da versão 1");
+        let safety_a = manager
+            .restore_snapshot(file_id, "TestGame", 1, &save_file)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&save_file).unwrap(),
+            "conteúdo da versão 1"
+        );
 
         // 2. Restore B (versão 2)
-        let safety_b = manager.restore_snapshot(file_id, "TestGame", 2, &save_file).await.unwrap().unwrap();
-        assert_eq!(std::fs::read_to_string(&save_file).unwrap(), "conteúdo da versão 2");
+        let safety_b = manager
+            .restore_snapshot(file_id, "TestGame", 2, &save_file)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&save_file).unwrap(),
+            "conteúdo da versão 2"
+        );
 
         // PROVA CRÍTICA: Os dois safety backups devem existir simultaneamente e ser distintos!
-        assert_ne!(safety_a, safety_b, "Safety backups A e B devem ter caminhos distintos");
-        assert!(safety_a.exists(), "Safety backup A deve continuar existindo após múltiplos restores");
-        assert!(safety_b.exists(), "Safety backup B deve continuar existindo após múltiplos restores");
+        assert_ne!(
+            safety_a, safety_b,
+            "Safety backups A e B devem ter caminhos distintos"
+        );
+        assert!(
+            safety_a.exists(),
+            "Safety backup A deve continuar existindo após múltiplos restores"
+        );
+        assert!(
+            safety_b.exists(),
+            "Safety backup B deve continuar existindo após múltiplos restores"
+        );
 
         // Conteúdos preservados
-        assert_eq!(std::fs::read_to_string(&safety_a).unwrap(), "save original ativo");
-        assert_eq!(std::fs::read_to_string(&safety_b).unwrap(), "conteúdo da versão 1");
+        assert_eq!(
+            std::fs::read_to_string(&safety_a).unwrap(),
+            "save original ativo"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&safety_b).unwrap(),
+            "conteúdo da versão 1"
+        );
     }
 
     #[tokio::test]
@@ -250,8 +321,13 @@ mod tests {
         let file_id = uuid::Uuid::new_v4();
 
         // Tentar restaurar versão 999 que não existe
-        let result = manager.restore_snapshot(file_id, "TestGame", 999, &save_file).await;
-        assert!(result.is_err(), "Restauração de versão inexistente deve retornar erro");
+        let result = manager
+            .restore_snapshot(file_id, "TestGame", 999, &save_file)
+            .await;
+        assert!(
+            result.is_err(),
+            "Restauração de versão inexistente deve retornar erro"
+        );
 
         // Destino deve permanecer completamente intacto
         assert_eq!(
@@ -261,10 +337,15 @@ mod tests {
         );
 
         // Nenhum safety backup espúrio deve ter sido criado
-        let entries: Vec<_> = std::fs::read_dir(&save_dir).unwrap()
+        let entries: Vec<_> = std::fs::read_dir(&save_dir)
+            .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .filter(|name| name.contains("savevault_safety"))
             .collect();
-        assert!(entries.is_empty(), "Nenhum safety backup deve ser gerado se a versão não existe: {:?}", entries);
+        assert!(
+            entries.is_empty(),
+            "Nenhum safety backup deve ser gerado se a versão não existe: {:?}",
+            entries
+        );
     }
 }

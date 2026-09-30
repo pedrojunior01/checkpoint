@@ -16,7 +16,11 @@ pub mod onedrive_auth;
 pub trait CloudProvider: Send + Sync {
     /// Faz upload de um arquivo local para o provedor de cloud.
     /// Retorna o identificador remoto único gerado pelo provedor (ex.: Google Drive File ID).
-    async fn upload(&self, local_path: &std::path::Path, cloud_path: &str) -> anyhow::Result<String>;
+    async fn upload(
+        &self,
+        local_path: &std::path::Path,
+        cloud_path: &str,
+    ) -> anyhow::Result<String>;
 
     /// Faz download de um arquivo do provedor de cloud para o disco local usando o ID remoto.
     async fn download(
@@ -34,4 +38,3 @@ pub use auth::AuthService;
 pub use google_drive::GoogleDriveProvider;
 pub use onedrive::OneDriveProvider;
 pub use onedrive_auth::OneDriveAuthService;
-

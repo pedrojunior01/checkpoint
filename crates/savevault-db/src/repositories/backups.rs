@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
 use savevault_core::models::{Backup, SyncStatus};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub struct BackupsRepo<'a> {
     pub conn: &'a Connection,
@@ -33,7 +33,7 @@ impl<'a> BackupsRepo<'a> {
     pub fn list_by_file(&self, file_id: Uuid) -> Result<Vec<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE file_id = ?1 ORDER BY version DESC"
+             FROM backups WHERE file_id = ?1 ORDER BY version DESC",
         )?;
         let rows = stmt.query_map(params![file_id.to_string()], row_to_backup)?;
         let mut backups = Vec::new();
@@ -46,7 +46,7 @@ impl<'a> BackupsRepo<'a> {
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE id = ?1"
+             FROM backups WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id.to_string()], row_to_backup)?;
         Ok(rows.next().transpose()?)
@@ -76,10 +76,8 @@ impl<'a> BackupsRepo<'a> {
 
     /// Remove um backup específico pelo ID.
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM backups WHERE id = ?1",
-            params![id.to_string()],
-        )?;
+        self.conn
+            .execute("DELETE FROM backups WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 
@@ -122,7 +120,8 @@ impl<'a> BackupsRepo<'a> {
                 let mut check_stmt = tx.prepare(
                     "SELECT COUNT(*) FROM sync_queue WHERE backup_id = ?1 AND operation = 'delete'",
                 )?;
-                let count: i64 = check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
+                let count: i64 =
+                    check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
                 if count == 0 {
                     // Cancela qualquer upload pendente deste backup antigo para não enviar versão já podada
                     tx.execute(

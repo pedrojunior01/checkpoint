@@ -450,7 +450,8 @@ pub async fn execute_restore_filesystem(
                     drive_file_id,
                     &source_path,
                     request.cloud_provider.as_deref(),
-                ).await?;
+                )
+                .await?;
             } else if !source_path.exists() {
                 return Err(RestoreError::PhysicalSnapshotMissing(source_path));
             }
@@ -781,7 +782,9 @@ mod tests {
         files_repo.upsert(&file_entry).unwrap();
 
         // Cria snapshot v1 no disco
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("player.sav");
         std::fs::write(&v1_file, "save_conteudo_original_v1").unwrap();
@@ -863,7 +866,9 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("lost_save.dat");
         std::fs::write(&v1_file, "conteudo_recuperado").unwrap();
@@ -997,7 +1002,9 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("save.dat");
         std::fs::write(&v1_file, "conteudo_corrompido_ou_alterado").unwrap();
@@ -1067,7 +1074,9 @@ mod tests {
             .unwrap();
 
         // Snapshots v1 e v2
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v1");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "dados_versao_1").unwrap();
         let b1 = Backup {
@@ -1081,7 +1090,9 @@ mod tests {
         };
         backups_repo.insert(&b1).unwrap();
 
-        let v2_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("v2");
+        let v2_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("v2");
         std::fs::create_dir_all(&v2_dir).unwrap();
         std::fs::write(v2_dir.join("save.dat"), "dados_versao_2").unwrap();
         let b2 = Backup {
@@ -1154,7 +1165,9 @@ mod tests {
             })
             .unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "conteudo_v1").unwrap();
 

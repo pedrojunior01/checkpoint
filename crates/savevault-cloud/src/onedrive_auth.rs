@@ -36,10 +36,12 @@ pub const ONEDRIVE_SCOPE: &str = "Files.ReadWrite.AppFolder offline_access";
 pub const ONEDRIVE_REDIRECT_PORT: u16 = 8086;
 
 /// URL padrão de autorização da Microsoft Identity Platform (contas pessoais / consumidores).
-pub const ONEDRIVE_AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+pub const ONEDRIVE_AUTH_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
 
 /// URL padrão de emissão/renovação de tokens da Microsoft Identity Platform.
-pub const ONEDRIVE_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+pub const ONEDRIVE_TOKEN_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 
 #[derive(Deserialize)]
 struct OneDriveTokenResponse {
@@ -164,7 +166,11 @@ impl OneDriveAuthService {
     pub async fn login_interactive(&self) -> Result<()> {
         let redirect_uri = format!("http://127.0.0.1:{}/oauth/callback", self.redirect_port);
         let oauth_state = uuid::Uuid::new_v4().to_string();
-        let code_verifier = format!("{}_{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let code_verifier = format!(
+            "{}_{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
         // RFC 7636: para clientes nativos, plain ou S256 são suportados pela Microsoft Identity
         let code_challenge = code_verifier.clone();
 
@@ -196,9 +202,15 @@ impl OneDriveAuthService {
                 )
             })?;
 
-        info!("Aguardando callback do OneDrive na porta {}", self.redirect_port);
+        info!(
+            "Aguardando callback do OneDrive na porta {}",
+            self.redirect_port
+        );
         println!("\nAbrindo navegador para autenticação no Microsoft OneDrive...");
-        println!("Caso o navegador não abra, acesse manualmente:\n{}\n", auth_url);
+        println!(
+            "Caso o navegador não abra, acesse manualmente:\n{}\n",
+            auth_url
+        );
 
         open_url_windows(&auth_url);
 
@@ -210,7 +222,11 @@ impl OneDriveAuthService {
             let (mut socket, addr) = match accept_res {
                 Ok(Ok(pair)) => pair,
                 Ok(Err(e)) => return Err(anyhow!("Erro de I/O no listener OAuth: {}", e)),
-                Err(_) => return Err(anyhow!("Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos).")),
+                Err(_) => {
+                    return Err(anyhow!(
+                        "Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos)."
+                    ))
+                }
             };
             debug!("Callback recebido de {}", addr);
 
@@ -222,12 +238,16 @@ impl OneDriveAuthService {
             let request = String::from_utf8_lossy(&buffer[..n]);
 
             if request.contains("GET /favicon.ico") {
-                let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await;
                 continue;
             }
 
             if !request.contains("/oauth/callback") {
-                let _ = socket.write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n").await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")
+                    .await;
                 continue;
             }
 
@@ -245,16 +265,17 @@ impl OneDriveAuthService {
                     "</body></html>",
                 );
                 let _ = socket.write_all(error_html.as_bytes()).await;
-                return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
+                return Err(anyhow!(
+                    "Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"
+                ));
             }
 
-            let code = extract_query_param(&request, "code")
-                .ok_or_else(|| {
-                    let error = extract_query_param(&request, "error_description")
-                        .or_else(|| extract_query_param(&request, "error"))
-                        .unwrap_or_else(|| "desconhecido".to_string());
-                    anyhow!("Autorização recusada pela Microsoft: {}", error)
-                })?;
+            let code = extract_query_param(&request, "code").ok_or_else(|| {
+                let error = extract_query_param(&request, "error_description")
+                    .or_else(|| extract_query_param(&request, "error"))
+                    .unwrap_or_else(|| "desconhecido".to_string());
+                anyhow!("Autorização recusada pela Microsoft: {}", error)
+            })?;
 
             let html = concat!(
                 "HTTP/1.1 200 OK\r\n",
@@ -272,7 +293,9 @@ impl OneDriveAuthService {
             break;
         }
 
-        let code = auth_code.ok_or_else(|| anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite."))?;
+        let code = auth_code.ok_or_else(|| {
+            anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite.")
+        })?;
 
         let code_decoded = percent_decode(&code);
 
@@ -287,16 +310,14 @@ impl OneDriveAuthService {
         params.insert("redirect_uri", redirect_uri.as_str());
         params.insert("scope", ONEDRIVE_SCOPE);
 
-        let res = self
-            .http
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await?;
+        let res = self.http.post(&self.token_url).form(&params).send().await?;
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
-            return Err(anyhow!("Falha ao trocar código por token na Microsoft Identity: {}", body));
+            return Err(anyhow!(
+                "Falha ao trocar código por token na Microsoft Identity: {}",
+                body
+            ));
         }
 
         let token_resp: OneDriveTokenResponse = res.json().await?;
@@ -308,7 +329,9 @@ impl OneDriveAuthService {
                 entry
                     .set_password(rt)
                     .map_err(|e| anyhow!("Erro ao salvar credenciais: {}", e))?;
-                info!("Refresh token do OneDrive salvo com segurança no Windows Credential Manager.");
+                info!(
+                    "Refresh token do OneDrive salvo com segurança no Windows Credential Manager."
+                );
             }
             None => {
                 let has_existing = Entry::new(KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH)
@@ -322,7 +345,11 @@ impl OneDriveAuthService {
             }
         }
 
-        let expires_in_secs = if token_resp.expires_in > 0 { token_resp.expires_in } else { 3600 };
+        let expires_in_secs = if token_resp.expires_in > 0 {
+            token_resp.expires_in
+        } else {
+            3600
+        };
         let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
 
         {
@@ -377,12 +404,7 @@ impl OneDriveAuthService {
         params.insert("grant_type", "refresh_token");
         params.insert("scope", ONEDRIVE_SCOPE);
 
-        let res = self
-            .http
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await?;
+        let res = self.http.post(&self.token_url).form(&params).send().await?;
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -400,7 +422,11 @@ impl OneDriveAuthService {
             }
         }
 
-        let expires_in_secs = if token_resp.expires_in > 0 { token_resp.expires_in } else { 3600 };
+        let expires_in_secs = if token_resp.expires_in > 0 {
+            token_resp.expires_in
+        } else {
+            3600
+        };
         let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
 
         {
@@ -411,7 +437,10 @@ impl OneDriveAuthService {
             });
         }
 
-        debug!("Access token do OneDrive renovado com sucesso (válido por {}s).", expires_in_secs);
+        debug!(
+            "Access token do OneDrive renovado com sucesso (válido por {}s).",
+            expires_in_secs
+        );
         Ok(token_resp.access_token)
     }
 

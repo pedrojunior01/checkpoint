@@ -471,11 +471,13 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         // REST: Autostart (Windows Registry)
         // -------------------------------------------------------------
         ("GET", "/api/autostart") => {
-            let status = savevault_core::autostart::status().unwrap_or(savevault_core::autostart::AutostartStatus {
-                enabled: false,
-                command: None,
-                executable_path: None,
-            });
+            let status = savevault_core::autostart::status().unwrap_or(
+                savevault_core::autostart::AutostartStatus {
+                    enabled: false,
+                    command: None,
+                    executable_path: None,
+                },
+            );
             let json = serde_json::to_string(&status)?;
             send_response(&mut stream, 200, "OK", "application/json", &json).await?;
         }
@@ -618,4 +620,3 @@ mod tests {
         assert!(!is_valid_local_origin("https://evil.org"));
     }
 }
-

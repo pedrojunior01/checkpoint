@@ -186,7 +186,9 @@ pub async fn pull_snapshots_from_cloud(
             item.local_snapshot_path.display()
         );
 
-        match download_snapshot_from_cloud(remote_id, &item.local_snapshot_path, preferred_provider).await {
+        match download_snapshot_from_cloud(remote_id, &item.local_snapshot_path, preferred_provider)
+            .await
+        {
             Ok(()) => {
                 report.downloaded += 1;
                 report.details.push(format!(
@@ -253,8 +255,14 @@ mod tests {
 
         conn.execute(
             "INSERT INTO save_locations (id, game_id, path, location_type) VALUES (?1, ?2, ?3, ?4)",
-            (loc_id.to_string(), game_id.to_string(), r"C:\Saves\EldenRing", "directory"),
-        ).unwrap();
+            (
+                loc_id.to_string(),
+                game_id.to_string(),
+                r"C:\Saves\EldenRing",
+                "directory",
+            ),
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO files (id, save_location_id, path, hash, size_bytes, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -270,7 +278,10 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].game_name, "Elden Ring");
         assert_eq!(list[0].version, 1);
-        assert_eq!(list[0].drive_file_id.as_deref(), Some("remote-drive-id-123"));
+        assert_eq!(
+            list[0].drive_file_id.as_deref(),
+            Some("remote-drive-id-123")
+        );
         assert!(!list[0].local_exists);
     }
 }

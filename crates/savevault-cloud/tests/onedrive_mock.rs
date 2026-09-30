@@ -369,7 +369,10 @@ async fn test_onedrive_sec_01_opaque_id_adversarial_rejection() {
 
     for id in malicious_ids {
         assert!(
-            provider.download(id, std::path::Path::new("target")).await.is_err(),
+            provider
+                .download(id, std::path::Path::new("target"))
+                .await
+                .is_err(),
             "ID malicioso '{}' deveria ser rejeitado pelo download",
             id
         );
@@ -384,7 +387,8 @@ async fn test_onedrive_sec_01_opaque_id_adversarial_rejection() {
 #[tokio::test]
 async fn test_onedrive_sec_02_valid_opaque_id_accepted() {
     let auth = OneDriveAuthService::with_fixed_token("fake-token".to_string());
-    let provider = OneDriveProvider::with_custom_endpoints(auth, "http://localhost:8080".to_string());
+    let provider =
+        OneDriveProvider::with_custom_endpoints(auth, "http://localhost:8080".to_string());
 
     let valid_ids = [
         "01BY27U2DWNPBYA7N225A625V5N2I2T6F2",
@@ -404,7 +408,8 @@ async fn test_onedrive_upload_401_unauthorized() {
         status: 401,
         status_text: "Unauthorized",
         content_type: "application/json",
-        body: r#"{"error":{"code":"unauthenticated","message":"Token expired or invalid"}}"#.to_string(),
+        body: r#"{"error":{"code":"unauthenticated","message":"Token expired or invalid"}}"#
+            .to_string(),
     })
     .await;
 
@@ -417,7 +422,11 @@ async fn test_onedrive_upload_401_unauthorized() {
     let result = provider.upload(tmp.path(), "game/file/save.dat").await;
     assert!(result.is_err());
     let err_str = result.unwrap_err().to_string();
-    assert!(err_str.contains("HTTP 401") || err_str.contains("unauthenticated") || err_str.contains("Token expired"));
+    assert!(
+        err_str.contains("HTTP 401")
+            || err_str.contains("unauthenticated")
+            || err_str.contains("Token expired")
+    );
 }
 
 #[tokio::test]
@@ -440,11 +449,15 @@ async fn test_onedrive_timeout_handling() {
         .build()
         .unwrap();
 
-    let provider = OneDriveProvider::with_custom_endpoints(auth, server.base_url).with_client(client);
+    let provider =
+        OneDriveProvider::with_custom_endpoints(auth, server.base_url).with_client(client);
 
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
     let result = provider.upload(tmp.path(), "game/file/save.dat").await;
-    assert!(result.is_err(), "Requisição que excede o timeout deve falhar explicitamente");
+    assert!(
+        result.is_err(),
+        "Requisição que excede o timeout deve falhar explicitamente"
+    );
 }

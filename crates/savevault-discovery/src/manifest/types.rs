@@ -29,9 +29,9 @@ impl FileEntry {
         if self.when.is_empty() {
             return true;
         }
-        self.when.iter().any(|c| {
-            c.os.as_deref().map(|o| o == "windows").unwrap_or(true)
-        })
+        self.when
+            .iter()
+            .any(|c| c.os.as_deref().map(|o| o == "windows").unwrap_or(true))
     }
 
     /// Retorna true se esta entrada se aplica a Windows + Steam.

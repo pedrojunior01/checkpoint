@@ -429,15 +429,23 @@ async fn test_restore_attempts_cloud_when_physical_missing() {
     let game = Game::new("CloudGame", Platform::Steam, None, Confidence::High);
     games_repo.insert(&game).unwrap();
 
-    let loc = loc_repo.upsert(&SaveLocation::new(game.id, save_dir, SaveLocationType::Directory)).unwrap();
-    let file = files_repo.upsert(&savevault_core::models::FileEntry {
-        id: Uuid::new_v4(),
-        save_location_id: loc.id,
-        path: save_file,
-        hash: "dummyhash".into(),
-        size_bytes: 100,
-        modified_at: Utc::now(),
-    }).unwrap();
+    let loc = loc_repo
+        .upsert(&SaveLocation::new(
+            game.id,
+            save_dir,
+            SaveLocationType::Directory,
+        ))
+        .unwrap();
+    let file = files_repo
+        .upsert(&savevault_core::models::FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: save_file,
+            hash: "dummyhash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
+        })
+        .unwrap();
 
     let backup_id = Uuid::new_v4();
     let backup = savevault_core::models::Backup {
@@ -452,7 +460,9 @@ async fn test_restore_attempts_cloud_when_physical_missing() {
     backups_repo.insert(&backup).unwrap();
 
     let req = RestoreRequest::new(backup_id);
-    let err = restore_snapshot(&db.conn, &backup_dir, &req).await.unwrap_err();
+    let err = restore_snapshot(&db.conn, &backup_dir, &req)
+        .await
+        .unwrap_err();
     match err {
         RestoreError::CloudRecoveryFailed(msg) => {
             assert!(msg.contains("mock-remote-id"));

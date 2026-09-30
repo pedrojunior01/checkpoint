@@ -7,7 +7,6 @@
 //! - Exibir / Ocultar a janela do console
 //! - Encerrar a aplicação de forma graciosa
 
-
 #[cfg(windows)]
 use tray_item::{IconSource, TrayItem};
 
@@ -87,9 +86,7 @@ pub fn open_browser(url: &str) {
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn();
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
 }
 

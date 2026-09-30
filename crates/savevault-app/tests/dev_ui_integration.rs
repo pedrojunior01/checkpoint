@@ -444,8 +444,14 @@ async fn test_dev_ui_cors_origin_protection() {
     assert_eq!(send_raw_origin(addr, "http://localhost:3000").await, 200);
 
     // 2. Origens maliciosas bloqueadas (403 Forbidden)
-    assert_eq!(send_raw_origin(addr, "http://127.0.0.1.attacker.com").await, 403);
-    assert_eq!(send_raw_origin(addr, "http://localhost.evil.com").await, 403);
+    assert_eq!(
+        send_raw_origin(addr, "http://127.0.0.1.attacker.com").await,
+        403
+    );
+    assert_eq!(
+        send_raw_origin(addr, "http://localhost.evil.com").await,
+        403
+    );
     assert_eq!(send_raw_origin(addr, "http://evil.com").await, 403);
     assert_eq!(send_raw_origin(addr, "https://127.0.0.1").await, 403);
 

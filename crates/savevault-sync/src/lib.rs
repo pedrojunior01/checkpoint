@@ -17,11 +17,11 @@
 //! - Tentativas > MAX_ATTEMPTS: marcado como `failed` permanentemente
 
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
+use rusqlite::Connection;
 use savevault_cloud::CloudProvider;
 use savevault_core::models::{SyncOperation, SyncStatus};
 use savevault_db::repositories::{BackupsRepo, SyncQueueRepo};
-use rusqlite::Connection;
+use std::path::PathBuf;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -175,8 +175,7 @@ impl<P: CloudProvider> SyncEngine<P> {
                                     &SyncStatus::Failed,
                                     new_attempts,
                                 )?;
-                                backups_repo
-                                    .update_sync_status(backup.id, &SyncStatus::Failed)?;
+                                backups_repo.update_sync_status(backup.id, &SyncStatus::Failed)?;
                             } else {
                                 warn!(
                                     "Falha ao sincronizar backup {} (tentativa {}/{}): {}",
@@ -199,7 +198,11 @@ impl<P: CloudProvider> SyncEngine<P> {
                             Ok(_) => {
                                 info!("Arquivo removido do Drive (File ID: {})", drive_file_id);
                                 // Verifica se o snapshot local ainda existe em disco
-                                let local_snapshot_exists = match self.resolve_local_snapshot_path(backup.file_id, backup.version, conn) {
+                                let local_snapshot_exists = match self.resolve_local_snapshot_path(
+                                    backup.file_id,
+                                    backup.version,
+                                    conn,
+                                ) {
                                     Ok((path, _, _)) => path.exists(),
                                     Err(_) => false,
                                 };
@@ -234,7 +237,7 @@ impl<P: CloudProvider> SyncEngine<P> {
                                     item.id,
                                     &SyncStatus::Failed,
                                     item.attempts + 1,
-                                    )?;
+                                )?;
                             }
                         }
                     } else {
@@ -294,14 +297,19 @@ impl<P: CloudProvider> SyncEngine<P> {
                                 Ok((local_path, filename_owned, save_location_id)) => {
                                     let filename = filename_owned.as_str();
                                     let drive_filename = format!("v{}_{}", b.version, filename);
-                                    let cloud_path = format!("{}/{}/{}", save_location_id, b.file_id, drive_filename);
+                                    let cloud_path = format!(
+                                        "{}/{}/{}",
+                                        save_location_id, b.file_id, drive_filename
+                                    );
                                     Ok((b, Some((local_path, cloud_path)), None))
                                 }
                                 Err(e) => Err(e),
                             }
                         }
                         SyncOperation::Delete => {
-                            let local_exists = match self.resolve_local_snapshot_path(b.file_id, b.version, &conn) {
+                            let local_exists = match self
+                                .resolve_local_snapshot_path(b.file_id, b.version, &conn)
+                            {
                                 Ok((path, _, _)) => path.exists(),
                                 Err(_) => false,
                             };
@@ -349,7 +357,10 @@ impl<P: CloudProvider> SyncEngine<P> {
                         let new_attempts = item.attempts + 1;
                         queue_repo.update_status(item.id, &SyncStatus::Failed, new_attempts)?;
                         backups_repo.update_sync_status(backup.id, &SyncStatus::Failed)?;
-                        warn!("Snapshot local não existe no disco: '{}'", local_path.display());
+                        warn!(
+                            "Snapshot local não existe no disco: '{}'",
+                            local_path.display()
+                        );
                         continue;
                     }
 
@@ -386,14 +397,22 @@ impl<P: CloudProvider> SyncEngine<P> {
                                     "Backup {} falhou {} vezes. Marcando como falha permanente: {}",
                                     backup.id, new_attempts, e
                                 );
-                                queue_repo.update_status(item.id, &SyncStatus::Failed, new_attempts)?;
+                                queue_repo.update_status(
+                                    item.id,
+                                    &SyncStatus::Failed,
+                                    new_attempts,
+                                )?;
                                 backups_repo.update_sync_status(backup.id, &SyncStatus::Failed)?;
                             } else {
                                 warn!(
                                     "Falha ao sincronizar backup {} (tentativa {}/{}): {}",
                                     backup.id, new_attempts, self.config.max_attempts, e
                                 );
-                                queue_repo.update_status(item.id, &SyncStatus::Pending, new_attempts)?;
+                                queue_repo.update_status(
+                                    item.id,
+                                    &SyncStatus::Pending,
+                                    new_attempts,
+                                )?;
                             }
                         }
                     }
@@ -434,7 +453,11 @@ impl<P: CloudProvider> SyncEngine<P> {
                             }
                             Err(e) => {
                                 warn!("Falha ao remover da nuvem: {}", e);
-                                queue_repo.update_status(item.id, &SyncStatus::Failed, item.attempts + 1)?;
+                                queue_repo.update_status(
+                                    item.id,
+                                    &SyncStatus::Failed,
+                                    item.attempts + 1,
+                                )?;
                             }
                         }
                     } else {

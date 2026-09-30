@@ -85,7 +85,10 @@ pub fn notify(title: impl Into<String>, message: impl Into<String>) {
                     .duration(Duration::Short);
 
                 if let Err(e) = toast.show() {
-                    tracing::debug!("Não foi possível exibir notificação do Windows Toast: {}", e);
+                    tracing::debug!(
+                        "Não foi possível exibir notificação do Windows Toast: {}",
+                        e
+                    );
                 }
             })
             .ok();
@@ -126,7 +129,10 @@ pub fn notify_save_protected(game_name: &str, version: u32) {
 
     notify(
         "SaveVault — Save Protegido",
-        format!("O save de '{}' foi protegido com sucesso (v{}).", game_name, version),
+        format!(
+            "O save de '{}' foi protegido com sucesso (v{}).",
+            game_name, version
+        ),
     );
 }
 

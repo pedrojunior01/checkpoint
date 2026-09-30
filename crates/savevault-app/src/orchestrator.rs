@@ -41,7 +41,10 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
         let discovery = detector.detect_save_locations(game)?;
 
         match discovery {
-            SaveDiscoveryResult::Found(locs) | SaveDiscoveryResult::KnownNotFoundOnDisk { expected_locations: locs } => {
+            SaveDiscoveryResult::Found(locs)
+            | SaveDiscoveryResult::KnownNotFoundOnDisk {
+                expected_locations: locs,
+            } => {
                 for loc in locs {
                     let persisted = loc_repo.upsert(&loc)?;
                     report.persisted_locations.push(persisted);
@@ -93,7 +96,9 @@ pub fn persist_discovery_result(
         }
 
         if existing_opt.is_none() {
-            if let Some(existing) = games_repo.find_by_name_and_platform(&game.name, &game.platform)? {
+            if let Some(existing) =
+                games_repo.find_by_name_and_platform(&game.name, &game.platform)?
+            {
                 existing_opt = Some(existing);
             }
         }
@@ -121,4 +126,3 @@ pub fn persist_discovery_result(
 
     Ok(report)
 }
-

@@ -161,7 +161,8 @@ pub async fn handle_stable_event(
         None => return Ok(None),
     };
 
-    let game_name = get_game_name(conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+    let game_name =
+        get_game_name(conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
 
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
@@ -172,7 +173,10 @@ pub async fn handle_stable_event(
         persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
 
     for pruned in pruned_backups {
-        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+        if let Err(e) = snapshot_manager
+            .remove_snapshot_version(file_id, &game_name, pruned.version)
+            .await
+        {
             tracing::warn!(
                 "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
                 pruned.version,
@@ -223,7 +227,8 @@ pub async fn process_file(
         let pair = check_existing_and_next_version(&conn, &event.path, &hash)?;
         match pair {
             Some((fid, ver)) => {
-                let gname = get_game_name(&conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+                let gname = get_game_name(&conn, event.save_location_id)
+                    .unwrap_or_else(|_| "Desconhecido".to_string());
                 (fid, ver, gname)
             }
             None => return Ok(None),
@@ -241,7 +246,10 @@ pub async fn process_file(
     };
 
     for pruned in pruned_backups {
-        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+        if let Err(e) = snapshot_manager
+            .remove_snapshot_version(file_id, &game_name, pruned.version)
+            .await
+        {
             tracing::warn!(
                 "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
                 pruned.version,
@@ -262,7 +270,9 @@ async fn trigger_cloud_sync_with_notify(
     backup_root: PathBuf,
     cloud_provider: &str,
 ) {
-    match savevault_sync::process_queue_active_provider_unlocked(db, backup_root, cloud_provider).await {
+    match savevault_sync::process_queue_active_provider_unlocked(db, backup_root, cloud_provider)
+        .await
+    {
         Ok(count) => {
             if count > 0 {
                 crate::notifications::notify(

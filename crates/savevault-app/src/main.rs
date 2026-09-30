@@ -24,7 +24,10 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // Se solicitado modo silencioso/tray, oculta a janela do console imediatamente
-    if args.iter().any(|a| a == "--tray" || a == "--silent" || a == "--minimized") {
+    if args
+        .iter()
+        .any(|a| a == "--tray" || a == "--silent" || a == "--minimized")
+    {
         savevault_app::tray::hide_console_window();
     }
 
@@ -47,13 +50,15 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         [auth_cmd, help_flag]
-            if auth_cmd == "auth" && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
+            if auth_cmd == "auth"
+                && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
         {
             print_auth_help();
             return Ok(());
         }
         [restore_cmd, help_flag]
-            if restore_cmd == "restore" && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
+            if restore_cmd == "restore"
+                && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
         {
             print_restore_help();
             return Ok(());
@@ -63,7 +68,8 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         [cloud_cmd, help_flag]
-            if cloud_cmd == "cloud" && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
+            if cloud_cmd == "cloud"
+                && (help_flag == "--help" || help_flag == "-h" || help_flag == "help") =>
         {
             print_cloud_help();
             return Ok(());
@@ -298,7 +304,6 @@ async fn run_resident_daemon(
     config_dir: PathBuf,
     args: &[String],
 ) -> anyhow::Result<()> {
-
     tracing::info!("SaveVault iniciando...");
 
     // Abre o banco de dados
@@ -331,8 +336,6 @@ async fn run_resident_daemon(
         result.save_locations.len()
     );
 
-
-
     // Se for solicitado modo pontual (--once ou scan), finaliza aqui
     if args.iter().any(|a| a == "--once" || a == "scan") {
         tracing::info!("Execução pontual concluída com sucesso.");
@@ -354,7 +357,8 @@ async fn run_resident_daemon(
 
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
     let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
-    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
+    watcher_config.debounce.debounce_duration =
+        std::time::Duration::from_millis(config.general.debounce_ms);
 
     let (watcher, stable_rx) = match savevault_monitor::watcher::SaveWatcherService::start(
         watcher_config,
@@ -398,16 +402,17 @@ async fn run_resident_daemon(
     ));
 
     let server_shutdown_rx = shutdown_tx.subscribe();
-    let (ui_addr, server_handle) = match savevault_app::start_dev_ui_server(ui_state, 4040, server_shutdown_rx).await {
-        Ok((addr, handle)) => {
-            tracing::info!("Interface Web DEV-UI disponível em http://{}", addr);
-            (Some(addr), Some(handle))
-        }
-        Err(e) => {
-            tracing::warn!("Não foi possível iniciar DEV-UI em background: {}", e);
-            (None, None)
-        }
-    };
+    let (ui_addr, server_handle) =
+        match savevault_app::start_dev_ui_server(ui_state, 4040, server_shutdown_rx).await {
+            Ok((addr, handle)) => {
+                tracing::info!("Interface Web DEV-UI disponível em http://{}", addr);
+                (Some(addr), Some(handle))
+            }
+            Err(e) => {
+                tracing::warn!("Não foi possível iniciar DEV-UI em background: {}", e);
+                (None, None)
+            }
+        };
 
     let ui_port = ui_addr.map(|a| a.port()).unwrap_or(4040);
     let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), ui_port);
@@ -480,7 +485,8 @@ async fn handle_auth_command(
         println!("==================================================");
         println!("           SaveVault — Status da Nuvem            ");
         println!("==================================================");
-        let google_auth = savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
+        let google_auth =
+            savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
         let google_status = if google_auth {
             "✅ Autenticado"
         } else if savevault_cloud::GoogleDriveProvider::from_env().is_some() {
@@ -490,7 +496,8 @@ async fn handle_auth_command(
         };
         println!("  Google Drive:       {}", google_status);
 
-        let onedrive_auth = savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
+        let onedrive_auth =
+            savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
         let onedrive_status = if onedrive_auth {
             "✅ Autenticado"
         } else if savevault_cloud::OneDriveProvider::from_env().is_some() {
@@ -548,7 +555,8 @@ async fn handle_auth_onedrive(sub: &str) -> anyhow::Result<()> {
             println!("✅ Credenciais removidas. Microsoft OneDrive desvinculado.");
         }
         "status" => {
-            let is_auth = savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
+            let is_auth =
+                savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
             if is_auth {
                 println!("✅ Autenticado no Microsoft OneDrive.");
             } else {
@@ -595,11 +603,14 @@ async fn handle_auth_google(sub: &str) -> anyhow::Result<()> {
             println!("✅ Credenciais removidas. Google Drive desvinculado.");
         }
         "status" => {
-            let is_auth = savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
+            let is_auth =
+                savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
             if is_auth {
                 println!("✅ Autenticado no Google Drive.");
             } else {
-                println!("❌ Não autenticado no Google Drive. Execute: savevault auth login google");
+                println!(
+                    "❌ Não autenticado no Google Drive. Execute: savevault auth login google"
+                );
             }
         }
         other => {
@@ -620,9 +631,14 @@ async fn handle_sync_command(config: &Config, provider_arg: Option<&str>) -> any
         &db.conn,
         config.paths.backup_dir.clone(),
         provider,
-    ).await {
+    )
+    .await
+    {
         Ok(count) => {
-            println!("✅ Sincronização concluída: {} backup(s) processado(s).", count);
+            println!(
+                "✅ Sincronização concluída: {} backup(s) processado(s).",
+                count
+            );
         }
         Err(e) => {
             eprintln!("❌ Falha na sincronização: {}", e);
@@ -630,8 +646,6 @@ async fn handle_sync_command(config: &Config, provider_arg: Option<&str>) -> any
     }
     Ok(())
 }
-
-
 
 fn handle_add_game(config: &Config, name: &str, path_str: &str) -> anyhow::Result<()> {
     let raw_path = std::path::PathBuf::from(path_str);
@@ -698,7 +712,6 @@ fn handle_list_games(config: &Config) -> anyhow::Result<()> {
     println!("{:-<70}\n", "");
     Ok(())
 }
-
 
 async fn handle_restore_command(
     config: &Config,
@@ -826,7 +839,8 @@ async fn handle_restore_command(
 
 fn handle_cloud_list(config: &Config) -> anyhow::Result<()> {
     let db = Database::open(&config.paths.database_path)?;
-    let items = savevault_app::cloud_recovery::list_cloud_snapshots(&db.conn, &config.paths.backup_dir)?;
+    let items =
+        savevault_app::cloud_recovery::list_cloud_snapshots(&db.conn, &config.paths.backup_dir)?;
 
     println!("================================================================================");
     println!("               SaveVault — Snapshots Sincronizados na Nuvem                     ");
@@ -924,7 +938,9 @@ fn print_conflict_help() {
     println!("  resolve <jogo> [--policy ..] Aplica a política de resolução de conflitos");
     println!();
     println!("Políticas disponíveis (--policy):");
-    println!("  keep-both   (Padrão) Preserva o save local e arquiva snapshot remoto em conflicts/");
+    println!(
+        "  keep-both   (Padrão) Preserva o save local e arquiva snapshot remoto em conflicts/"
+    );
     println!("  local       Mantém o save deste computador como prioritário");
     println!("  remote      Aplica a versão da nuvem (gerando safety backup local prévio)");
     println!("  newest      Compara datas de modificação e aplica o save mais recente");
@@ -953,17 +969,25 @@ async fn handle_conflict_list(config: &Config) -> anyhow::Result<()> {
     println!("             SaveVault — Sincronização & Conflitos Multi-PC                    ");
     println!("================================================================================");
     println!("  Dispositivo Local:     {}", config.general.device_name);
-    println!("  Política Padrão:       {:?}", config.general.conflict_policy);
+    println!(
+        "  Política Padrão:       {:?}",
+        config.general.conflict_policy
+    );
     println!("--------------------------------------------------------------------------------");
 
     if items.is_empty() {
         println!("  Nenhum save com rastreamento no banco para verificação.");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
         return Ok(());
     }
 
     let mut conflicts_found = 0;
-    println!("{:<24} {:<20} {:<12} DETALHES", "JOGO", "STATUS", "VERSÃO NUVEM");
+    println!(
+        "{:<24} {:<20} {:<12} DETALHES",
+        "JOGO", "STATUS", "VERSÃO NUVEM"
+    );
     println!("{:-<24} {:-<20} {:-<12} {:-<22}", "", "", "", "");
 
     for item in &items {
@@ -971,15 +995,20 @@ async fn handle_conflict_list(config: &Config) -> anyhow::Result<()> {
             savevault_app::ConflictClassification::InSync => {
                 ("🟢 Sincronizado", "Local e nuvem idênticos".to_string())
             }
-            savevault_app::ConflictClassification::LocalAhead => {
-                ("🟡 Alteração Local", "Pronto para enviar à nuvem".to_string())
-            }
-            savevault_app::ConflictClassification::RemoteAhead => {
-                ("🔵 Nuvem mais Recente", format!("v{} disponível para pull", item.remote_version))
-            }
+            savevault_app::ConflictClassification::LocalAhead => (
+                "🟡 Alteração Local",
+                "Pronto para enviar à nuvem".to_string(),
+            ),
+            savevault_app::ConflictClassification::RemoteAhead => (
+                "🔵 Nuvem mais Recente",
+                format!("v{} disponível para pull", item.remote_version),
+            ),
             savevault_app::ConflictClassification::Diverged => {
                 conflicts_found += 1;
-                ("🔴 CONFLITO MULTI-PC", "Ambos os computadores alteraram o save".to_string())
+                (
+                    "🔴 CONFLITO MULTI-PC",
+                    "Ambos os computadores alteraram o save".to_string(),
+                )
             }
         };
 
@@ -987,14 +1016,21 @@ async fn handle_conflict_list(config: &Config) -> anyhow::Result<()> {
             "{:<24} {:<20} {:<12} {}",
             truncate_display(&item.game_name, 23),
             status_str,
-            if item.remote_version > 0 { format!("v{}", item.remote_version) } else { "-".into() },
+            if item.remote_version > 0 {
+                format!("v{}", item.remote_version)
+            } else {
+                "-".into()
+            },
             detail_str
         );
     }
 
     println!("================================================================================");
     if conflicts_found > 0 {
-        println!("⚠️  Foram detectados {} conflito(s) entre computadores!", conflicts_found);
+        println!(
+            "⚠️  Foram detectados {} conflito(s) entre computadores!",
+            conflicts_found
+        );
         println!("    Para resolver de forma segura sem perda de dados, execute:");
         println!("      savevault conflict resolve <nome_do_jogo> [--policy keep-both|local|remote|newest]");
     } else {
@@ -1016,11 +1052,16 @@ async fn handle_conflict_resolve(
     let policy = match policy_override {
         Some("keep-both" | "both" | "keep") => savevault_core::config::ConflictPolicy::KeepBoth,
         Some("local" | "local-wins") => savevault_core::config::ConflictPolicy::PreferLocal,
-        Some("remote" | "cloud" | "cloud-wins") => savevault_core::config::ConflictPolicy::PreferRemote,
+        Some("remote" | "cloud" | "cloud-wins") => {
+            savevault_core::config::ConflictPolicy::PreferRemote
+        }
         Some("newest" | "newer" | "recent") => savevault_core::config::ConflictPolicy::PreferNewest,
         Some("manual") => savevault_core::config::ConflictPolicy::Manual,
         Some(other) => {
-            eprintln!("Política desconhecida '{}'. Opções: keep-both, local, remote, newest, manual", other);
+            eprintln!(
+                "Política desconhecida '{}'. Opções: keep-both, local, remote, newest, manual",
+                other
+            );
             return Ok(());
         }
         None => config.general.conflict_policy,
@@ -1033,7 +1074,10 @@ async fn handle_conflict_resolve(
         .collect();
 
     if matching.is_empty() {
-        println!("Nenhum save com conflito encontrado para '{}'.", game_filter);
+        println!(
+            "Nenhum save com conflito encontrado para '{}'.",
+            game_filter
+        );
         return Ok(());
     }
 
@@ -1042,24 +1086,34 @@ async fn handle_conflict_resolve(
     println!("================================================================================");
 
     for item in matching {
-        println!("▶ Processando '{}' com política {:?}", item.game_name, policy);
+        println!(
+            "▶ Processando '{}' com política {:?}",
+            item.game_name, policy
+        );
         let res = savevault_app::conflict::resolve_conflict(
             policy,
             &item,
             &config.paths.backup_dir,
             &db.conn,
             Some(&config.cloud.provider),
-        ).await?;
+        )
+        .await?;
 
         match res {
-            savevault_app::ConflictResolutionResult::KeptBoth { conflict_copy_path, message } => {
+            savevault_app::ConflictResolutionResult::KeptBoth {
+                conflict_copy_path,
+                message,
+            } => {
                 println!("  ✅ {}", message);
                 println!("     Destino do conflito: {}", conflict_copy_path.display());
             }
             savevault_app::ConflictResolutionResult::LocalKept { message } => {
                 println!("  ✅ {}", message);
             }
-            savevault_app::ConflictResolutionResult::RemoteApplied { safety_backup_path, message } => {
+            savevault_app::ConflictResolutionResult::RemoteApplied {
+                safety_backup_path,
+                message,
+            } => {
                 println!("  ✅ {}", message);
                 println!("     Safety Backup: {}", safety_backup_path.display());
             }
@@ -1134,15 +1188,21 @@ fn print_global_help() {
     println!("SaveVault — Sistema de Proteção e Sincronização de Saves");
     println!();
     println!("USO:");
-    println!("  savevault                                   Inicia o daemon de monitoramento contínuo");
+    println!(
+        "  savevault                                   Inicia o daemon de monitoramento contínuo"
+    );
     println!("  savevault --tray                            Inicia minimizado na bandeja do sistema (silencioso)");
     println!("  savevault --once                            Executa descoberta e persiste sem manter ativo");
     println!("  savevault add <nome> <caminho>              Cadastra manualmente um jogo e pasta de save");
     println!("  savevault list                              Lista todos os jogos e diretórios monitorados");
     println!("  savevault restore <backup_id> [--cloud]     Restaura snapshot (com recuperação automática da nuvem)");
-    println!("  savevault restore list                      Lista snapshots históricos disponíveis");
+    println!(
+        "  savevault restore list                      Lista snapshots históricos disponíveis"
+    );
     println!("  savevault cloud list                        Lista snapshots salvos na nuvem e disponibilidade local");
-    println!("  savevault cloud pull [jogo]                 Baixa da nuvem snapshots ausentes no disco");
+    println!(
+        "  savevault cloud pull [jogo]                 Baixa da nuvem snapshots ausentes no disco"
+    );
     println!("  savevault auth [login|status|logout]        Gerencia autenticação OAuth (Google Drive / OneDrive)");
     println!("  savevault autostart [enable|disable|status] Configura inicialização automática com o Windows");
     println!("  savevault notifications [on|off|all|status] Configura frequência das notificações (modo gamer)");
@@ -1171,7 +1231,9 @@ fn handle_autostart_cli(sub: &str) -> anyhow::Result<()> {
             if let Some(exe) = status.executable_path {
                 println!("   Binário:  {}", exe.display());
             }
-            println!("   Registro: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SaveVault");
+            println!(
+                "   Registro: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SaveVault"
+            );
             println!("   O SaveVault será iniciado automaticamente em segundo plano ao ligar o computador.");
         }
         "disable" | "off" | "false" | "0" => {
@@ -1180,13 +1242,19 @@ fn handle_autostart_cli(sub: &str) -> anyhow::Result<()> {
             let _ = config.save(&config_path);
 
             println!("✅ Inicialização automática com o Windows DESABILITADA.");
-            println!("   O SaveVault não será mais iniciado automaticamente ao ligar o computador.");
+            println!(
+                "   O SaveVault não será mais iniciado automaticamente ao ligar o computador."
+            );
         }
         "status" | "check" | "info" => {
             let status = savevault_core::autostart::status()?;
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("INICIALIZAÇÃO AUTOMÁTICA COM O WINDOWS (AUTOSTART)");
-            println!("--------------------------------------------------------------------------------");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
             if status.enabled {
                 println!("Status:     🟢 HABILITADA");
                 if let Some(cmd) = status.command {
@@ -1204,7 +1272,9 @@ fn handle_autostart_cli(sub: &str) -> anyhow::Result<()> {
                 println!();
                 println!("Para habilitar, execute: savevault autostart enable");
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         other => {
             eprintln!("Subcomando desconhecido: 'autostart {}'.", other);
@@ -1253,26 +1323,68 @@ fn handle_notifications_cli(config_path: &Path, sub: &str) -> anyhow::Result<()>
             println!("   • Restauração de saves:   🟢 Ativo");
         }
         "status" => {
-            println!("================================================================================");
-            println!("              SaveVault — Status de Notificações do Windows                     ");
-            println!("================================================================================");
-            let state_str = if config.notifications.enabled { "🟢 ATIVAS" } else { "⚪ DESATIVADAS" };
+            println!(
+                "================================================================================"
+            );
+            println!(
+                "              SaveVault — Status de Notificações do Windows                     "
+            );
+            println!(
+                "================================================================================"
+            );
+            let state_str = if config.notifications.enabled {
+                "🟢 ATIVAS"
+            } else {
+                "⚪ DESATIVADAS"
+            };
             println!("  Status Geral:              {}", state_str);
-            println!("  Notificar a cada save:     {}", if config.notifications.notify_on_save { "🟢 Sim" } else { "⚪ Não (Silencioso para não atrapalhar no jogo)" });
-            println!("  Notificar sincronização:   {}", if config.notifications.notify_on_sync { "🟢 Sim" } else { "⚪ Não" });
-            println!("  Notificar restauração:     {}", if config.notifications.notify_on_restore { "🟢 Sim" } else { "⚪ Não" });
-            println!("  Cooldown anti-spam:        {} segundos", config.notifications.cooldown_secs);
-            println!("--------------------------------------------------------------------------------");
+            println!(
+                "  Notificar a cada save:     {}",
+                if config.notifications.notify_on_save {
+                    "🟢 Sim"
+                } else {
+                    "⚪ Não (Silencioso para não atrapalhar no jogo)"
+                }
+            );
+            println!(
+                "  Notificar sincronização:   {}",
+                if config.notifications.notify_on_sync {
+                    "🟢 Sim"
+                } else {
+                    "⚪ Não"
+                }
+            );
+            println!(
+                "  Notificar restauração:     {}",
+                if config.notifications.notify_on_restore {
+                    "🟢 Sim"
+                } else {
+                    "⚪ Não"
+                }
+            );
+            println!(
+                "  Cooldown anti-spam:        {} segundos",
+                config.notifications.cooldown_secs
+            );
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
             println!("Comandos disponíveis:");
-            println!("  savevault notifications on       Ativa o modo equilibrado (silencioso no jogo)");
+            println!(
+                "  savevault notifications on       Ativa o modo equilibrado (silencioso no jogo)"
+            );
             println!("  savevault notifications off      Desativa todas as notificações");
             println!("  savevault notifications all      Ativa notificações detalhadas");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         other => {
             eprintln!("Subcomando desconhecido: 'notifications {}'.", other);
             eprintln!("Uso:");
-            eprintln!("  savevault notifications on       Ativa o modo equilibrado (silencioso no jogo)");
+            eprintln!(
+                "  savevault notifications on       Ativa o modo equilibrado (silencioso no jogo)"
+            );
             eprintln!("  savevault notifications off      Desativa todas as notificações");
             eprintln!("  savevault notifications all      Ativa notificações detalhadas");
             eprintln!("  savevault notifications status   Exibe configuração atual");
@@ -1350,7 +1462,8 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     // Prepara watcher se houver locais
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
     let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
-    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
+    watcher_config.debounce.debounce_duration =
+        std::time::Duration::from_millis(config.general.debounce_ms);
     let mut watcher_opt = if !all_locations.is_empty() {
         match savevault_monitor::watcher::SaveWatcherService::start(
             watcher_config,
@@ -1439,4 +1552,3 @@ fn print_auth_help() {
     println!("  logout    Remove o token de acesso do Windows Credential Manager");
     println!("  help      Exibe esta mensagem de ajuda");
 }
-

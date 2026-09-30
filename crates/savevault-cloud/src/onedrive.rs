@@ -104,16 +104,23 @@ impl OneDriveProvider {
     }
 
     /// Constrói a URL para operações diretas sobre itens por ID remoto seguro.
-    pub fn build_item_url(&self, remote_file_id: &str, subpath: Option<&str>) -> Result<reqwest::Url> {
+    pub fn build_item_url(
+        &self,
+        remote_file_id: &str,
+        subpath: Option<&str>,
+    ) -> Result<reqwest::Url> {
         validate_drive_file_id(remote_file_id)?;
 
         let mut url = reqwest::Url::parse(&self.api_base)
             .map_err(|e| anyhow!("Base URL da API inválida '{}': {}", self.api_base, e))?;
 
         {
-            let mut segments = url
-                .path_segments_mut()
-                .map_err(|_| anyhow!("Não é possível manipular segmentos de caminho na URL base: {}", self.api_base))?;
+            let mut segments = url.path_segments_mut().map_err(|_| {
+                anyhow!(
+                    "Não é possível manipular segmentos de caminho na URL base: {}",
+                    self.api_base
+                )
+            })?;
             segments
                 .pop_if_empty()
                 .push("me")
@@ -139,11 +146,16 @@ impl OneDriveProvider {
 
         let status = res.status();
         let text = res.text().await.unwrap_or_default();
-        let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let body: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
 
         if !status.is_success() {
             let error_msg = extract_graph_error(&body, &text);
-            return Err(anyhow!("Microsoft Graph API GET erro {}: {}", status, error_msg));
+            return Err(anyhow!(
+                "Microsoft Graph API GET erro {}: {}",
+                status,
+                error_msg
+            ));
         }
 
         Ok(body)
@@ -190,7 +202,11 @@ impl CloudProvider for OneDriveProvider {
         }
 
         let file_bytes = tokio::fs::read(local_path).await.map_err(|e| {
-            anyhow!("Falha ao ler arquivo local '{}': {}", local_path.display(), e)
+            anyhow!(
+                "Falha ao ler arquivo local '{}': {}",
+                local_path.display(),
+                e
+            )
         })?;
 
         // Microsoft Graph API upload direto no approot com criação automática de pastas
@@ -224,7 +240,11 @@ impl CloudProvider for OneDriveProvider {
         }
 
         let item: OneDriveItemResponse = serde_json::from_str(&text).map_err(|e| {
-            anyhow!("Resposta de upload inválida do OneDrive: {}. Body: {}", e, text)
+            anyhow!(
+                "Resposta de upload inválida do OneDrive: {}. Body: {}",
+                e,
+                text
+            )
         })?;
 
         if item.id.trim().is_empty() {
@@ -280,12 +300,18 @@ impl CloudProvider for OneDriveProvider {
 
         if let Err(e) = tokio::fs::write(&temp_file, &bytes).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!("Falha ao gravar arquivo temporário de download: {}", e));
+            return Err(anyhow!(
+                "Falha ao gravar arquivo temporário de download: {}",
+                e
+            ));
         }
 
         if let Err(e) = tokio::fs::rename(&temp_file, local_path).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!("Falha ao mover arquivo baixado para destino final: {}", e));
+            return Err(anyhow!(
+                "Falha ao mover arquivo baixado para destino final: {}",
+                e
+            ));
         }
 
         info!(
@@ -314,7 +340,10 @@ impl CloudProvider for OneDriveProvider {
         // 204 No Content = sucesso; 404 Not Found = tolerado (já não existe)
         if status.is_success() || status.as_u16() == 404 {
             if status.as_u16() == 404 {
-                warn!("Arquivo OneDrive/{} não encontrado (já deletado).", remote_file_id);
+                warn!(
+                    "Arquivo OneDrive/{} não encontrado (já deletado).",
+                    remote_file_id
+                );
             } else {
                 info!("Arquivo OneDrive/{} removido com sucesso.", remote_file_id);
             }
@@ -335,6 +364,12 @@ impl CloudProvider for OneDriveProvider {
 fn extract_graph_error(body: &serde_json::Value, raw_text: &str) -> String {
     body["error"]["message"]
         .as_str()
-        .unwrap_or_else(|| if raw_text.trim().is_empty() { "erro desconhecido" } else { raw_text })
+        .unwrap_or_else(|| {
+            if raw_text.trim().is_empty() {
+                "erro desconhecido"
+            } else {
+                raw_text
+            }
+        })
         .to_string()
 }

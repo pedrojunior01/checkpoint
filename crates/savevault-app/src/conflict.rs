@@ -56,23 +56,16 @@ pub enum ConflictResolutionResult {
         message: String,
     },
     /// A versão local foi mantida como prioritária e preparada para envio na próxima sincronização.
-    LocalKept {
-        message: String,
-    },
+    LocalKept { message: String },
     /// A versão da nuvem foi aplicada no destino após criação de Safety Backup do arquivo local.
     RemoteApplied {
         safety_backup_path: PathBuf,
         message: String,
     },
     /// A versão mais recente no tempo venceu.
-    NewerApplied {
-        winner: String,
-        message: String,
-    },
+    NewerApplied { winner: String, message: String },
     /// Requer intervenção manual do usuário via linha de comando ou interface.
-    ManualRequired {
-        message: String,
-    },
+    ManualRequired { message: String },
 }
 
 /// Classifica o status de sincronização comparando hash local, remoto e base.
@@ -203,7 +196,9 @@ pub async fn scan_conflicts(conn: &Connection, backup_root: &Path) -> Result<Vec
             .join(&filename);
 
         let remote_hash = if remote_snapshot_path.exists() {
-            savevault_backup::hasher::hash_file(&remote_snapshot_path).await.ok()
+            savevault_backup::hasher::hash_file(&remote_snapshot_path)
+                .await
+                .ok()
         } else {
             None
         };
@@ -271,7 +266,8 @@ async fn resolve_prefer_remote(
         .unwrap_or_else(|| "save.dat".into());
 
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let safety_bak_path = safety_bak_dir.join(format!("{}.pre_conflict_remote_{}", filename, timestamp));
+    let safety_bak_path =
+        safety_bak_dir.join(format!("{}.pre_conflict_remote_{}", filename, timestamp));
     tokio::fs::copy(&item.local_file_path, &safety_bak_path).await?;
 
     // Obtém snapshot remoto
@@ -284,7 +280,12 @@ async fn resolve_prefer_remote(
     if candidate_versioned.exists() {
         tokio::fs::copy(&candidate_versioned, &item.local_file_path).await?;
     } else if let Some(ref remote_id) = item.remote_drive_file_id {
-        crate::restore::download_snapshot_from_cloud(remote_id, &item.local_file_path, preferred_provider).await?;
+        crate::restore::download_snapshot_from_cloud(
+            remote_id,
+            &item.local_file_path,
+            preferred_provider,
+        )
+        .await?;
     } else {
         return Err(anyhow!("Snapshot remoto não acessível para restauração."));
     }
@@ -330,7 +331,10 @@ pub async fn resolve_conflict(
                 .unwrap_or_else(|| "save.dat".into());
 
             let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-            let conflict_filename = format!("{}.conflict-cloud-v{}_{}.bak", filename, item.remote_version, timestamp);
+            let conflict_filename = format!(
+                "{}.conflict-cloud-v{}_{}.bak",
+                filename, item.remote_version, timestamp
+            );
             let conflict_dest = conflicts_dir.join(&conflict_filename);
 
             // Se o snapshot remoto já existe localmente, copia para a pasta de conflitos
@@ -343,7 +347,12 @@ pub async fn resolve_conflict(
                 tokio::fs::copy(&candidate_versioned, &conflict_dest).await?;
             } else if let Some(ref remote_id) = item.remote_drive_file_id {
                 // Baixa diretamente da nuvem para o arquivo de conflito
-                crate::restore::download_snapshot_from_cloud(remote_id, &conflict_dest, preferred_provider).await?;
+                crate::restore::download_snapshot_from_cloud(
+                    remote_id,
+                    &conflict_dest,
+                    preferred_provider,
+                )
+                .await?;
             } else {
                 return Err(anyhow!(
                     "Não foi possível obter a versão remota para gerar cópia de conflito de '{}'",
@@ -388,19 +397,23 @@ pub async fn resolve_conflict(
                 info!("Conflito PreferNewest: snapshot remoto é mais recente");
                 let sub = resolve_prefer_remote(item, backup_root, preferred_provider).await?;
                 match sub {
-                    ConflictResolutionResult::RemoteApplied { safety_backup_path: _, message } => {
-                        Ok(ConflictResolutionResult::NewerApplied {
-                            winner: "remote".into(),
-                            message: format!("Versão remota é mais recente. {}", message),
-                        })
-                    }
+                    ConflictResolutionResult::RemoteApplied {
+                        safety_backup_path: _,
+                        message,
+                    } => Ok(ConflictResolutionResult::NewerApplied {
+                        winner: "remote".into(),
+                        message: format!("Versão remota é mais recente. {}", message),
+                    }),
                     other => Ok(other),
                 }
             }
         }
 
         ConflictPolicy::Manual => {
-            warn!("Conflito detectado para '{}', aguardando intervenção manual.", item.game_name);
+            warn!(
+                "Conflito detectado para '{}', aguardando intervenção manual.",
+                item.game_name
+            );
             crate::notifications::notify_conflict_detected(
                 &item.game_name,
                 "Aguardando resolução manual do usuário (savevault conflict resolve).",
@@ -480,10 +493,14 @@ mod tests {
         let game_dir = backup_root.join("The Witcher 3").join("v1");
         tokio::fs::create_dir_all(&game_dir).await.unwrap();
         let remote_file = game_dir.join("save.sav");
-        tokio::fs::write(&remote_file, b"remote cloud save content").await.unwrap();
+        tokio::fs::write(&remote_file, b"remote cloud save content")
+            .await
+            .unwrap();
 
         let local_save = temp_dir.path().join("save.sav");
-        tokio::fs::write(&local_save, b"local pc save content").await.unwrap();
+        tokio::fs::write(&local_save, b"local pc save content")
+            .await
+            .unwrap();
 
         let item = ConflictItem {
             game_id: Uuid::new_v4(),
@@ -500,12 +517,18 @@ mod tests {
         };
 
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let result = resolve_conflict(ConflictPolicy::KeepBoth, &item, &backup_root, &conn, None).await.unwrap();
+        let result = resolve_conflict(ConflictPolicy::KeepBoth, &item, &backup_root, &conn, None)
+            .await
+            .unwrap();
 
         match result {
-            ConflictResolutionResult::KeptBoth { conflict_copy_path, .. } => {
+            ConflictResolutionResult::KeptBoth {
+                conflict_copy_path, ..
+            } => {
                 assert!(conflict_copy_path.exists());
-                let content = tokio::fs::read_to_string(&conflict_copy_path).await.unwrap();
+                let content = tokio::fs::read_to_string(&conflict_copy_path)
+                    .await
+                    .unwrap();
                 assert_eq!(content, "remote cloud save content");
                 // Local save deve permanecer intacto
                 let local_content = tokio::fs::read_to_string(&local_save).await.unwrap();
@@ -519,7 +542,9 @@ mod tests {
     async fn test_resolve_prefer_local() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_save = temp_dir.path().join("save.sav");
-        tokio::fs::write(&local_save, b"local content").await.unwrap();
+        tokio::fs::write(&local_save, b"local content")
+            .await
+            .unwrap();
 
         let item = ConflictItem {
             game_id: Uuid::new_v4(),
@@ -537,7 +562,15 @@ mod tests {
 
         let backup_root = temp_dir.path().join("backups");
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let result = resolve_conflict(ConflictPolicy::PreferLocal, &item, &backup_root, &conn, None).await.unwrap();
+        let result = resolve_conflict(
+            ConflictPolicy::PreferLocal,
+            &item,
+            &backup_root,
+            &conn,
+            None,
+        )
+        .await
+        .unwrap();
 
         match result {
             ConflictResolutionResult::LocalKept { .. } => {

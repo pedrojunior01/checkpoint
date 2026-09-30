@@ -1,14 +1,14 @@
 pub mod emulators;
 pub mod generic;
 pub mod gog;
-pub mod manifest;
-pub mod steam;
-pub mod save_detector;
 pub mod ludusavi;
+pub mod manifest;
+pub mod save_detector;
+pub mod steam;
 
-pub use save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
 pub use ludusavi::LudusaviSaveDetector;
 pub use manifest::ManifestDetector;
+pub use save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
 
 use anyhow::Result;
 use savevault_core::models::{Game, SaveLocation, SaveLocationType};
@@ -84,7 +84,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     // ------------------------------------------------------------------
     // 3. Emuladores (Dolphin, PCSX2, PPSSPP, RetroArch)
     // ------------------------------------------------------------------
-    match emulators::EmulatorDetector::new().detect_with_locations().await {
+    match emulators::EmulatorDetector::new()
+        .detect_with_locations()
+        .await
+    {
         Ok(found) => {
             tracing::info!("Emuladores: {} entrada(s) encontrada(s)", found.len());
             for emu in found {
@@ -120,7 +123,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     // Resolução de saves para Steam
                     for info in &steam_infos {
                         let game = &info.game;
-                        let app_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
+                        let app_id = game
+                            .platform_id
+                            .as_ref()
+                            .and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
 
                         let paths = if let Some(id) = app_id {
@@ -145,7 +151,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     // Resolução de saves para GOG
                     for info in &gog_infos {
                         let game = &info.game;
-                        let gog_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
+                        let gog_id = game
+                            .platform_id
+                            .as_ref()
+                            .and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
 
                         let mut paths = detector.find_save_paths_gog(gog_id, &game.name, &ctx);
@@ -171,7 +180,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.", e);
+                    tracing::warn!(
+                        "Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.",
+                        e
+                    );
                     for info in &steam_infos {
                         games.push(info.game.clone());
                     }
@@ -183,7 +195,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
             }
         }
         Err(e) => {
-            tracing::warn!("Manifest indisponível: {}. Saves serão detectados apenas localmente.", e);
+            tracing::warn!(
+                "Manifest indisponível: {}. Saves serão detectados apenas localmente.",
+                e
+            );
             for info in &steam_infos {
                 games.push(info.game.clone());
             }
@@ -208,14 +223,19 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     break;
                 }
             }
-            if is_duplicate { break; }
+            if is_duplicate {
+                break;
+            }
         }
-        
+
         if !is_duplicate {
             save_locations.extend(info.save_locations);
             games.push(info.game);
         } else {
-            tracing::info!("Jogo genérico '{}' ignorado por sobrepor caminho de jogo oficial.", info.game.name);
+            tracing::info!(
+                "Jogo genérico '{}' ignorado por sobrepor caminho de jogo oficial.",
+                info.game.name
+            );
         }
     }
 
@@ -225,7 +245,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
         save_locations.len()
     );
 
-    Ok(DiscoveryResult { games, save_locations })
+    Ok(DiscoveryResult {
+        games,
+        save_locations,
+    })
 }
 
 /// Conecta os jogos encontrados pelo Game Discovery ao Save Discovery,

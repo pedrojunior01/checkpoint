@@ -8,9 +8,9 @@
 //! 2. Ausência de bloqueios exclusivos (`ERROR_SHARING_VIOLATION`) com retry e backoff controlado;
 //! 3. Desaparecimento de arquivos temporários sem pânico.
 
+use crate::file_access::{FileAccess, FileAccessError, FileMetadata};
 use std::path::Path;
 use std::time::Duration;
-use crate::file_access::{FileAccess, FileAccessError, FileMetadata};
 
 /// Configurações do verificador de estabilidade.
 #[derive(Debug, Clone)]
@@ -86,11 +86,7 @@ impl StabilityChecker {
     }
 
     /// Executa o ciclo de verificação de estabilidade sobre um caminho.
-    pub async fn check_stability(
-        &self,
-        path: &Path,
-        access: &dyn FileAccess,
-    ) -> StabilityResult {
+    pub async fn check_stability(&self, path: &Path, access: &dyn FileAccess) -> StabilityResult {
         self.check_stability_with_cancel(path, access, None).await
     }
 
@@ -101,7 +97,11 @@ impl StabilityChecker {
         access: &dyn FileAccess,
         cancel_token: Option<&AtomicBool>,
     ) -> StabilityResult {
-        let is_cancelled = || cancel_token.map(|t| t.load(Ordering::SeqCst)).unwrap_or(false);
+        let is_cancelled = || {
+            cancel_token
+                .map(|t| t.load(Ordering::SeqCst))
+                .unwrap_or(false)
+        };
 
         let mut attempts = 0;
         let mut consecutive_stable = 0;
@@ -132,7 +132,10 @@ impl StabilityChecker {
                     FileAccessError::SharingViolation => {
                         tracing::debug!(
                             "Sharing violation em '{}' (tentativa {}/{}), aguardando backoff {:?}",
-                            path.display(), attempts, self.config.max_attempts, current_backoff
+                            path.display(),
+                            attempts,
+                            self.config.max_attempts,
+                            current_backoff
                         );
                         last_was_sharing_violation = true;
                         consecutive_stable = 0;
@@ -146,7 +149,11 @@ impl StabilityChecker {
                         continue;
                     }
                     FileAccessError::Other(e) => {
-                        tracing::debug!("Erro transitório ao testar leitura em '{}': {}", path.display(), e);
+                        tracing::debug!(
+                            "Erro transitório ao testar leitura em '{}': {}",
+                            path.display(),
+                            e
+                        );
                         consecutive_stable = 0;
                         if sleep_with_cancel(self.config.check_interval, cancel_token).await {
                             return StabilityResult::Cancelled;
@@ -198,7 +205,9 @@ impl StabilityChecker {
                 } else {
                     tracing::debug!(
                         "Arquivo '{}' ainda em mutação (tamanho anterior: {}, atual: {})",
-                        path.display(), prev.size_bytes, meta.size_bytes
+                        path.display(),
+                        prev.size_bytes,
+                        meta.size_bytes
                     );
                     consecutive_stable = 0;
                 }
@@ -230,12 +239,16 @@ async fn sleep_with_cancel(duration: Duration, cancel_token: Option<&AtomicBool>
     let start = tokio::time::Instant::now();
     let step = Duration::from_millis(10);
     while start.elapsed() < duration {
-        if cancel_token.map(|t| t.load(Ordering::SeqCst)).unwrap_or(false) {
+        if cancel_token
+            .map(|t| t.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
             return true;
         }
         let remaining = duration.saturating_sub(start.elapsed());
         tokio::time::sleep(remaining.min(step)).await;
     }
-    cancel_token.map(|t| t.load(Ordering::SeqCst)).unwrap_or(false)
+    cancel_token
+        .map(|t| t.load(Ordering::SeqCst))
+        .unwrap_or(false)
 }
-

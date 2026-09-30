@@ -192,7 +192,10 @@ impl FileDebouncer {
         self,
         mut raw_rx: mpsc::Receiver<RawFileEvent>,
         mut shutdown_rx: watch::Receiver<bool>,
-    ) -> (mpsc::Receiver<CoalescedFileEvent>, tokio::task::JoinHandle<()>) {
+    ) -> (
+        mpsc::Receiver<CoalescedFileEvent>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (output_tx, output_rx) = mpsc::channel(self.config.channel_capacity);
         let config = self.config;
         let tracker = self.in_flight_tracker;
@@ -300,12 +303,14 @@ impl FileDebouncer {
             let now = Instant::now();
             for (path, state) in pending {
                 if state.deadline <= now {
-                    let _ = output_tx.send(CoalescedFileEvent {
-                        path,
-                        save_location_id: state.save_location_id,
-                        kind: state.latest_kind,
-                        generation: state.generation,
-                    }).await;
+                    let _ = output_tx
+                        .send(CoalescedFileEvent {
+                            path,
+                            save_location_id: state.save_location_id,
+                            kind: state.latest_kind,
+                            generation: state.generation,
+                        })
+                        .await;
                 }
             }
         });

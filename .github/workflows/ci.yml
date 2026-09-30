@@ -6,10 +6,13 @@ on:
       - main
       - develop
       - 'feature/**'
+      - 'feat/**'
   pull_request:
     branches:
       - main
       - develop
+      - 'feature/**'
+      - 'feat/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,9 +27,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure Windows Environment
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\svt"
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable-x86_64-pc-windows-gnu
           targets: x86_64-pc-windows-gnu
           components: clippy, rustfmt
 

@@ -9,12 +9,12 @@
 //!    por geração e tratamento correto de `ERROR_SHARING_VIOLATION` vs `ERROR_ACCESS_DENIED`;
 //! 6. Emissão controlada de `StableFileEvent` com controle estrito de concorrência (`Semaphore`) e shutdown limpo.
 
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 use tokio::sync::{mpsc, watch, Semaphore};
 use uuid::Uuid;
@@ -23,7 +23,9 @@ use savevault_core::models::{SaveLocation, SaveLocationType};
 use savevault_core::path::{canonicalize_windows_path, is_internal_savevault_file};
 
 use crate::debouncer::{DebounceConfig, FileDebouncer, InFlightTracker};
-use crate::events::{CoalescedFileEvent, RawFileEvent, RawFileEventKind, StableFileEvent, StableFileEventKind};
+use crate::events::{
+    CoalescedFileEvent, RawFileEvent, RawFileEventKind, StableFileEvent, StableFileEventKind,
+};
 use crate::file_access::FileAccess;
 use crate::scanner::{match_glob_relative, split_glob_base_and_pattern, SaveScanner};
 use crate::stability::{StabilityChecker, StabilityConfig, StabilityResult};
@@ -163,9 +165,17 @@ impl SaveWatcherService {
         let watch_targets = resolve_watch_targets(&locations);
         for target in watch_targets {
             if target.desired_path.exists() {
-                register_watch(&watcher_shared, &watched_dirs, &target.desired_path, target.mode);
+                register_watch(
+                    &watcher_shared,
+                    &watched_dirs,
+                    &target.desired_path,
+                    target.mode,
+                );
                 if target.desired_path.is_dir() {
-                    known_dirs.lock().unwrap().insert(target.desired_path.clone());
+                    known_dirs
+                        .lock()
+                        .unwrap()
+                        .insert(target.desired_path.clone());
                 }
             } else {
                 // Diretório ainda não existe: encontrar o ancestral mais próximo existente
@@ -175,7 +185,12 @@ impl SaveWatcherService {
                         target.desired_path.display(),
                         ancestor.display()
                     );
-                    register_watch(&watcher_shared, &watched_dirs, &ancestor, RecursiveMode::Recursive);
+                    register_watch(
+                        &watcher_shared,
+                        &watched_dirs,
+                        &ancestor,
+                        RecursiveMode::Recursive,
+                    );
                 }
                 pending_targets.lock().unwrap().push(target);
             }
@@ -240,7 +255,11 @@ impl SaveWatcherService {
             }
         });
 
-        let task_handles = Arc::new(Mutex::new(vec![debouncer_handle, dispatcher_handle, filter_handle]));
+        let task_handles = Arc::new(Mutex::new(vec![
+            debouncer_handle,
+            dispatcher_handle,
+            filter_handle,
+        ]));
 
         let service = Self {
             shutdown_tx,
@@ -261,7 +280,11 @@ impl SaveWatcherService {
         config: SaveWatcherConfig,
         locations: Vec<SaveLocation>,
         file_access: Arc<dyn FileAccess>,
-    ) -> (Self, mpsc::Sender<RawFileEvent>, mpsc::Receiver<StableFileEvent>) {
+    ) -> (
+        Self,
+        mpsc::Sender<RawFileEvent>,
+        mpsc::Receiver<StableFileEvent>,
+    ) {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (raw_tx, raw_rx) = mpsc::channel(config.raw_channel_capacity);
         let (stable_tx, stable_rx) = mpsc::channel(config.stable_channel_capacity);
@@ -374,7 +397,10 @@ async fn handle_path_event(
     if is_removal {
         // Se estava registrado como diretório conhecido, remover e NÃO emitir como arquivo
         if known_dirs.lock().unwrap().remove(&path) {
-            tracing::debug!("Diretório removido no disco: '{}'. Ignorando para eventos de arquivo.", path.display());
+            tracing::debug!(
+                "Diretório removido no disco: '{}'. Ignorando para eventos de arquivo.",
+                path.display()
+            );
             return;
         }
 
@@ -452,7 +478,10 @@ fn check_and_register_dynamic_directories(
             );
             register_watch(watcher, watched_dirs, &target.desired_path, target.mode);
             if target.desired_path.is_dir() {
-                known_dirs.lock().unwrap().insert(target.desired_path.clone());
+                known_dirs
+                    .lock()
+                    .unwrap()
+                    .insert(target.desired_path.clone());
             }
             false // Remove de pending
         } else {
@@ -478,9 +507,17 @@ fn register_watch(
     if let Ok(mut watcher_opt) = watcher.lock() {
         if let Some(ref mut w) = *watcher_opt {
             if let Err(e) = w.watch(path, mode) {
-                tracing::warn!("Falha ao registrar watch no diretório '{}': {}", path.display(), e);
+                tracing::warn!(
+                    "Falha ao registrar watch no diretório '{}': {}",
+                    path.display(),
+                    e
+                );
             } else {
-                tracing::info!("Watch registrado com sucesso em: '{}' ({:?})", path.display(), mode);
+                tracing::info!(
+                    "Watch registrado com sucesso em: '{}' ({:?})",
+                    path.display(),
+                    mode
+                );
                 map.insert(path.to_path_buf(), mode);
             }
         }

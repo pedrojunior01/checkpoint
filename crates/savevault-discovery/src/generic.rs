@@ -23,14 +23,21 @@ use walkdir::WalkDir;
 
 /// Extensões de arquivo que indicam save games com alta probabilidade.
 const SAVE_EXTENSIONS: &[&str] = &[
-    "sav", "save", "sg", "sg0", "sg1", "sg2", "sg3",
-    "slot", "gam", "savegame", "sfs",
+    "sav", "save", "sg", "sg0", "sg1", "sg2", "sg3", "slot", "gam", "savegame", "sfs",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
 const SAVE_DIR_HINTS: &[&str] = &[
-    "save", "saves", "savegame", "savegames", "savedgame", "savedgames",
-    "slot", "slots", "progress", "checkpoint",
+    "save",
+    "saves",
+    "savegame",
+    "savegames",
+    "savedgame",
+    "savedgames",
+    "slot",
+    "slots",
+    "progress",
+    "checkpoint",
 ];
 
 /// Número mínimo de arquivos de save em uma pasta para ser considerada candidata.
@@ -58,7 +65,9 @@ impl GenericDetector {
 
     /// Cria o detector com caminhos de jogos já conhecidos (para evitar duplicatas).
     pub fn with_known_paths(known_install_paths: Vec<PathBuf>) -> Self {
-        Self { known_install_paths }
+        Self {
+            known_install_paths,
+        }
     }
 
     /// Detecta jogos genéricos retornando apenas `Game` (compatível com o orchestrator).
@@ -75,7 +84,10 @@ impl GenericDetector {
 
         for root in &scan_roots {
             if !root.exists() {
-                debug!("Generic: pasta de varredura '{}' não existe, pulando.", root.display());
+                debug!(
+                    "Generic: pasta de varredura '{}' não existe, pulando.",
+                    root.display()
+                );
                 continue;
             }
 
@@ -129,7 +141,10 @@ impl GenericDetector {
             }
         }
 
-        info!("Generic: {} candidato(s) de save detectado(s).", results.len());
+        info!(
+            "Generic: {} candidato(s) de save detectado(s).",
+            results.len()
+        );
         Ok(results)
     }
 
@@ -280,7 +295,11 @@ fn count_save_files_in_dir(dir: &Path) -> (usize, bool) {
                 || stem.contains("slot")
                 || stem.contains("quicksave")
                 || stem.contains("autosave")
-                || stem.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                || stem
+                    .chars()
+                    .last()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
             {
                 has_hint = true;
             }
@@ -309,16 +328,61 @@ fn should_skip_dir(path: &Path, root: &Path) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
 
     let skip_list = [
-        "microsoft", "windows", "system32", "syswow64", "temp", "tmp",
-        "cache", "log", "logs", "crash", "crashdumps", "nvidia",
-        "amd", "intel", "discord", "slack", "teams", "zoom", "chrome",
-        "firefox", "edge", "opera", "vivaldi", "spotify", "steam",
-        "steamapps", "gog galaxy", "epic games", "origin", "ea",
-        "ubisoft", "blizzard", "battlenet", "rockstar", "2k games",
-        ".git", "node_modules", "target", "debug", "release",
-        "assembly", "icloud", "dropbox", "onedrive", "utorrent", "bittorrent",
-        "telegram", "obs-studio", "obs", "comfy", "wtablet", "whatsapp",
-        "postman", "vlc", "docker"
+        "microsoft",
+        "windows",
+        "system32",
+        "syswow64",
+        "temp",
+        "tmp",
+        "cache",
+        "log",
+        "logs",
+        "crash",
+        "crashdumps",
+        "nvidia",
+        "amd",
+        "intel",
+        "discord",
+        "slack",
+        "teams",
+        "zoom",
+        "chrome",
+        "firefox",
+        "edge",
+        "opera",
+        "vivaldi",
+        "spotify",
+        "steam",
+        "steamapps",
+        "gog galaxy",
+        "epic games",
+        "origin",
+        "ea",
+        "ubisoft",
+        "blizzard",
+        "battlenet",
+        "rockstar",
+        "2k games",
+        ".git",
+        "node_modules",
+        "target",
+        "debug",
+        "release",
+        "assembly",
+        "icloud",
+        "dropbox",
+        "onedrive",
+        "utorrent",
+        "bittorrent",
+        "telegram",
+        "obs-studio",
+        "obs",
+        "comfy",
+        "wtablet",
+        "whatsapp",
+        "postman",
+        "vlc",
+        "docker",
     ];
 
     for comp in relative.components() {
@@ -345,7 +409,10 @@ fn infer_game_name(save_path: &Path) -> String {
             .to_string();
 
         // Se o nome da pasta é um hint de save (ex: "saves"), sobe um nível
-        if SAVE_DIR_HINTS.iter().any(|h| name.to_lowercase().contains(h)) {
+        if SAVE_DIR_HINTS
+            .iter()
+            .any(|h| name.to_lowercase().contains(h))
+        {
             match current.parent() {
                 Some(p) => {
                     current = p;
@@ -404,16 +471,31 @@ mod tests {
     #[test]
     fn should_skip_dir_returns_true_for_system_dirs() {
         let root = Path::new(r"C:\Users\foo\AppData");
-        assert!(should_skip_dir(Path::new(r"C:\Users\foo\AppData\Roaming\Microsoft"), root));
-        assert!(should_skip_dir(Path::new(r"C:\Users\foo\AppData\Local\Discord"), root));
-        assert!(should_skip_dir(Path::new(r"C:\Users\foo\AppData\Steam\steamapps"), root));
+        assert!(should_skip_dir(
+            Path::new(r"C:\Users\foo\AppData\Roaming\Microsoft"),
+            root
+        ));
+        assert!(should_skip_dir(
+            Path::new(r"C:\Users\foo\AppData\Local\Discord"),
+            root
+        ));
+        assert!(should_skip_dir(
+            Path::new(r"C:\Users\foo\AppData\Steam\steamapps"),
+            root
+        ));
     }
 
     #[test]
     fn should_skip_dir_returns_false_for_game_dirs() {
         let root = Path::new(r"C:\Users\foo");
-        assert!(!should_skip_dir(Path::new(r"C:\Users\foo\Documents\The Witcher 3"), root));
-        assert!(!should_skip_dir(Path::new(r"C:\Users\foo\AppData\Roaming\Hollow Knight"), root));
+        assert!(!should_skip_dir(
+            Path::new(r"C:\Users\foo\Documents\The Witcher 3"),
+            root
+        ));
+        assert!(!should_skip_dir(
+            Path::new(r"C:\Users\foo\AppData\Roaming\Hollow Knight"),
+            root
+        ));
     }
 
     #[test]
@@ -503,9 +585,6 @@ mod tests {
             .filter(|c| !detector.is_inside_known_install(&c.path))
             .collect();
 
-        assert!(
-            filtered.is_empty(),
-            "Known install paths should be skipped"
-        );
+        assert!(filtered.is_empty(), "Known install paths should be skipped");
     }
 }

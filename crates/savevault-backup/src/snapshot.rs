@@ -1,9 +1,9 @@
 use anyhow::Result;
+use chrono::Utc;
+use savevault_core::models::{Backup, SyncStatus};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
-use savevault_core::models::{Backup, SyncStatus};
 use uuid::Uuid;
-use chrono::Utc;
 
 /// Motor de snapshots/versões de saves.
 #[allow(dead_code)]
@@ -16,7 +16,10 @@ pub struct SnapshotManager {
 
 impl SnapshotManager {
     pub fn new(backup_root: PathBuf, max_versions: u32) -> Self {
-        Self { backup_root, max_versions }
+        Self {
+            backup_root,
+            max_versions,
+        }
     }
 
     /// Cria um snapshot do arquivo de save, retornando o Backup criado.
@@ -30,22 +33,20 @@ impl SnapshotManager {
         source_path: &Path,
         next_version: u32,
     ) -> Result<Backup> {
-        let filename = source_path.file_name()
+        let filename = source_path
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho inválido: sem nome de arquivo"))?;
 
         let safe_game_name = sanitize_name(game_name);
 
-        let version_dir = self.backup_root
+        let version_dir = self
+            .backup_root
             .join(&safe_game_name)
             .join(format!("v{}", next_version));
 
-        let latest_dir = self.backup_root
-            .join(&safe_game_name)
-            .join("latest");
+        let latest_dir = self.backup_root.join(&safe_game_name).join("latest");
 
-        let daily_dir = self.backup_root
-            .join(&safe_game_name)
-            .join("daily");
+        let daily_dir = self.backup_root.join(&safe_game_name).join("daily");
 
         tokio::fs::create_dir_all(&version_dir).await?;
         tokio::fs::create_dir_all(&latest_dir).await?;
@@ -71,7 +72,11 @@ impl SnapshotManager {
             let _ = tokio::fs::copy(source_path, &dest_daily).await;
         }
 
-        info!("Snapshot criado: {} → {}", source_path.display(), dest.display());
+        info!(
+            "Snapshot criado: {} → {}",
+            source_path.display(),
+            dest.display()
+        );
 
         let backup = Backup {
             id: Uuid::new_v4(),
@@ -99,7 +104,8 @@ impl SnapshotManager {
         version: u32,
         dest_path: &Path,
     ) -> Result<Option<PathBuf>> {
-        let filename = dest_path.file_name()
+        let filename = dest_path
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho de destino inválido: sem nome de arquivo"))?;
 
         let dest_parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
@@ -113,22 +119,26 @@ impl SnapshotManager {
         // 1. Versão explícita por pasta: backup_root/<safe_game_name>/v<version>/<filename>
         // 2. Versão legada por UUID: backup_root/<file_id>/v<version>/<filename>
         // 3. Fallback para latest/daily apenas se version == 1 (legado)
-        let explicit_version = self.backup_root
+        let explicit_version = self
+            .backup_root
             .join(&safe_game_name)
             .join(format!("v{}", version))
             .join(filename);
 
-        let legacy_version = self.backup_root
+        let legacy_version = self
+            .backup_root
             .join(file_id.to_string())
             .join(format!("v{}", version))
             .join(filename);
 
-        let latest_source = self.backup_root
+        let latest_source = self
+            .backup_root
             .join(&safe_game_name)
             .join("latest")
             .join(filename);
 
-        let daily_source = self.backup_root
+        let daily_source = self
+            .backup_root
             .join(&safe_game_name)
             .join("daily")
             .join(filename);
@@ -148,7 +158,9 @@ impl SnapshotManager {
         if !source.exists() {
             anyhow::bail!(
                 "Versão {} do arquivo {} não encontrada em {}",
-                version, file_id, source.display()
+                version,
+                file_id,
+                source.display()
             );
         };
 
@@ -177,7 +189,8 @@ impl SnapshotManager {
             tokio::fs::copy(dest_path, &candidate).await.map_err(|e| {
                 anyhow::anyhow!(
                     "Falha ao criar backup de segurança em '{}': {}",
-                    candidate.display(), e
+                    candidate.display(),
+                    e
                 )
             })?;
             debug!("Backup de segurança criado: {}", candidate.display());
@@ -188,7 +201,11 @@ impl SnapshotManager {
 
         // Passo 2: cópia atômica via arquivo temporário no mesmo diretório de destino
         let orig_name = filename.to_string_lossy();
-        let tmp_path = dest_parent.join(format!("{}.restore_tmp_{}", orig_name, Uuid::new_v4().simple()));
+        let tmp_path = dest_parent.join(format!(
+            "{}.restore_tmp_{}",
+            orig_name,
+            Uuid::new_v4().simple()
+        ));
 
         if let Err(e) = tokio::fs::copy(&source, &tmp_path).await {
             let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -200,34 +217,52 @@ impl SnapshotManager {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             anyhow::bail!(
                 "Falha ao aplicar restauração atômica em '{}': {}. Destino permanece intacto.",
-                dest_path.display(), e
+                dest_path.display(),
+                e
             );
         }
 
-        info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
+        info!(
+            "Restauração concluída: {} → {}",
+            source.display(),
+            dest_path.display()
+        );
         Ok(safety_path)
     }
 
     /// Remove o diretório físico do snapshot versionado correspondente, se existir.
     /// Ex.: `backup_root/<game_name>/v{version}` ou legado `backup_root/<file_id>/v{version}`
-    pub async fn remove_snapshot_version(&self, file_id: Uuid, game_name: &str, version: u32) -> Result<()> {
+    pub async fn remove_snapshot_version(
+        &self,
+        file_id: Uuid,
+        game_name: &str,
+        version: u32,
+    ) -> Result<()> {
         let safe_game_name = sanitize_name(game_name);
-        let version_dir = self.backup_root
+        let version_dir = self
+            .backup_root
             .join(&safe_game_name)
             .join(format!("v{}", version));
 
         if version_dir.exists() {
             tokio::fs::remove_dir_all(&version_dir).await?;
-            debug!("Diretório de snapshot físico versionado removido: {}", version_dir.display());
+            debug!(
+                "Diretório de snapshot físico versionado removido: {}",
+                version_dir.display()
+            );
         }
 
-        let legacy_dir = self.backup_root
+        let legacy_dir = self
+            .backup_root
             .join(file_id.to_string())
             .join(format!("v{}", version));
 
         if legacy_dir.exists() {
             tokio::fs::remove_dir_all(&legacy_dir).await?;
-            debug!("Diretório de snapshot legado removido: {}", legacy_dir.display());
+            debug!(
+                "Diretório de snapshot legado removido: {}",
+                legacy_dir.display()
+            );
         }
 
         Ok(())

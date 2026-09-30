@@ -3,12 +3,12 @@
 //! Converte entradas do manifest para o modelo canônico `SaveLocation`,
 //! associando jogos por Store ID (Steam/GOG) ou título e resolvendo caminhos.
 
-use std::path::Path;
-use savevault_core::models::{Game, Platform, SaveLocation, SaveLocationType};
-use savevault_core::path::{is_glob_path, is_glob_pattern};
-use crate::save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
 use super::manifest::{LudusaviGameEntry, LudusaviManifest};
 use super::resolver::PathResolver;
+use crate::save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
+use savevault_core::models::{Game, Platform, SaveLocation, SaveLocationType};
+use savevault_core::path::{is_glob_path, is_glob_pattern};
+use std::path::Path;
 
 enum GameLookupResult<'a> {
     Found(&'a LudusaviGameEntry),
@@ -165,7 +165,10 @@ impl LudusaviSaveDetector {
 
         // Se ainda não foi criado fisicamente no disco:
         // Se termina com barra ou não possui extensão de arquivo, convenciona-se pasta de saves
-        if raw_path.ends_with('/') || raw_path.ends_with('\\') || resolved_path.extension().is_none() {
+        if raw_path.ends_with('/')
+            || raw_path.ends_with('\\')
+            || resolved_path.extension().is_none()
+        {
             SaveLocationType::Directory
         } else {
             SaveLocationType::File
@@ -178,7 +181,10 @@ impl SaveDetector for LudusaviSaveDetector {
         "ludusavi-manifest"
     }
 
-    fn detect_save_locations(&self, game: &Game) -> Result<SaveDiscoveryResult, SaveDiscoveryError> {
+    fn detect_save_locations(
+        &self,
+        game: &Game,
+    ) -> Result<SaveDiscoveryResult, SaveDiscoveryError> {
         let entry = match self.find_game_entry(game) {
             GameLookupResult::Found(res) => res,
             GameLookupResult::NotFound => return Ok(SaveDiscoveryResult::UnrecognizedGame),

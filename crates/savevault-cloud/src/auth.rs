@@ -158,14 +158,20 @@ impl AuthService {
         // Inicia o listener antes de abrir o navegador para não perder o callback
         let listener = TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT))
             .await
-            .map_err(|e| anyhow!(
-                "Falha ao abrir porta {}. Verifique se está em uso: {}",
-                REDIRECT_PORT, e
-            ))?;
+            .map_err(|e| {
+                anyhow!(
+                    "Falha ao abrir porta {}. Verifique se está em uso: {}",
+                    REDIRECT_PORT,
+                    e
+                )
+            })?;
 
         info!("Aguardando callback do Google na porta {}", REDIRECT_PORT);
         println!("\nAbrindo navegador para autenticação no Google Drive...");
-        println!("Caso o navegador não abra, acesse manualmente:\n{}\n", auth_url);
+        println!(
+            "Caso o navegador não abra, acesse manualmente:\n{}\n",
+            auth_url
+        );
 
         // Abre a URL no navegador padrão do Windows
         open_url_windows(&auth_url);
@@ -178,7 +184,11 @@ impl AuthService {
             let (mut socket, addr) = match accept_res {
                 Ok(Ok(pair)) => pair,
                 Ok(Err(e)) => return Err(anyhow!("Erro de I/O no listener OAuth: {}", e)),
-                Err(_) => return Err(anyhow!("Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos).")),
+                Err(_) => {
+                    return Err(anyhow!(
+                        "Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos)."
+                    ))
+                }
             };
             debug!("Conexão recebida de {}", addr);
 
@@ -191,12 +201,16 @@ impl AuthService {
 
             // Se for requisição de favicon ou asset irrelevante, responde 204 e continua aguardando o callback real
             if request.contains("GET /favicon.ico") {
-                let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await;
                 continue;
             }
 
             if !request.contains("/oauth/callback") {
-                let _ = socket.write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n").await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")
+                    .await;
                 continue;
             }
 
@@ -214,16 +228,17 @@ impl AuthService {
                     "</body></html>",
                 );
                 let _ = socket.write_all(error_html.as_bytes()).await;
-                return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
+                return Err(anyhow!(
+                    "Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"
+                ));
             }
 
             // Extrai o parâmetro `code` ou `error` do request HTTP
-            let code = extract_query_param(&request, "code")
-                .ok_or_else(|| {
-                    let error = extract_query_param(&request, "error")
-                        .unwrap_or_else(|| "desconhecido".to_string());
-                    anyhow!("Autorização recusada pelo Google: {}", error)
-                })?;
+            let code = extract_query_param(&request, "code").ok_or_else(|| {
+                let error = extract_query_param(&request, "error")
+                    .unwrap_or_else(|| "desconhecido".to_string());
+                anyhow!("Autorização recusada pelo Google: {}", error)
+            })?;
 
             // Resposta visual na aba do navegador
             let html = concat!(
@@ -241,7 +256,9 @@ impl AuthService {
             break;
         }
 
-        let code = auth_code.ok_or_else(|| anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite."))?;
+        let code = auth_code.ok_or_else(|| {
+            anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite.")
+        })?;
 
         // Troca o código pelos tokens
         self.exchange_code_for_tokens(&code, &redirect_uri).await?;
@@ -339,12 +356,7 @@ impl AuthService {
         params.insert("refresh_token", refresh_token.as_str());
         params.insert("grant_type", "refresh_token");
 
-        let res = self
-            .http
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await?;
+        let res = self.http.post(&self.token_url).form(&params).send().await?;
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -352,7 +364,11 @@ impl AuthService {
         }
 
         let token_resp: TokenResponse = res.json().await?;
-        let expires_in_secs = if token_resp.expires_in > 0 { token_resp.expires_in } else { 3600 };
+        let expires_in_secs = if token_resp.expires_in > 0 {
+            token_resp.expires_in
+        } else {
+            3600
+        };
         let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
 
         {
@@ -363,7 +379,10 @@ impl AuthService {
             });
         }
 
-        debug!("Access token renovado com sucesso e armazenado em cache (válido por {}s).", expires_in_secs);
+        debug!(
+            "Access token renovado com sucesso e armazenado em cache (válido por {}s).",
+            expires_in_secs
+        );
         Ok(token_resp.access_token)
     }
 
@@ -461,14 +480,21 @@ mod tests {
 
     #[test]
     fn extract_code_from_get_request() {
-        let request = "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "code"), Some("abc123".to_string()));
+        let request =
+            "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        assert_eq!(
+            extract_query_param(request, "code"),
+            Some("abc123".to_string())
+        );
     }
 
     #[test]
     fn extract_error_from_get_request() {
         let request = "GET /oauth/callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "error"), Some("access_denied".to_string()));
+        assert_eq!(
+            extract_query_param(request, "error"),
+            Some("access_denied".to_string())
+        );
     }
 
     #[test]

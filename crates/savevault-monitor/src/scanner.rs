@@ -7,12 +7,12 @@
 //! e restringe a expansão de globs estritamente ao diretório base esperado,
 //! rejeitando tentativas de path traversal com `..`.
 
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-use uuid::Uuid;
 use savevault_core::models::{SaveLocation, SaveLocationType};
 use savevault_core::path::{is_glob_pattern, is_internal_savevault_file};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use thiserror::Error;
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 #[derive(Debug, Error)]
@@ -122,7 +122,10 @@ impl SaveScanner {
             };
 
             // Ignorar diretórios, symlinks e arquivos internos do SaveVault (.savevault_safety_, .restore_tmp_, .tmp, etc.)
-            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
+            if entry.file_type().is_dir()
+                || entry.path_is_symlink()
+                || is_internal_savevault_file(entry.path())
+            {
                 continue;
             }
 
@@ -149,7 +152,10 @@ impl SaveScanner {
         let (base_dir, pattern) = match split_glob_base_and_pattern(&location.path) {
             Ok(pair) => pair,
             Err(ScanError::PathTraversal(p)) => {
-                tracing::warn!("Tentativa de path traversal em glob rejeitada: {}", p.display());
+                tracing::warn!(
+                    "Tentativa de path traversal em glob rejeitada: {}",
+                    p.display()
+                );
                 return Err(ScanError::PathTraversal(p));
             }
             Err(e) => return Err(e),
@@ -174,7 +180,10 @@ impl SaveScanner {
             };
 
             // Ignorar diretórios, symlinks e arquivos internos do SaveVault
-            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
+            if entry.file_type().is_dir()
+                || entry.path_is_symlink()
+                || is_internal_savevault_file(entry.path())
+            {
                 continue;
             }
 
@@ -248,9 +257,9 @@ pub fn split_glob_base_and_pattern(path: &Path) -> Result<(PathBuf, String), Sca
                 }
             }
             std::path::Component::Normal(s) => {
-                let s_str = s.to_str().ok_or_else(|| {
-                    ScanError::NonUtf8Path(path.to_string_lossy().to_string())
-                })?;
+                let s_str = s
+                    .to_str()
+                    .ok_or_else(|| ScanError::NonUtf8Path(path.to_string_lossy().to_string()))?;
 
                 if in_pattern {
                     pattern_parts.push(s_str.to_string());
