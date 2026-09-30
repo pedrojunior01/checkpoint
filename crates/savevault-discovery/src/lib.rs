@@ -8,6 +8,7 @@ pub mod ludusavi;
 
 pub use save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
 pub use ludusavi::LudusaviSaveDetector;
+pub use manifest::ManifestDetector;
 
 use anyhow::Result;
 use savevault_core::models::{Game, SaveLocation, SaveLocationType};

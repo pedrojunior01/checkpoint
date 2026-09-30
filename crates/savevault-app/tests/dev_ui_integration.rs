@@ -53,8 +53,9 @@ async fn http_post(addr: SocketAddr, path: &str, json_body: &str) -> (u16, Strin
         .await
         .expect("Falha ao conectar no servidor DEV-UI");
     let req = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "POST {} HTTP/1.1\r\nHost: {}\r\nOrigin: http://{}\r\nX-SaveVault-Request: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         path,
+        addr,
         addr,
         json_body.len(),
         json_body

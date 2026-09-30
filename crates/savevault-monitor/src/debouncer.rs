@@ -88,6 +88,17 @@ impl InFlightTracker {
             s.cancel_token.store(true, Ordering::SeqCst);
         }
     }
+
+    /// Remove o caminho do mapa se a geração atual for a indicada, liberando a memória
+    /// após a conclusão de uma verificação de estabilidade física.
+    pub fn remove_if_current(&self, path: &Path, generation: u64) {
+        let mut map = self.inner.lock().unwrap();
+        if let Some(s) = map.get(path) {
+            if s.generation == generation {
+                map.remove(path);
+            }
+        }
+    }
 }
 
 /// Configurações para a etapa de debounce e coalescing.

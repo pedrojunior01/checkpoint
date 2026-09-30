@@ -57,7 +57,11 @@ impl<'a> GamesRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, platform, platform_id, confidence, created_at FROM games ORDER BY name"
         )?;
-        let games = stmt.query_map([], row_to_game)?.filter_map(|r| r.ok()).collect();
+        let rows = stmt.query_map([], row_to_game)?;
+        let mut games = Vec::new();
+        for r in rows {
+            games.push(r?);
+        }
         Ok(games)
     }
 
@@ -68,18 +72,25 @@ impl<'a> GamesRepo<'a> {
 }
 
 fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<Game> {
-    let id: String = row.get(0)?;
+    let id_str: String = row.get(0)?;
     let platform_str: String = row.get(2)?;
     let confidence_str: String = row.get(4)?;
     let created_at_str: String = row.get(5)?;
 
+    let id = Uuid::parse_str(&id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let created_at = created_at_str.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
     Ok(Game {
-        id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
+        id,
         name: row.get(1)?,
         platform: str_to_platform(&platform_str),
         platform_id: row.get(3)?,
         confidence: str_to_confidence(&confidence_str),
-        created_at: created_at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at,
     })
 }
 

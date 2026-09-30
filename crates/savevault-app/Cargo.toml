@@ -40,6 +40,7 @@ dotenvy = "0.15.7"
 [target.'cfg(windows)'.dependencies]
 tray-item = "0.10.0"
 windows-sys = { version = "0.52", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
+winrt-notification = "0.5.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

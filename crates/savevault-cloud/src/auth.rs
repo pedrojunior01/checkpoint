@@ -170,51 +170,78 @@ impl AuthService {
         // Abre a URL no navegador padrão do Windows
         open_url_windows(&auth_url);
 
-        // Aguarda a conexão do navegador com o callback
-        let (mut socket, addr) = listener.accept().await?;
-        debug!("Conexão recebida de {}", addr);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        let mut auth_code = None;
 
-        let mut buffer = vec![0u8; 4096];
-        let n = socket.read(&mut buffer).await?;
-        let request = String::from_utf8_lossy(&buffer[..n]);
+        while tokio::time::Instant::now() < deadline {
+            let accept_res = tokio::time::timeout_at(deadline, listener.accept()).await;
+            let (mut socket, addr) = match accept_res {
+                Ok(Ok(pair)) => pair,
+                Ok(Err(e)) => return Err(anyhow!("Erro de I/O no listener OAuth: {}", e)),
+                Err(_) => return Err(anyhow!("Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos).")),
+            };
+            debug!("Conexão recebida de {}", addr);
 
-        // Valida o parâmetro state para prevenir ataques CSRF
-        let received_state = extract_query_param(&request, "state");
-        if received_state.as_deref() != Some(&oauth_state) {
-            let error_html = concat!(
-                "HTTP/1.1 400 Bad Request\r\n",
+            let mut buffer = vec![0u8; 4096];
+            let n = match socket.read(&mut buffer).await {
+                Ok(n) if n > 0 => n,
+                _ => continue,
+            };
+            let request = String::from_utf8_lossy(&buffer[..n]);
+
+            // Se for requisição de favicon ou asset irrelevante, responde 204 e continua aguardando o callback real
+            if request.contains("GET /favicon.ico") {
+                let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+                continue;
+            }
+
+            if !request.contains("/oauth/callback") {
+                let _ = socket.write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n").await;
+                continue;
+            }
+
+            // Valida o parâmetro state para prevenir ataques CSRF
+            let received_state = extract_query_param(&request, "state");
+            if received_state.as_deref() != Some(&oauth_state) {
+                let error_html = concat!(
+                    "HTTP/1.1 400 Bad Request\r\n",
+                    "Content-Type: text/html; charset=utf-8\r\n",
+                    "Connection: close\r\n\r\n",
+                    "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+                    "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                    "<h2>❌ Falha de segurança na autenticação</h2>",
+                    "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
+                    "</body></html>",
+                );
+                let _ = socket.write_all(error_html.as_bytes()).await;
+                return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
+            }
+
+            // Extrai o parâmetro `code` ou `error` do request HTTP
+            let code = extract_query_param(&request, "code")
+                .ok_or_else(|| {
+                    let error = extract_query_param(&request, "error")
+                        .unwrap_or_else(|| "desconhecido".to_string());
+                    anyhow!("Autorização recusada pelo Google: {}", error)
+                })?;
+
+            // Resposta visual na aba do navegador
+            let html = concat!(
+                "HTTP/1.1 200 OK\r\n",
                 "Content-Type: text/html; charset=utf-8\r\n",
                 "Connection: close\r\n\r\n",
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
-                "<h2>❌ Falha de segurança na autenticação</h2>",
-                "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
+                "<title>SaveVault</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                "<h2>✅ SaveVault autenticado com sucesso!</h2>",
+                "<p>Você pode fechar esta aba e voltar para o SaveVault.</p>",
                 "</body></html>",
             );
-            let _ = socket.write_all(error_html.as_bytes()).await;
-            return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
+            let _ = socket.write_all(html.as_bytes()).await;
+            auth_code = Some(code);
+            break;
         }
 
-        // Extrai o parâmetro `code` ou `error` do request HTTP
-        let code = extract_query_param(&request, "code")
-            .ok_or_else(|| {
-                let error = extract_query_param(&request, "error")
-                    .unwrap_or_else(|| "desconhecido".to_string());
-                anyhow!("Autorização recusada pelo Google: {}", error)
-            })?;
-
-        // Resposta visual na aba do navegador
-        let html = concat!(
-            "HTTP/1.1 200 OK\r\n",
-            "Content-Type: text/html; charset=utf-8\r\n",
-            "Connection: close\r\n\r\n",
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-            "<title>SaveVault</title></head><body style='font-family:sans-serif;padding:2rem'>",
-            "<h2>✅ SaveVault autenticado com sucesso!</h2>",
-            "<p>Você pode fechar esta aba e voltar para o SaveVault.</p>",
-            "</body></html>",
-        );
-        let _ = socket.write_all(html.as_bytes()).await;
+        let code = auth_code.ok_or_else(|| anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite."))?;
 
         // Troca o código pelos tokens
         self.exchange_code_for_tokens(&code, &redirect_uri).await?;

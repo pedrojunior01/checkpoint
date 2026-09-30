@@ -564,7 +564,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
 
     async function toggleAutostart(checkbox) {
       try {
-        const res = await fetch('/api/autostart/toggle', { method: 'POST' });
+        const res = await fetch('/api/autostart/toggle', { method: 'POST', headers: { 'X-SaveVault-Request': '1' } });
         const data = await res.json();
         showToast(data.enabled ? "Inicialização com o Windows HABILITADA!" : "Inicialização com o Windows DESABILITADA.");
         await loadAutostart();
@@ -577,7 +577,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     async function toggleAutostartFromBtn(btn) {
       btn.disabled = true;
       try {
-        const res = await fetch('/api/autostart/toggle', { method: 'POST' });
+        const res = await fetch('/api/autostart/toggle', { method: 'POST', headers: { 'X-SaveVault-Request': '1' } });
         const data = await res.json();
         showToast(data.enabled ? "Inicialização com o Windows HABILITADA!" : "Inicialização com o Windows DESABILITADA.");
         await loadAutostart();
@@ -635,7 +635,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
       btn.disabled = true;
 
       try {
-        const res = await fetch(`/api/locations/scan?id=${encodeURIComponent(locId)}`, { method: 'POST' });
+        const res = await fetch(`/api/locations/scan?id=${encodeURIComponent(locId)}`, { method: 'POST', headers: { 'X-SaveVault-Request': '1' } });
         const data = await res.json();
 
         let html = '';
@@ -735,7 +735,10 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
       try {
         const res = await fetch('/api/restore', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-SaveVault-Request': '1'
+          },
           body: JSON.stringify({
             snapshot_id: snap.id,
             expected_hash: snap.hash
@@ -889,7 +892,10 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
       btn.disabled = true;
 
       try {
-        const res = await fetch('/api/reconcile-now', { method: 'POST' });
+        const res = await fetch('/api/reconcile-now', {
+          method: 'POST',
+          headers: { 'X-SaveVault-Request': '1' }
+        });
         const report = await res.json();
         showToast(`Reconciliação concluída: ${report.files_seen} arquivos vistos em ${report.duration_ms || 0}ms`);
         refreshCurrentTab();

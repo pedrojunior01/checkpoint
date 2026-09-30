@@ -251,7 +251,30 @@ pub async fn process_file(
         }
     }
 
+    crate::notifications::notify_save_protected(&game_name, backup.version);
+
     Ok(Some((backup, item)))
+}
+
+/// Helper para executar o sync e emitir notificação Toast caso itens sejam sincronizados.
+async fn trigger_cloud_sync_with_notify(
+    db: &Arc<tokio::sync::Mutex<Connection>>,
+    backup_root: PathBuf,
+    cloud_provider: &str,
+) {
+    match savevault_sync::process_queue_active_provider_unlocked(db, backup_root, cloud_provider).await {
+        Ok(count) => {
+            if count > 0 {
+                crate::notifications::notify(
+                    "SaveVault — Sincronização Concluída",
+                    format!("{} save(s) sincronizado(s) com sucesso na nuvem.", count),
+                );
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Sync em nuvem ({}) falhou: {}", cloud_provider, e);
+        }
+    }
 }
 
 /// Loop residente de processamento de eventos estáveis da aplicação.
@@ -286,12 +309,9 @@ pub async fn run_pipeline_with_provider(
     trigger_sync: bool,
     cloud_provider: &str,
 ) -> Result<()> {
-    // Drenagem inicial de itens pendentes de sincronização
+    // Drenagem inicial de itens pendentes de sincronização sem travar o banco
     if trigger_sync {
-        let conn = db.lock().await;
-        if let Err(e) = savevault_sync::process_queue_google_drive(&conn, backup_root.clone()).await {
-            tracing::debug!("Sync em nuvem inicial: {}", e);
-        }
+        trigger_cloud_sync_with_notify(&db, backup_root.clone(), cloud_provider).await;
     }
 
     let mut sync_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
@@ -306,13 +326,7 @@ pub async fn run_pipeline_with_provider(
             }
             _ = sync_interval.tick() => {
                 if trigger_sync {
-                    let conn = db.lock().await;
-                    if let Err(e) = savevault_sync::process_queue_google_drive(
-                        &conn,
-                        backup_root.clone(),
-                    ).await {
-                        tracing::debug!("Sync periódico em nuvem: {}", e);
-                    }
+                    trigger_cloud_sync_with_notify(&db, backup_root.clone(), cloud_provider).await;
                 }
             }
             event_opt = stable_rx.recv() => {
@@ -328,14 +342,11 @@ pub async fn run_pipeline_with_provider(
                         match res {
                             Ok(Some((_backup, _queue_item))) => {
                                 if trigger_sync {
-                                    let conn = db.lock().await;
-                                    if let Err(e) = savevault_sync::process_queue_active_provider(
-                                        &conn,
+                                    trigger_cloud_sync_with_notify(
+                                        &db,
                                         backup_root.clone(),
                                         cloud_provider,
-                                    ).await {
-                                        tracing::debug!("Sync em nuvem ({}) durante evento: {}", cloud_provider, e);
-                                    }
+                                    ).await;
                                 }
                             }
                             Ok(None) => {}
@@ -363,8 +374,7 @@ pub async fn run_pipeline_with_provider(
     }
 
     if trigger_sync {
-        let conn = db.lock().await;
-        let _ = savevault_sync::process_queue_google_drive(&conn, backup_root).await;
+        trigger_cloud_sync_with_notify(&db, backup_root, cloud_provider).await;
     }
 
     Ok(())

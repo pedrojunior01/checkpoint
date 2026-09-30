@@ -114,9 +114,13 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
     let method = parts.next().unwrap_or("GET");
     let uri = parts.next().unwrap_or("/");
 
-    // Extrai e valida headers (Host, Origin, Content-Length)
+    // Extrai e valida headers (Host, Origin, Content-Length, Headers Anti-CSRF)
     let mut content_length = 0usize;
     let mut origin_valid = true;
+    let mut has_local_origin = false;
+    let mut host_valid = true;
+    let mut has_host = false;
+    let mut has_custom_header = false;
 
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
@@ -124,23 +128,48 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             let v = v.trim();
             if k == "content-length" {
                 content_length = v.parse::<usize>().unwrap_or(0);
+            } else if k == "host" {
+                has_host = true;
+                if !is_valid_local_host(v) {
+                    host_valid = false;
+                }
             } else if k == "origin" {
                 // Origem permitida apenas de localhost/127.0.0.1 com porta opcional
-                if !v.is_empty() && !is_valid_local_origin(v) {
-                    origin_valid = false;
+                if !v.is_empty() {
+                    if is_valid_local_origin(v) {
+                        has_local_origin = true;
+                    } else {
+                        origin_valid = false;
+                    }
                 }
+            } else if k == "x-savevault-request" || k == "x-requested-with" {
+                has_custom_header = true;
             }
         }
     }
 
-    if !origin_valid {
-        warn!("Tentativa de requisição com Origin externa bloqueada por segurança");
+    if (has_host && !host_valid) || !origin_valid {
+        warn!("Tentativa de requisição com Host ou Origin externa bloqueada por segurança (DNS Rebinding / CORS)");
         send_response(
             &mut stream,
             403,
             "Forbidden",
             "application/json",
-            r#"{"error":"Forbidden Origin"}"#,
+            r#"{"error":"Forbidden Host or Origin"}"#,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Proteção Anti-CSRF para requisições com mutação de estado (POST)
+    if method == "POST" && !has_local_origin && !has_custom_header {
+        warn!("Tentativa de requisição POST sem validação Anti-CSRF bloqueada");
+        send_response(
+            &mut stream,
+            403,
+            "Forbidden",
+            "application/json",
+            r#"{"error":"CSRF Protection: Missing required local origin or X-SaveVault-Request header"}"#,
         )
         .await?;
         return Ok(());
@@ -511,7 +540,7 @@ async fn send_response(
          Content-Length: {}\r\n\
          Access-Control-Allow-Origin: http://127.0.0.1:4040\r\n\
          Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type\r\n\
+         Access-Control-Allow-Headers: Content-Type, X-SaveVault-Request, X-Requested-With\r\n\
          Connection: close\r\n\
          \r\n\
          {}",
@@ -547,6 +576,46 @@ pub fn is_valid_local_origin(origin: &str) -> bool {
         !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())
     } else {
         false
+    }
+}
+
+/// Valida se o cabeçalho Host pertence exclusivamente ao localhost (IPv4 ou nome de host local)
+/// rejeitando ataques de DNS Rebinding.
+pub fn is_valid_local_host(host: &str) -> bool {
+    let lower = host.trim().to_ascii_lowercase();
+    let name_part = lower.split(':').next().unwrap_or("");
+    name_part == "127.0.0.1" || name_part == "localhost"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_local_host() {
+        assert!(is_valid_local_host("127.0.0.1:4040"));
+        assert!(is_valid_local_host("localhost:4040"));
+        assert!(is_valid_local_host("127.0.0.1"));
+        assert!(is_valid_local_host("localhost"));
+
+        // Ataques de DNS Rebinding ou hosts externos
+        assert!(!is_valid_local_host("attacker.com"));
+        assert!(!is_valid_local_host("evil.com:4040"));
+        assert!(!is_valid_local_host("127.0.0.1.attacker.com"));
+        assert!(!is_valid_local_host("localhost.attacker.com:4040"));
+    }
+
+    #[test]
+    fn test_is_valid_local_origin() {
+        assert!(is_valid_local_origin("http://127.0.0.1:4040"));
+        assert!(is_valid_local_origin("http://localhost:4040"));
+        assert!(is_valid_local_origin("http://127.0.0.1"));
+        assert!(is_valid_local_origin("http://localhost"));
+
+        // Origens forjadas
+        assert!(!is_valid_local_origin("http://127.0.0.1.attacker.com"));
+        assert!(!is_valid_local_origin("http://localhost.attacker.com"));
+        assert!(!is_valid_local_origin("https://evil.org"));
     }
 }
 

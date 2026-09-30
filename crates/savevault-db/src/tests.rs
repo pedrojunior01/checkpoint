@@ -1226,6 +1226,38 @@ mod tests {
         // Deve falhar por violação de constraint única (idx_backups_file_version)
         assert!(backups_repo.insert(&b2).is_err());
     }
+
+    #[test]
+    fn test_migration_007_composite_platform_id() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+
+        // Dois jogos em lojas diferentes com exatamente o mesmo platform_id numérico
+        let steam_game = Game::new(
+            "Game on Steam",
+            Platform::Steam,
+            Some("105600".to_string()),
+            Confidence::High,
+        );
+        let gog_game = Game::new(
+            "Different Game on GOG",
+            Platform::Gog,
+            Some("105600".to_string()),
+            Confidence::High,
+        );
+
+        // Ambas as inserções devem suceder sem colisão de chave única global
+        assert!(games_repo.insert(&steam_game).is_ok());
+        assert!(games_repo.insert(&gog_game).is_ok());
+
+        let retrieved_steam = games_repo.find_by_platform_id(&Platform::Steam, "105600").unwrap();
+        let retrieved_gog = games_repo.find_by_platform_id(&Platform::Gog, "105600").unwrap();
+
+        assert!(retrieved_steam.is_some());
+        assert!(retrieved_gog.is_some());
+        assert_eq!(retrieved_steam.unwrap().name, "Game on Steam");
+        assert_eq!(retrieved_gog.unwrap().name, "Different Game on GOG");
+    }
 }
 
 

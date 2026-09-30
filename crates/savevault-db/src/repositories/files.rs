@@ -62,9 +62,11 @@ impl<'a> FilesRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE save_location_id = ?1"
         )?;
-        let entries = stmt.query_map(params![location_id.to_string()], row_to_entry)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map(params![location_id.to_string()], row_to_entry)?;
+        let mut entries = Vec::new();
+        for r in rows {
+            entries.push(r?);
+        }
         Ok(entries)
     }
 
@@ -75,17 +77,28 @@ impl<'a> FilesRepo<'a> {
 }
 
 fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<FileEntry> {
-    let id: String = row.get(0)?;
-    let loc_id: String = row.get(1)?;
+    let id_str: String = row.get(0)?;
+    let loc_id_str: String = row.get(1)?;
     let path: String = row.get(2)?;
     let size: i64 = row.get(4)?;
     let modified_str: String = row.get(5)?;
+
+    let id = Uuid::parse_str(&id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let save_location_id = Uuid::parse_str(&loc_id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let modified_at = modified_str.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
     Ok(FileEntry {
-        id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
-        save_location_id: Uuid::parse_str(&loc_id).unwrap_or_else(|_| Uuid::new_v4()),
+        id,
+        save_location_id,
         path: PathBuf::from(path),
         hash: row.get(3)?,
         size_bytes: size as u64,
-        modified_at: modified_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        modified_at,
     })
 }

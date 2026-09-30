@@ -68,3 +68,57 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
 
     Ok(report)
 }
+
+/// Persiste de forma idempotente um `DiscoveryResult` (jogos e locais de save detectados) no SQLite,
+/// garantindo consistência de chaves primárias, integridade referencial e propagação de erros.
+pub fn persist_discovery_result(
+    conn: &Connection,
+    result: &savevault_discovery::DiscoveryResult,
+) -> Result<DiscoverySyncReport> {
+    use savevault_db::repositories::GamesRepo;
+    let games_repo = GamesRepo::new(conn);
+    let locations_repo = SaveLocationsRepo::new(conn);
+    let mut report = DiscoverySyncReport::default();
+
+    // 1. Mapeia e persiste jogos garantindo IDs canônicos
+    let mut real_ids = std::collections::HashMap::new();
+    for game in &result.games {
+        report.games_processed += 1;
+        let mut existing_opt = None;
+
+        if let Some(ref platform_id) = game.platform_id {
+            if let Some(existing) = games_repo.find_by_platform_id(&game.platform, platform_id)? {
+                existing_opt = Some(existing);
+            }
+        }
+
+        if existing_opt.is_none() {
+            if let Some(existing) = games_repo.find_by_name_and_platform(&game.name, &game.platform)? {
+                existing_opt = Some(existing);
+            }
+        }
+
+        let real_id = match existing_opt {
+            Some(existing) => existing.id,
+            None => {
+                games_repo.insert(game)?;
+                game.id
+            }
+        };
+
+        real_ids.insert(game.id, real_id);
+    }
+
+    // 2. Persiste locais de save associados aos IDs canônicos
+    for loc in &result.save_locations {
+        if let Some(&real_id) = real_ids.get(&loc.game_id) {
+            let mut loc_to_insert = loc.clone();
+            loc_to_insert.game_id = real_id;
+            let persisted = locations_repo.upsert(&loc_to_insert)?;
+            report.persisted_locations.push(persisted);
+        }
+    }
+
+    Ok(report)
+}
+

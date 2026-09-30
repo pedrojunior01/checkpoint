@@ -7,6 +7,65 @@ pub struct Config {
     pub general: GeneralConfig,
     pub cloud: CloudConfig,
     pub paths: PathsConfig,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    /// Se notificações Toast estão ativadas globalmente.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Se deve notificar a cada save salvo localmente (padrão: false para não incomodar durante o jogo).
+    #[serde(default)]
+    pub notify_on_save: bool,
+    /// Se deve notificar quando a sincronização na nuvem for concluída.
+    #[serde(default = "default_true")]
+    pub notify_on_sync: bool,
+    /// Se deve notificar quando uma restauração for realizada.
+    #[serde(default = "default_true")]
+    pub notify_on_restore: bool,
+    /// Intervalo mínimo (em segundos) entre notificações repetidas do mesmo tipo (cooldown anti-spam).
+    #[serde(default = "default_cooldown_secs")]
+    pub cooldown_secs: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_cooldown_secs() -> u64 {
+    300
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            notify_on_save: false,
+            notify_on_sync: true,
+            notify_on_restore: true,
+            cooldown_secs: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictPolicy {
+    /// Preserva ambos os arquivos: mantém o save local e salva o snapshot divergente
+    /// da nuvem em uma pasta de conflitos (`conflicts/`), evitando perda de dados (padrão seguro).
+    #[default]
+    KeepBoth,
+    /// O arquivo com timestamp de modificação mais recente vence. O arquivo preterido
+    /// é arquivado com segurança em snapshot local antes da substituição.
+    PreferNewest,
+    /// O arquivo do computador local tem prioridade e sobrepõe o estado remoto na próxima sincronização.
+    PreferLocal,
+    /// O arquivo da nuvem tem prioridade e é restaurado para a pasta de saves, gerando safety backup local prévio.
+    PreferRemote,
+    /// Marca o conflito como pendente e aguarda resolução manual pelo usuário via CLI ou interface gráfica.
+    Manual,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +82,18 @@ pub struct GeneralConfig {
     /// Se a inicialização automática com o Windows está habilitada.
     #[serde(default)]
     pub autostart: bool,
+    /// Nome deste dispositivo no ecossistema multi-PC (ex: "Desktop-Gamer", "Notebook")
+    #[serde(default = "default_device_name")]
+    pub device_name: String,
+    /// Política de resolução de conflitos entre múltiplos computadores
+    #[serde(default)]
+    pub conflict_policy: ConflictPolicy,
+}
+
+fn default_device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "Windows-PC".into())
 }
 
 fn default_reconciliation_interval_secs() -> u64 {
@@ -53,6 +124,8 @@ impl Default for Config {
                 debounce_ms: 2000,
                 reconciliation_interval_secs: 30,
                 autostart: false,
+                device_name: default_device_name(),
+                conflict_policy: ConflictPolicy::KeepBoth,
             },
             cloud: CloudConfig {
                 provider: "google_drive".into(),
@@ -61,6 +134,7 @@ impl Default for Config {
                 backup_dir: base.join("backups"),
                 database_path: base.join("savevault.db"),
             },
+            notifications: NotificationsConfig::default(),
         }
     }
 }

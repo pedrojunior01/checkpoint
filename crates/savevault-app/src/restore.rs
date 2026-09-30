@@ -54,6 +54,9 @@ pub enum RestoreError {
     #[error("Falha na escrita atômica do arquivo em '{0}': {1}")]
     AtomicWriteFailed(PathBuf, String),
 
+    #[error("Falha na recuperação de snapshot da nuvem: {0}")]
+    CloudRecoveryFailed(String),
+
     #[error("Erro de banco de dados SQLite: {0}")]
     DatabaseError(#[from] rusqlite::Error),
 
@@ -71,6 +74,12 @@ pub struct RestoreRequest {
     pub snapshot_id: Uuid,
     /// Hash BLAKE3 esperado opcional para validação antecipada de integridade.
     pub expected_hash: Option<String>,
+    /// Permite baixar automaticamente da nuvem caso o snapshot físico esteja ausente no disco local.
+    pub allow_cloud_download: bool,
+    /// Força o download do snapshot da nuvem mesmo se já existir localmente.
+    pub force_cloud_download: bool,
+    /// Provedor preferencial de nuvem ("google_drive", "onedrive").
+    pub cloud_provider: Option<String>,
 }
 
 impl RestoreRequest {
@@ -78,6 +87,9 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: None,
+            allow_cloud_download: true,
+            force_cloud_download: false,
+            cloud_provider: None,
         }
     }
 
@@ -85,7 +97,22 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: Some(expected_hash.into()),
+            allow_cloud_download: true,
+            force_cloud_download: false,
+            cloud_provider: None,
         }
+    }
+
+    pub fn with_cloud_options(
+        mut self,
+        allow_cloud: bool,
+        force_cloud: bool,
+        provider: Option<String>,
+    ) -> Self {
+        self.allow_cloud_download = allow_cloud;
+        self.force_cloud_download = force_cloud;
+        self.cloud_provider = provider;
+        self
     }
 }
 
@@ -410,7 +437,28 @@ pub async fn execute_restore_filesystem(
         filename,
     )?;
 
-    // 5. Validação da existência do snapshot físico no disco
+    // 5. Validação da existência do snapshot físico no disco (com recuperação automática da nuvem)
+    if request.force_cloud_download || !source_path.exists() {
+        if request.allow_cloud_download {
+            if let Some(ref drive_file_id) = metadata.backup.drive_file_id {
+                tracing::info!(
+                    "Snapshot '{}' ausente localmente ou solicitação da nuvem. Baixando da nuvem (remote ID: '{}')...",
+                    source_path.display(),
+                    drive_file_id
+                );
+                download_snapshot_from_cloud(
+                    drive_file_id,
+                    &source_path,
+                    request.cloud_provider.as_deref(),
+                ).await?;
+            } else if !source_path.exists() {
+                return Err(RestoreError::PhysicalSnapshotMissing(source_path));
+            }
+        } else if !source_path.exists() {
+            return Err(RestoreError::PhysicalSnapshotMissing(source_path));
+        }
+    }
+
     if !source_path.exists() {
         return Err(RestoreError::PhysicalSnapshotMissing(source_path));
     }
@@ -549,7 +597,88 @@ pub async fn execute_restore_filesystem(
         report.restored_hash
     );
 
+    crate::notifications::notify_restore_success(&metadata.game.name, metadata.backup.version);
+
     Ok(report)
+}
+
+/// Faz o download de um snapshot diretamente da nuvem para o disco local de backups.
+///
+/// Tenta o provedor preferencial (ex.: "onedrive" ou "google_drive") e, caso não
+/// esteja autenticado ou falhe, tenta o outro provedor suportado.
+pub async fn download_snapshot_from_cloud(
+    drive_file_id: &str,
+    target_path: &Path,
+    preferred_provider: Option<&str>,
+) -> Result<(), RestoreError> {
+    use savevault_cloud::{CloudProvider, GoogleDriveProvider, OneDriveProvider};
+
+    let target_provider = preferred_provider
+        .map(|p| p.to_lowercase())
+        .unwrap_or_else(|| "auto".to_string());
+
+    let try_google = async {
+        if let Some(provider) = GoogleDriveProvider::from_env() {
+            if provider.is_authenticated() {
+                if let Err(e) = provider.download(drive_file_id, target_path).await {
+                    tracing::debug!("Download via Google Drive falhou: {}", e);
+                    return false;
+                }
+                return true;
+            }
+        }
+        false
+    };
+
+    let try_onedrive = async {
+        if let Some(provider) = OneDriveProvider::from_env() {
+            if provider.is_authenticated() {
+                if let Err(e) = provider.download(drive_file_id, target_path).await {
+                    tracing::debug!("Download via OneDrive falhou: {}", e);
+                    return false;
+                }
+                return true;
+            }
+        }
+        false
+    };
+
+    let success = match target_provider.as_str() {
+        "onedrive" => {
+            if try_onedrive.await {
+                true
+            } else {
+                try_google.await
+            }
+        }
+        "google_drive" | "google" | "drive" => {
+            if try_google.await {
+                true
+            } else {
+                try_onedrive.await
+            }
+        }
+        _ => {
+            if try_google.await {
+                true
+            } else {
+                try_onedrive.await
+            }
+        }
+    };
+
+    if success {
+        tracing::info!(
+            "Snapshot baixado da nuvem com sucesso para '{}'",
+            target_path.display()
+        );
+        Ok(())
+    } else {
+        Err(RestoreError::CloudRecoveryFailed(format!(
+            "Não foi possível baixar o snapshot remoto (ID: '{}') da nuvem. Verifique suas credenciais em 'savevault auth status'.",
+            drive_file_id
+        )))
+    }
 }
 
 /// Restaura um snapshot para o local de save original de forma segura e atômica.

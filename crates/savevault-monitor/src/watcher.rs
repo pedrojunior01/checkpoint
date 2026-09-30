@@ -588,7 +588,7 @@ fn spawn_stability_dispatcher(
                                 };
 
                                 let stable_ev = StableFileEvent {
-                                    path: event.path,
+                                    path: event.path.clone(),
                                     save_location_id: event.save_location_id,
                                     kind,
                                     size_bytes: meta.size_bytes,
@@ -630,6 +630,9 @@ fn spawn_stability_dispatcher(
                                 );
                             }
                         }
+
+                        // Libera o registro no InFlightTracker se ainda for a mesma geração, prevenindo memory leak
+                        tracker.remove_if_current(&event.path, event.generation);
                     });
                 }
             }

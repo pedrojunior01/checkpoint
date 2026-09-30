@@ -411,3 +411,52 @@ fn backup_root_dir(backup_root: &std::path::Path, game_name: &str, version: u32)
         .join(savevault_backup::snapshot::sanitize_name(game_name))
         .join(format!("v{}", version))
 }
+
+#[tokio::test]
+async fn test_restore_attempts_cloud_when_physical_missing() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db = Database::open_in_memory().expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
+    let save_dir = temp_root.path().join("saves");
+    std::fs::create_dir_all(&save_dir).unwrap();
+    let save_file = save_dir.join("save.dat");
+
+    let games_repo = GamesRepo::new(&db.conn);
+    let loc_repo = SaveLocationsRepo::new(&db.conn);
+    let files_repo = FilesRepo::new(&db.conn);
+    let backups_repo = BackupsRepo::new(&db.conn);
+
+    let game = Game::new("CloudGame", Platform::Steam, None, Confidence::High);
+    games_repo.insert(&game).unwrap();
+
+    let loc = loc_repo.upsert(&SaveLocation::new(game.id, save_dir, SaveLocationType::Directory)).unwrap();
+    let file = files_repo.upsert(&savevault_core::models::FileEntry {
+        id: Uuid::new_v4(),
+        save_location_id: loc.id,
+        path: save_file,
+        hash: "dummyhash".into(),
+        size_bytes: 100,
+        modified_at: Utc::now(),
+    }).unwrap();
+
+    let backup_id = Uuid::new_v4();
+    let backup = savevault_core::models::Backup {
+        id: backup_id,
+        file_id: file.id,
+        version: 1,
+        cloud_path: Some("cloud/path".into()),
+        drive_file_id: Some("mock-remote-id".into()),
+        created_at: Utc::now(),
+        sync_status: savevault_core::models::SyncStatus::Synced,
+    };
+    backups_repo.insert(&backup).unwrap();
+
+    let req = RestoreRequest::new(backup_id);
+    let err = restore_snapshot(&db.conn, &backup_dir, &req).await.unwrap_err();
+    match err {
+        RestoreError::CloudRecoveryFailed(msg) => {
+            assert!(msg.contains("mock-remote-id"));
+        }
+        other => panic!("Esperava CloudRecoveryFailed, obteve: {:?}", other),
+    }
+}
