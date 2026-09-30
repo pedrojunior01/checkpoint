@@ -22,9 +22,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup MSYS2 MinGW
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: mingw-w64-x86_64-gcc
+
+      - name: Configure Windows Environment
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\svt"
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable-x86_64-pc-windows-gnu
           targets: x86_64-pc-windows-gnu
 
       - name: Setup Rust cache
