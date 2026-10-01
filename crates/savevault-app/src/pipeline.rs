@@ -53,7 +53,7 @@ pub fn persist_snapshot_and_sync(
     hash: String,
     backup: &Backup,
     max_versions: u32,
-) -> Result<SyncQueueItem> {
+) -> Result<(SyncQueueItem, Vec<Backup>)> {
     let files_repo = FilesRepo::new(conn);
     let file_entry = FileEntry {
         id: file_id,
@@ -68,13 +68,17 @@ pub fn persist_snapshot_and_sync(
     let backups_repo = BackupsRepo::new(conn);
     backups_repo.insert(backup)?;
 
+    let mut pruned_backups = Vec::new();
     if max_versions > 0 {
-        if let Err(e) = backups_repo.prune_old_versions(file_id, max_versions) {
-            tracing::warn!(
-                "Falha ao podar versões antigas do arquivo {}: {}",
-                file_id,
-                e
-            );
+        match backups_repo.prune_old_versions(file_id, max_versions) {
+            Ok(pruned) => pruned_backups = pruned,
+            Err(e) => {
+                tracing::warn!(
+                    "Falha ao podar versões antigas do arquivo {}: {}",
+                    file_id,
+                    e
+                );
+            }
         }
     }
 
@@ -97,7 +101,18 @@ pub fn persist_snapshot_and_sync(
         item.id
     );
 
-    Ok(item)
+    Ok((item, pruned_backups))
+}
+
+pub fn get_game_name(conn: &Connection, save_location_id: Uuid) -> Result<String> {
+    let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+    let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+    if let Some(loc) = loc_repo.find_by_id(save_location_id)? {
+        if let Some(game) = games_repo.find_by_id(loc.game_id)? {
+            return Ok(game.name);
+        }
+    }
+    Ok("Desconhecido".to_string())
 }
 
 /// Processa um único `StableFileEvent`, garantindo o ciclo completo:
@@ -143,12 +158,26 @@ pub async fn handle_stable_event(
         None => return Ok(None),
     };
 
+    let game_name = get_game_name(conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &event.path, next_version)
+        .create_snapshot(file_id, &game_name, &event.path, next_version)
         .await?;
 
-    let item = persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
+    let (item, pruned_backups) =
+        persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
+
+    for pruned in pruned_backups {
+        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+            tracing::warn!(
+                "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
+                pruned.version,
+                file_id,
+                e
+            );
+        }
+    }
 
     Ok(Some((backup, item)))
 }
@@ -186,23 +215,38 @@ pub async fn process_file(
         }
     };
 
-    let (file_id, next_version) = {
+    let (file_id, next_version, game_name) = {
         let conn = db.lock().await;
-        match check_existing_and_next_version(&conn, &event.path, &hash)? {
-            Some(pair) => pair,
+        let pair = check_existing_and_next_version(&conn, &event.path, &hash)?;
+        match pair {
+            Some((fid, ver)) => {
+                let gname = get_game_name(&conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+                (fid, ver, gname)
+            }
             None => return Ok(None),
         }
     };
 
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &event.path, next_version)
+        .create_snapshot(file_id, &game_name, &event.path, next_version)
         .await?;
 
-    let item = {
+    let (item, pruned_backups) = {
         let conn = db.lock().await;
         persist_snapshot_and_sync(&conn, file_id, event, hash, &backup, max_versions)?
     };
+
+    for pruned in pruned_backups {
+        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+            tracing::warn!(
+                "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
+                pruned.version,
+                file_id,
+                e
+            );
+        }
+    }
 
     Ok(Some((backup, item)))
 }

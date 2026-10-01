@@ -209,7 +209,7 @@ impl<P: CloudProvider> SyncEngine<P> {
                                 };
                                 let local_snapshot = self.backup_root
                                     .join(backup.file_id.to_string())
-                                    .join(format!("v{}", backup.version))
+                                    .join("latest")
                                     .join(&filename);
 
                                 let tx = conn.unchecked_transaction()?;
@@ -296,11 +296,27 @@ impl<P: CloudProvider> SyncEngine<P> {
 
         let filename = filename_owned.as_str();
 
-        // Caminho local do snapshot: <backup_root>/<file_id>/v<version>/<filename>
+        let game_name = {
+            let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+            let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+            if let Ok(Some(loc)) = loc_repo.find_by_id(save_location_id) {
+                if let Ok(Some(game)) = games_repo.find_by_id(loc.game_id) {
+                    game.name
+                } else {
+                    "Desconhecido".to_string()
+                }
+            } else {
+                "Desconhecido".to_string()
+            }
+        };
+
+        let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
+
+        // Caminho local do snapshot: <backup_root>/<game_name>/v<version>/<filename>
         let local_path = self
             .backup_root
-            .join(file_id.to_string())
-            .join(format!("v{}", version))
+            .join(&safe_game_name)
+            .join("latest")
             .join(filename);
 
         if !local_path.exists() {

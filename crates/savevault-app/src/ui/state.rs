@@ -481,10 +481,11 @@ impl DevUiState {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| file_path.clone());
 
+            let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
             let physical_p = self
                 .backup_root
-                .join(file_id.to_string())
-                .join(format!("v{}", version))
+                .join(&safe_game_name)
+                .join("latest")
                 .join(&file_name);
             let physical_exists = physical_p.exists();
 

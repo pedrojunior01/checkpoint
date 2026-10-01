@@ -50,6 +50,16 @@ impl<'a> BackupsRepo<'a> {
         Ok(rows.next().transpose()?)
     }
 
+    pub fn prune_old_records(&self, days_to_keep: u32) -> Result<usize> {
+        let cutoff = Utc::now() - chrono::Duration::days(days_to_keep as i64);
+        let deleted = self.conn.execute(
+            "DELETE FROM backups WHERE created_at < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
+        Ok(deleted)
+    }
+
+
     pub fn update_sync_status(&self, id: Uuid, status: &SyncStatus) -> Result<()> {
         self.conn.execute(
             "UPDATE backups SET sync_status = ?1 WHERE id = ?2",
@@ -98,7 +108,7 @@ impl<'a> BackupsRepo<'a> {
     ///   uma operação `SyncOperation::Delete` na `sync_queue`. O registro do backup é mantido no
     ///   SQLite para preservar a integridade referencial da chave estrangeira e a identidade do
     ///   objeto remoto até que a deleção na nuvem seja confirmada pelo `SyncEngine`.
-    pub fn prune_old_versions(&self, file_id: Uuid, keep: u32) -> Result<()> {
+    pub fn prune_old_versions(&self, file_id: Uuid, keep: u32) -> Result<Vec<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
              FROM backups WHERE file_id = ?1 AND id NOT IN (
@@ -112,7 +122,7 @@ impl<'a> BackupsRepo<'a> {
 
         let tx = self.conn.unchecked_transaction()?;
 
-        for b in old_backups {
+        for b in &old_backups {
             if let Some(ref _drive_id) = b.drive_file_id {
                 // Preserva a referência remota: enfileira SyncOperation::Delete
                 // se ainda não estiver na fila.
@@ -146,7 +156,7 @@ impl<'a> BackupsRepo<'a> {
         }
 
         tx.commit()?;
-        Ok(())
+        Ok(old_backups)
     }
 }
 

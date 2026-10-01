@@ -62,6 +62,16 @@ impl<'a> SyncQueueRepo<'a> {
         Ok(())
     }
 
+    pub fn prune_completed_or_old(&self, days_to_keep: u32) -> Result<usize> {
+        let cutoff = Utc::now() - chrono::Duration::days(days_to_keep as i64);
+        let deleted = self.conn.execute(
+            "DELETE FROM sync_queue WHERE status = 'completed' OR created_at < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
+        Ok(deleted)
+    }
+
+
     pub fn delete(&self, id: Uuid) -> Result<()> {
         self.conn.execute("DELETE FROM sync_queue WHERE id = ?1", params![id.to_string()])?;
         Ok(())

@@ -61,3 +61,6 @@ tempfile = "3"
 
 # Secure secrets storage (Windows Credential Manager)
 keyring = "3"
+
+# Windows Registry (GOG detector)
+winreg = "0.52"
