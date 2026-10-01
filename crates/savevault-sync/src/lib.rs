@@ -198,17 +198,26 @@ impl<P: CloudProvider> SyncEngine<P> {
                             Ok(_) => {
                                 info!("Arquivo removido do Drive (File ID: {})", drive_file_id);
                                 // Verifica se o snapshot local ainda existe em disco
-                                let filename = {
+                                let (filename, game_name) = {
                                     let files_repo = FilesRepo::new(conn);
-                                    files_repo
+                                    let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+                                    let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+                                    let fname = files_repo
                                         .find_by_id(backup.file_id)?
                                         .and_then(|f| {
                                             f.path.file_name().map(|n| n.to_string_lossy().to_string())
                                         })
-                                        .unwrap_or_else(|| "save.dat".to_string())
+                                        .unwrap_or_else(|| "save.dat".to_string());
+                                    let gname = files_repo.find_by_id(backup.file_id)?
+                                        .and_then(|f| loc_repo.find_by_id(f.save_location_id).ok().flatten())
+                                        .and_then(|loc| games_repo.find_by_id(loc.game_id).ok().flatten())
+                                        .map(|g| g.name)
+                                        .unwrap_or_else(|| "Desconhecido".to_string());
+                                    (fname, gname)
                                 };
+                                let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
                                 let local_snapshot = self.backup_root
-                                    .join(backup.file_id.to_string())
+                                    .join(&safe_game_name)
                                     .join("latest")
                                     .join(&filename);
 
