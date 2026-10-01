@@ -146,6 +146,16 @@ async fn run_resident_daemon(
 
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
+    
+    // Limpeza de Banco de Dados (Pruning)
+    let backups_repo = savevault_db::repositories::BackupsRepo::new(&db.conn);
+    let sync_queue_repo = savevault_db::repositories::SyncQueueRepo::new(&db.conn);
+    if let Ok(count) = backups_repo.prune_old_records(30) {
+        if count > 0 { tracing::info!("Pruning: {} backups antigos removidos do DB.", count); }
+    }
+    if let Ok(count) = sync_queue_repo.prune_completed_or_old(30) {
+        if count > 0 { tracing::info!("Pruning: {} itens da fila de sync removidos.", count); }
+    }
     let games_repo = GamesRepo::new(&db.conn);
     let locations_repo = SaveLocationsRepo::new(&db.conn);
 
