@@ -52,7 +52,14 @@ pub fn normalize_windows_path_str(raw: &str) -> Result<String, PathError> {
     }
 
     // 1. Converter todas as barras normais para backslashes
-    let converted = trimmed.replace('/', "\\");
+    let mut converted = trimmed.replace('/', "\\");
+
+    // 1.1 Remover prefixos de dispositivo/estendidos do Windows (\\?\UNC\ e \\?\)
+    if let Some(unc_extended) = converted.strip_prefix(r"\\?\UNC\") {
+        converted = format!(r"\\{}", unc_extended);
+    } else if let Some(extended) = converted.strip_prefix(r"\\?\") {
+        converted = extended.to_string();
+    }
 
     // 2. Tratar caminhos de rede UNC (começam com \\)
     if let Some(without_prefix) = converted.strip_prefix(r"\\") {
@@ -160,6 +167,21 @@ pub fn canonicalize_windows_path(path: &Path) -> Result<PathBuf, PathError> {
     Ok(PathBuf::from(canon))
 }
 
+/// Verifica se um arquivo é de uso interno/temporário do SaveVault (backups de segurança, arquivos temporários de restore, etc.).
+///
+/// Arquivos internos devem ser ignorados por scanners e watchers para evitar loops de backup e poluição do banco.
+pub fn is_internal_savevault_file(path: &Path) -> bool {
+    let filename = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name,
+        None => return false,
+    };
+
+    filename.contains(".savevault_safety_")
+        || filename.contains(".restore_tmp_")
+        || filename.ends_with(".tmp")
+        || filename.ends_with(".crswap")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +248,28 @@ mod tests {
     fn test_normalize_preserves_display_casing() {
         let norm = normalize_windows_path_str(r"c:/MyGames/CoolSave/").unwrap();
         assert_eq!(norm, r"C:\MyGames\CoolSave");
+    }
+
+    #[test]
+    fn test_extended_device_prefixes_stripped() {
+        let p1 = normalize_windows_path_str(r"\\?\C:\Games\Save").unwrap();
+        assert_eq!(p1, r"C:\Games\Save");
+        let c1 = canonicalize_windows_path_str(r"\\?\c:\games\Save").unwrap();
+        assert_eq!(c1, r"C:\games\save");
+
+        let unc = normalize_windows_path_str(r"\\?\UNC\server\share\folder").unwrap();
+        assert_eq!(unc, r"\\server\share\folder");
+    }
+
+    #[test]
+    fn test_internal_savevault_file_detection() {
+        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav.savevault_safety_1234")));
+        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav.restore_tmp_abcd")));
+        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.tmp")));
+        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.crswap")));
+
+        assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav")));
+        assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.dat")));
+        assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\savegame")));
     }
 }

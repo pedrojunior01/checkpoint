@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, watch, Semaphore};
 use uuid::Uuid;
 
 use savevault_core::models::{SaveLocation, SaveLocationType};
-use savevault_core::path::canonicalize_windows_path;
+use savevault_core::path::{canonicalize_windows_path, is_internal_savevault_file};
 
 use crate::debouncer::{DebounceConfig, FileDebouncer, InFlightTracker};
 use crate::events::{CoalescedFileEvent, RawFileEvent, RawFileEventKind, StableFileEvent, StableFileEventKind};
@@ -701,6 +701,10 @@ pub fn match_path_to_locations(
     path: &Path,
     locations: &[SaveLocation],
 ) -> Option<(Uuid, SaveLocationType)> {
+    if is_internal_savevault_file(path) {
+        return None;
+    }
+
     let canon_path = match canonicalize_windows_path(path) {
         Ok(p) => p,
         Err(_) => return None,

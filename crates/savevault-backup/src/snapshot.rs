@@ -26,20 +26,44 @@ impl SnapshotManager {
     pub async fn create_snapshot(
         &self,
         file_id: Uuid,
+        game_name: &str,
         source_path: &Path,
         next_version: u32,
     ) -> Result<Backup> {
         let filename = source_path.file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho inválido: sem nome de arquivo"))?;
 
+        let safe_game_name = sanitize_name(game_name);
+
         let version_dir = self.backup_root
-            .join(file_id.to_string())
-            .join(format!("v{}", next_version));
+            .join(&safe_game_name)
+            .join("latest");
+
+        let daily_dir = self.backup_root
+            .join(&safe_game_name)
+            .join("daily");
 
         tokio::fs::create_dir_all(&version_dir).await?;
+        tokio::fs::create_dir_all(&daily_dir).await?;
 
         let dest = version_dir.join(filename);
         tokio::fs::copy(source_path, &dest).await?;
+
+        let dest_daily = daily_dir.join(filename);
+        let mut update_daily = true;
+        if dest_daily.exists() {
+            if let Ok(meta) = tokio::fs::metadata(&dest_daily).await {
+                if let Ok(mod_time) = meta.modified() {
+                    let mod_dt: chrono::DateTime<chrono::Local> = mod_time.into();
+                    if mod_dt.date_naive() == chrono::Local::now().date_naive() {
+                        update_daily = false;
+                    }
+                }
+            }
+        }
+        if update_daily {
+            let _ = tokio::fs::copy(source_path, &dest_daily).await;
+        }
 
         info!("Snapshot criado: {} → {}", source_path.display(), dest.display());
 
@@ -65,6 +89,7 @@ impl SnapshotManager {
     pub async fn restore_snapshot(
         &self,
         file_id: Uuid,
+        game_name: &str,
         version: u32,
         dest_path: &Path,
     ) -> Result<Option<PathBuf>> {
@@ -76,12 +101,20 @@ impl SnapshotManager {
             tokio::fs::create_dir_all(dest_parent).await?;
         }
 
+        let safe_game_name = sanitize_name(game_name);
+
         // Validação antecipada da versão de origem (nunca alterar o disco se a versão não existir)
         let version_dir = self.backup_root
-            .join(file_id.to_string())
-            .join(format!("v{}", version));
+            .join(&safe_game_name)
+            .join("latest");
 
-        let source = version_dir.join(filename);
+        let mut source = version_dir.join(filename);
+        if !source.exists() {
+            let daily_source = self.backup_root.join(&safe_game_name).join("daily").join(filename);
+            if daily_source.exists() {
+                source = daily_source;
+            }
+        }
 
         if !source.exists() {
             anyhow::bail!(
@@ -145,4 +178,17 @@ impl SnapshotManager {
         info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
         Ok(safety_path)
     }
+
+    /// Remove o diretório físico do snapshot correspondente à versão.
+    /// Ex.: `backup_root/file_id/v{version}`
+    pub async fn remove_snapshot_version(&self, _file_id: Uuid, _game_name: &str, _version: u32) -> Result<()> {
+        // O novo design não usa pastas v{}, usa apenas `latest` e `daily` que se sobrescrevem.
+        // A nuvem gerencia as versões. Nada a deletar localmente.
+        Ok(())
+    }
+}
+
+/// Sanitiza o nome do jogo para ser um nome de diretório válido em todos os sistemas operacionais.
+pub fn sanitize_name(name: &str) -> String {
+    name.replace(&['\\', '/', ':', '*', '?', '"', '<', '>', '|'][..], "_")
 }

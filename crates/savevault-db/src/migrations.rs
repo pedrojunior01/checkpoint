@@ -44,6 +44,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("002_save_locations_unique_path", MIGRATION_002),
     ("003_save_locations_nocase_index", MIGRATION_003),
     ("004_backups_drive_file_id", MIGRATION_004),
+    ("005_games_unique_name_platform", MIGRATION_005),
 ];
 
 const MIGRATION_001: &str = "
@@ -119,4 +120,40 @@ const MIGRATION_004: &str = "
 ALTER TABLE backups ADD COLUMN drive_file_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_backups_drive_file_id ON backups(drive_file_id);
 ";
+
+const MIGRATION_005: &str = "
+-- 1. Remove save_locations duplicados que causariam conflito ao fundir games duplicados
+DELETE FROM save_locations
+WHERE id IN (
+    SELECT sl2.id
+    FROM save_locations sl2
+    JOIN games g2 ON sl2.game_id = g2.id
+    JOIN games g1 ON LOWER(g1.name) = LOWER(g2.name) AND g1.platform = g2.platform AND g1.id != g2.id
+    JOIN save_locations sl1 ON sl1.game_id = g1.id AND LOWER(sl1.path) = LOWER(sl2.path)
+    WHERE g2.id NOT IN (SELECT MIN(id) FROM games GROUP BY LOWER(name), platform)
+);
+
+-- 2. Reassocia save_locations de games duplicados para o game mais antigo (canônico)
+UPDATE save_locations
+SET game_id = (
+    SELECT MIN(g_target.id)
+    FROM games g_target
+    JOIN games g_cur ON g_cur.id = save_locations.game_id
+    WHERE LOWER(g_target.name) = LOWER(g_cur.name) AND g_target.platform = g_cur.platform
+)
+WHERE game_id NOT IN (
+    SELECT MIN(id) FROM games GROUP BY LOWER(name), platform
+);
+
+-- 3. Deleta games duplicados mantendo a entrada canônica MIN(id)
+DELETE FROM games
+WHERE id NOT IN (
+    SELECT MIN(id) FROM games GROUP BY LOWER(name), platform
+);
+
+-- 4. Cria índice único por (name COLLATE NOCASE, platform)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_games_name_platform
+    ON games(name COLLATE NOCASE, platform);
+";
+
 
