@@ -216,9 +216,43 @@
       <!-- ════ ABA: ATIVIDADE ════ -->
       <div id="tab-atividade" class="hidden p-6 space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold text-slate-900">Histórico de Snapshots</h2>
-          <span class="text-sm text-slate-400">Clique em Restaurar para reverter um save</span>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Histórico de Snapshots</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Veja todas as versões de saves capturadas e restaure quando necessário.</p>
+          </div>
+          <span class="text-xs text-slate-400 font-medium">Backup de segurança automático ao restaurar</span>
         </div>
+
+        <!-- Barra de Pesquisa de Snapshots com Lupa -->
+        <div class="relative flex items-center">
+          <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+          </div>
+          <input
+            type="text"
+            id="atividade-search-input"
+            placeholder="Pesquisar snapshot por jogo, arquivo ou versão..."
+            class="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200/90 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
+            oninput="renderAtividadeList(this.value)"
+          />
+          <button
+            id="atividade-search-clear"
+            onclick="clearAtividadeSearch()"
+            class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+            title="Limpar pesquisa"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Estatísticas da busca de atividade -->
+        <div id="atividade-search-stats" class="hidden text-xs text-slate-500 font-medium"></div>
+
         <div id="atividade-list" class="space-y-3">
           <p class="text-sm text-slate-400">Carregando...</p>
         </div>

@@ -325,9 +325,18 @@ fn score_dir_name(path: &Path) -> usize {
 
 /// Decide se um diretório ou algum ancestral deve ser pulado na varredura.
 fn should_skip_dir(path: &Path, root: &Path) -> bool {
+    let path_str_lower = path.to_string_lossy().to_lowercase();
+    if path_str_lower.contains("savevault") || path_str_lower.contains(".savevault") {
+        return true;
+    }
+
     let relative = path.strip_prefix(root).unwrap_or(path);
 
     let skip_list = [
+        "savevault",
+        ".savevault",
+        "desktop_profile",
+        "backups",
         "microsoft",
         "windows",
         "system32",
@@ -587,4 +596,20 @@ mod tests {
 
         assert!(filtered.is_empty(), "Known install paths should be skipped");
     }
+
+    #[test]
+    fn find_save_candidates_skips_savevault_and_backups_dirs() {
+        let root = tempdir().unwrap();
+        let sv_dir = root.path().join("SaveVault").join("backups").join("v1");
+        fs::create_dir_all(&sv_dir).unwrap();
+        fs::write(sv_dir.join("save.sav"), b"data").unwrap();
+        fs::write(sv_dir.join("save2.sav"), b"data").unwrap();
+
+        let candidates = find_save_candidates(root.path(), 5);
+        assert!(
+            !candidates.iter().any(|c| c.path == sv_dir),
+            "SaveVault backups dir must be skipped"
+        );
+    }
 }
+

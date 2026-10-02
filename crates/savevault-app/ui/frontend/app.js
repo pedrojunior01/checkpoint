@@ -97,6 +97,16 @@ async function invoke(command, args = {}) {
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
+function escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 function timeAgo(isoString) {
     if (!isoString) return "—";
     const now = new Date();
@@ -354,33 +364,140 @@ function clearJogosSearch() {
 
 // ── Aba: Atividade ────────────────────────────────────────────────────────────
 
+let allSnapshots = [];
+
 async function loadAtividade() {
     const container = document.getElementById("atividade-list");
     if (!container) return;
     container.innerHTML = `<p class="text-sm text-slate-400">Carregando histórico...</p>`;
     try {
         const snapshots = await invoke("get_snapshots");
-        if (!snapshots || snapshots.length === 0) {
-            container.innerHTML = `<p class="text-sm text-slate-400">Nenhum snapshot encontrado ainda.</p>`;
-            return;
-        }
-        container.innerHTML = snapshots.map(s => `
-            <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs flex items-start gap-3">
-                <div class="w-2 h-2 rounded-full bg-emerald-400 mt-2 flex-shrink-0"></div>
-                <div class="flex-1 min-w-0">
-                    <p class="font-medium text-slate-800 text-sm">${s.game_name || "Arquivo de Save"}</p>
-                    <p class="text-xs text-slate-500 truncate mt-0.5 font-mono">${(s.blake3_hash || "").substring(0, 16)}…</p>
-                    <p class="text-xs text-slate-400 mt-1">${s.file_size_bytes ? formatBytes(s.file_size_bytes) : ""} · ${timeAgo(s.captured_at)}</p>
-                </div>
-                <button
-                    onclick="restoreSnapshot('${s.snapshot_id}', '${(s.game_name || "").replace(/'/g, "")}')"
-                    class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors flex-shrink-0">
-                    Restaurar
-                </button>
-            </div>`).join("");
+        allSnapshots = snapshots || [];
+        const searchInput = document.getElementById("atividade-search-input");
+        const currentQuery = searchInput ? searchInput.value.trim() : "";
+        renderAtividadeList(currentQuery);
     } catch (e) {
-        container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
+        container.innerHTML = `<p class="text-sm text-red-500">Erro: ${escapeHtml(e)}</p>`;
     }
+}
+
+function renderAtividadeList(query = "") {
+    const container = document.getElementById("atividade-list");
+    const statsEl = document.getElementById("atividade-search-stats");
+    const clearBtn = document.getElementById("atividade-search-clear");
+    if (!container) return;
+
+    const trimmedQuery = (query || "").trim().toLowerCase();
+
+    if (clearBtn) {
+        if (trimmedQuery.length > 0) {
+            clearBtn.classList.remove("hidden");
+        } else {
+            clearBtn.classList.add("hidden");
+        }
+    }
+
+    if (!allSnapshots || allSnapshots.length === 0) {
+        if (statsEl) statsEl.classList.add("hidden");
+        container.innerHTML = `
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+                <div class="text-3xl mb-2">📦</div>
+                <p class="font-semibold text-slate-800 text-sm">Nenhum snapshot capturado ainda</p>
+                <p class="text-xs text-slate-500 mt-1">Quando você jogar ou salvar o progresso, o SaveVault criará pontos de restauração aqui.</p>
+            </div>
+        `;
+        return;
+    }
+
+    let filtered = allSnapshots;
+    if (trimmedQuery.length > 0) {
+        filtered = allSnapshots.filter(s => {
+            const game = (s.game_name || "").toLowerCase();
+            const file = (s.file_name || "").toLowerCase();
+            const path = (s.file_path || "").toLowerCase();
+            const version = `v${s.version || ""}`.toLowerCase();
+            const hash = (s.hash || "").toLowerCase();
+            return game.includes(trimmedQuery)
+                || file.includes(trimmedQuery)
+                || path.includes(trimmedQuery)
+                || version.includes(trimmedQuery)
+                || hash.includes(trimmedQuery);
+        });
+
+        if (statsEl) {
+            statsEl.classList.remove("hidden");
+            statsEl.textContent = `Mostrando ${filtered.length} de ${allSnapshots.length} snapshot(s) encontrado(s) para "${query}"`;
+        }
+    } else {
+        if (statsEl) statsEl.classList.add("hidden");
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+                <div class="text-3xl mb-2">🔍</div>
+                <p class="font-semibold text-slate-800 text-sm">Nenhum snapshot encontrado</p>
+                <p class="text-xs text-slate-500 mt-1">Nenhum resultado corresponde à busca "<strong>${escapeHtml(query)}</strong>".</p>
+                <button onclick="clearAtividadeSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
+                    Limpar pesquisa
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = filtered.map(s => {
+        const gameTitle = s.game_name || "Jogo Desconhecido";
+        const fileName = s.file_name || "save";
+        const versionLabel = `v${s.version || 1}`;
+        const sizeLabel = s.size_formatted || (s.size_bytes ? formatBytes(s.size_bytes) : "—");
+        const hashShort = s.short_hash || (s.hash ? s.hash.substring(0, 10) : "—");
+        const formattedDate = formatHour(s.created_at);
+        const relativeDate = timeAgo(s.created_at);
+
+        return `
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-slate-300 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-start gap-3 min-w-0">
+                    <div class="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 font-bold text-xs shrink-0 mt-0.5">
+                        ${versionLabel}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-bold text-slate-900 text-sm">${escapeHtml(gameTitle)}</span>
+                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                                ${versionLabel}
+                            </span>
+                            <span class="text-xs font-mono font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md truncate max-w-xs" title="${escapeHtml(s.file_path || fileName)}">
+                                📄 ${escapeHtml(fileName)}
+                            </span>
+                        </div>
+                        <div class="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                            <span>📦 ${escapeHtml(sizeLabel)}</span>
+                            <span>•</span>
+                            <span title="${escapeHtml(s.created_at || "")}">🕒 ${escapeHtml(relativeDate)} (${escapeHtml(formattedDate)})</span>
+                            <span>•</span>
+                            <span class="font-mono text-slate-400" title="Hash Blake3: ${escapeHtml(s.hash || "")}">#${escapeHtml(hashShort)}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    <button
+                        onclick="restoreSnapshot('${s.id}', '${escapeHtml(gameTitle).replace(/'/g, "\\'")}', '${versionLabel}', '${escapeHtml(fileName).replace(/'/g, "\\'")}')"
+                        class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer">
+                        <span>↺</span> Restaurar Save
+                    </button>
+                </div>
+            </div>`;
+    }).join("");
+}
+
+function clearAtividadeSearch() {
+    const input = document.getElementById("atividade-search-input");
+    if (input) {
+        input.value = "";
+        input.focus();
+    }
+    renderAtividadeList("");
 }
 
 function formatBytes(bytes) {
@@ -389,14 +506,16 @@ function formatBytes(bytes) {
     return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-async function restoreSnapshot(id, gameName) {
-    if (!confirm(`Restaurar save de "${gameName}"?\n\nUm backup de segurança será criado antes da restauração.`)) return;
+async function restoreSnapshot(id, gameName, version, fileName) {
+    const promptMsg = `Deseja restaurar o snapshot ${version} de "${gameName}"?\nArquivo: ${fileName}\n\nUm backup de segurança do seu save atual será criado automaticamente antes da restauração.`;
+    if (!confirm(promptMsg)) return;
+
     try {
-        const result = await invoke("restore_snapshot", { snapshotId: id });
-        alert(`Restauração concluída!\nArquivo: ${result.restored_path || "OK"}`);
+        const result = await invoke("restore_snapshot", { snapshotId: id, snapshot_id: id });
+        alert(`Restauração concluída com sucesso!\n\nArquivo restaurado: ${result.restored_path || result.dest_path || "OK"}\nSafety Backup: ${result.safety_backup_path || "Criado com sucesso"}`);
         loadAtividade();
     } catch (e) {
-        alert(`Erro ao restaurar: ${e}`);
+        alert(`Erro ao restaurar snapshot: ${e}`);
     }
 }
 

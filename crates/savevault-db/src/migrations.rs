@@ -47,6 +47,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("005_games_unique_name_platform", MIGRATION_005),
     ("006_files_and_backups_unique", MIGRATION_006),
     ("007_games_platform_id_composite", MIGRATION_007),
+    ("008_cleanup_savevault_phantom_backups", MIGRATION_008),
 ];
 
 const MIGRATION_001: &str = "
@@ -210,3 +211,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_games_platform_platform_id
     ON games(platform, platform_id)
     WHERE platform_id IS NOT NULL;
 ";
+
+const MIGRATION_008: &str = "
+-- 1. Remove games identificados como pastas de versão ('v1', 'v2', etc.) ou cujo save_location apontava para pasta interna do SaveVault
+DELETE FROM games
+WHERE LOWER(name) IN ('v1', 'v2', 'v3', 'v4', 'v5', 'daily', 'latest')
+   OR id IN (
+       SELECT DISTINCT game_id FROM save_locations
+       WHERE path LIKE '%SaveVault%backups%'
+          OR path LIKE '%SaveVault/backups%'
+          OR path LIKE '%SaveVault\\backups%'
+          OR path LIKE '%AppData%SaveVault%'
+   );
+
+-- 2. Remove save_locations que apontam para o diretório de backups do SaveVault
+DELETE FROM save_locations
+WHERE path LIKE '%SaveVault%backups%'
+   OR path LIKE '%SaveVault/backups%'
+   OR path LIKE '%SaveVault\\backups%'
+   OR path LIKE '%AppData%SaveVault%';
+
+-- 3. Limpa arquivos e backups órfãos se houver
+DELETE FROM files WHERE save_location_id NOT IN (SELECT id FROM save_locations);
+DELETE FROM backups WHERE file_id NOT IN (SELECT id FROM files);
+DELETE FROM sync_queue WHERE backup_id NOT IN (SELECT id FROM backups);
+";
+
