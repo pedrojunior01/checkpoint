@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    Manager, State, WebviewWindow,
 };
 use uuid::Uuid;
 
@@ -33,7 +33,33 @@ pub fn trim_process_memory() {
 #[cfg(not(windows))]
 pub fn trim_process_memory() {}
 
-// ── Commands ─────────────────────────────────────────────────────────────────
+// ── Window Control Commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn window_minimize(window: WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())?;
+    trim_process_memory();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn window_toggle_maximize(window: WebviewWindow) -> Result<(), String> {
+    if window.is_maximized().unwrap_or(false) {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    } else {
+        window.maximize().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn window_close(window: WebviewWindow) -> Result<(), String> {
+    let _ = window.hide();
+    trim_process_memory();
+    Ok(())
+}
+
+// ── Data & Action Commands ───────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn get_dashboard_status(
@@ -94,17 +120,19 @@ pub async fn restore_snapshot(
 /// Executa a interface gráfica Tauri integrada ao processo residente.
 /// Deve ser chamada na thread principal do processo.
 pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
-    // Configura flags de otimização do Chromium / WebView2 antes da criação da janela
-    // Desativa módulos pesados desnecessários (tradutor, media router, extensões, etc.)
+    // Otimizações do Chromium para eliminar subprocessos pesados de GPU e desativar módulos não utilizados
     #[cfg(windows)]
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions --disable-extensions --disable-component-update --renderer-process-limit=1 --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio"
+        "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions --disable-extensions --disable-component-update --renderer-process-limit=1 --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio"
     );
 
     tauri::Builder::default()
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
+            window_minimize,
+            window_toggle_maximize,
+            window_close,
             get_dashboard_status,
             get_locations,
             get_snapshots,
@@ -187,14 +215,13 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                     .build(app)?;
             }
 
-            // Realiza uma limpeza inicial de memória após carregar
+            // Limpeza inicial de memória após carregar
             trim_process_memory();
 
             Ok(())
         })
         .on_window_event(|window, event| {
             match event {
-                // Fechar = ocultar para bandeja e liberar memória
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     let _ = window.hide();

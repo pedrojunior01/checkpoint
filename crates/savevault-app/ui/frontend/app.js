@@ -1,7 +1,4 @@
 const { invoke } = window.__TAURI__.core;
-const { getCurrentWindow } = window.__TAURI__.window;
-
-const appWindow = getCurrentWindow();
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
@@ -31,13 +28,19 @@ function formatBytes(bytes) {
     return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-// ── Controles da janela ───────────────────────────────────────────────────────
+// ── Controles da Janela (Nativos via IPC) ──────────────────────────────────────
 
-document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
-document.getElementById("titlebar-maximize")?.addEventListener("click", () => appWindow.toggleMaximize());
-document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
+document.getElementById("titlebar-minimize")?.addEventListener("click", () => {
+    invoke("window_minimize").catch(console.error);
+});
+document.getElementById("titlebar-maximize")?.addEventListener("click", () => {
+    invoke("window_toggle_maximize").catch(console.error);
+});
+document.getElementById("titlebar-close")?.addEventListener("click", () => {
+    invoke("window_close").catch(console.error);
+});
 
-// ── Navegação de abas ─────────────────────────────────────────────────────────
+// ── Navegação de Abas ─────────────────────────────────────────────────────────
 
 const tabs = {
     "nav-inicio":       "tab-inicio",
@@ -48,26 +51,21 @@ const tabs = {
 };
 
 function showTab(navId) {
-    // Esconde todas as abas
     Object.values(tabs).forEach(tabId => {
         const el = document.getElementById(tabId);
         if (el) el.classList.add("hidden");
     });
-    // Remove estado ativo de todos os links
     Object.keys(tabs).forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove("active");
     });
-    // Mostra a aba selecionada
     const tabId = tabs[navId];
     const tab = document.getElementById(tabId);
     if (tab) tab.classList.remove("hidden");
-    // Ativa o link
     const nav = document.getElementById(navId);
     if (nav) nav.classList.add("active");
 }
 
-// Liga os cliques da sidebar
 Object.keys(tabs).forEach(navId => {
     document.getElementById(navId)?.addEventListener("click", (e) => {
         e.preventDefault();
@@ -79,7 +77,6 @@ Object.keys(tabs).forEach(navId => {
     });
 });
 
-// Link "Ver todos" na aba Início
 document.getElementById("link-ver-todos")?.addEventListener("click", (e) => {
     e.preventDefault();
     showTab("nav-jogos");
@@ -92,7 +89,6 @@ async function loadInicio() {
     try {
         const data = await invoke("get_dashboard_status");
 
-        // KPIs
         const elGames = document.getElementById("kpi-games");
         const elSaves = document.getElementById("kpi-saves");
         const elTime = document.getElementById("kpi-time");
@@ -100,7 +96,6 @@ async function loadInicio() {
         if (elSaves) elSaves.textContent = data.snapshots_count ?? 0;
         if (elTime) elTime.textContent = formatHour(data.last_reconciliation_time);
 
-        // Status banner
         const bannerText = document.getElementById("status-text");
         if (data.sync_pending_count > 0) {
             if (bannerText) bannerText.textContent = `${data.sync_pending_count} item(s) aguardando sincronização...`;
@@ -111,7 +106,6 @@ async function loadInicio() {
         console.error("Erro ao carregar dashboard:", e);
     }
 
-    // Jogos recentes (os primeiros da lista de locais)
     try {
         const locs = await invoke("get_locations");
         renderJogosRecentes(locs.slice(0, 4));
@@ -198,7 +192,7 @@ async function loadAtividade() {
                     <p class="game-subtext">${s.file_size_bytes ? formatBytes(s.file_size_bytes) : ""} · ${timeAgo(s.captured_at)}</p>
                 </div>
                 <button
-                    onclick="restoreSnapshot('${s.snapshot_id}', '${(s.game_name || "").replace(/'/g, "")}')"
+                    onclick="window.restoreSnapshot('${s.snapshot_id}', '${(s.game_name || "").replace(/'/g, "")}')"
                     class="btn-restore">
                     Restaurar
                 </button>
@@ -208,7 +202,8 @@ async function loadAtividade() {
     }
 }
 
-async function restoreSnapshot(id, gameName) {
+// Exposto no objeto window para funcionamento em eventos onclick no HTML dinâmico
+window.restoreSnapshot = async function(id, gameName) {
     if (!confirm(`Restaurar save de "${gameName}"?\n\nUm backup de segurança será criado antes da restauração.`)) return;
     try {
         const result = await invoke("restore_snapshot", { snapshotId: id });
@@ -217,7 +212,7 @@ async function restoreSnapshot(id, gameName) {
     } catch (e) {
         alert(`Erro ao restaurar: ${e}`);
     }
-}
+};
 
 // ── Aba: Nuvem ────────────────────────────────────────────────────────────────
 
@@ -303,6 +298,5 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
 document.addEventListener("DOMContentLoaded", () => {
     showTab("nav-inicio");
     loadInicio();
-    // Atualiza dashboard a cada 10s
     setInterval(loadInicio, 10000);
 });
