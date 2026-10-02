@@ -172,10 +172,42 @@
 
       <!-- ════ ABA: JOGOS ════ -->
       <div id="tab-jogos" class="hidden p-6 space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold text-slate-900">Jogos Detectados</h2>
-          <span class="text-sm text-slate-400">Todos os locais de save monitorados</span>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Jogos Detectados</h2>
+            <span class="text-sm text-slate-400">Todos os locais de save monitorados</span>
+          </div>
+
+          <!-- Barra de Pesquisa com Lupa -->
+          <div class="relative w-full sm:w-72">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="M21 21l-4.35-4.35" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+            </div>
+            <input
+              type="text"
+              id="jogos-search-input"
+              placeholder="Buscar por nome do jogo ou caminho..."
+              class="w-full pl-9 pr-8 py-1.5 text-xs bg-white border border-slate-200/90 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-400/40 focus:border-slate-400 transition-all text-slate-800 placeholder-slate-400 shadow-xs"
+            />
+            <button
+              id="jogos-search-clear"
+              class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+              title="Limpar busca"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
         </div>
+
+        <!-- Estatísticas da busca quando filtrado -->
+        <div id="jogos-search-stats" class="hidden text-xs text-slate-500 font-medium"></div>
+
         <div id="jogos-list" class="space-y-3">
           <p class="text-sm text-slate-400">Carregando...</p>
         </div>

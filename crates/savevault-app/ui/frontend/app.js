@@ -256,35 +256,100 @@ function renderJogosRecentes(locations) {
 
 // ── Aba: Jogos ────────────────────────────────────────────────────────────────
 
+let allJogosLocations = [];
+
 async function loadJogos() {
     const container = document.getElementById("jogos-list");
     if (!container) return;
     container.innerHTML = `<p class="text-sm text-slate-400">Carregando...</p>`;
     try {
         const locs = await invoke("get_locations");
-        if (!locs || locs.length === 0) {
-            container.innerHTML = `<p class="text-sm text-slate-400">Nenhum jogo detectado. Execute um scan.</p>`;
-            return;
-        }
-        container.innerHTML = locs.map((loc, i) => {
-            const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
-            const grad = gradients[i % gradients.length];
-            return `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-4 flex items-center gap-4 shadow-xs">
-                <div class="w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                    ${initials}
-                </div>
-                <div class="flex-1 min-w-0">
-                    <p class="font-semibold text-slate-800">${loc.game_name || "Jogo Desconhecido"}</p>
-                    <p class="text-xs text-slate-500 truncate mt-0.5">${loc.path || ""}</p>
-                    <p class="text-xs text-slate-400 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
-                </div>
-                <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Ativo</span>
-            </div>`;
-        }).join("");
+        allJogosLocations = locs || [];
+        const searchInput = document.getElementById("jogos-search-input");
+        const currentQuery = searchInput ? searchInput.value.trim() : "";
+        renderJogosList(currentQuery);
     } catch (e) {
         container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
     }
+}
+
+function renderJogosList(query = "") {
+    const container = document.getElementById("jogos-list");
+    const statsEl = document.getElementById("jogos-search-stats");
+    const clearBtn = document.getElementById("jogos-search-clear");
+    if (!container) return;
+
+    const trimmedQuery = (query || "").trim().toLowerCase();
+
+    if (clearBtn) {
+        if (trimmedQuery.length > 0) {
+            clearBtn.classList.remove("hidden");
+        } else {
+            clearBtn.classList.add("hidden");
+        }
+    }
+
+    if (!allJogosLocations || allJogosLocations.length === 0) {
+        if (statsEl) statsEl.classList.add("hidden");
+        container.innerHTML = `<p class="text-sm text-slate-400">Nenhum jogo detectado. Execute um scan.</p>`;
+        return;
+    }
+
+    let filtered = allJogosLocations;
+    if (trimmedQuery.length > 0) {
+        filtered = allJogosLocations.filter(loc => {
+            const name = (loc.game_name || "").toLowerCase();
+            const path = (loc.path || "").toLowerCase();
+            return name.includes(trimmedQuery) || path.includes(trimmedQuery);
+        });
+
+        if (statsEl) {
+            statsEl.classList.remove("hidden");
+            statsEl.textContent = `Mostrando ${filtered.length} de ${allJogosLocations.length} jogo(s) encontrado(s) para "${query}"`;
+        }
+    } else {
+        if (statsEl) statsEl.classList.add("hidden");
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+                <div class="text-3xl mb-2">🔍</div>
+                <p class="font-semibold text-slate-800 text-sm">Nenhum jogo encontrado</p>
+                <p class="text-xs text-slate-500 mt-1">Nenhum resultado corresponde à busca "<strong>${escapeHtml(query)}</strong>".</p>
+                <button onclick="clearJogosSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
+                    Limpar pesquisa
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = filtered.map((loc, i) => {
+        const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
+        const grad = gradients[i % gradients.length];
+        return `
+        <div class="bg-white border border-slate-200/90 rounded-2xl p-4 flex items-center gap-4 shadow-xs hover:border-slate-300 transition-colors">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+                ${initials}
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="font-semibold text-slate-800">${escapeHtml(loc.game_name || "Jogo Desconhecido")}</p>
+                <p class="text-xs text-slate-500 truncate mt-0.5 font-mono">${escapeHtml(loc.path || "")}</p>
+                <p class="text-xs text-slate-400 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
+            </div>
+            <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Ativo</span>
+        </div>`;
+    }).join("");
+}
+
+function clearJogosSearch() {
+    const input = document.getElementById("jogos-search-input");
+    if (input) {
+        input.value = "";
+        input.focus();
+    }
+    renderJogosList("");
 }
 
 // ── Aba: Atividade ────────────────────────────────────────────────────────────
@@ -676,6 +741,21 @@ document.addEventListener("DOMContentLoaded", () => {
     showTab("nav-inicio");
     loadInicio();
     checkInitialSetup();
+
+    // Listener da barra de pesquisa de jogos
+    const searchInput = document.getElementById("jogos-search-input");
+    searchInput?.addEventListener("input", (e) => {
+        renderJogosList(e.target.value);
+    });
+    searchInput?.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            clearJogosSearch();
+        }
+    });
+    document.getElementById("jogos-search-clear")?.addEventListener("click", () => {
+        clearJogosSearch();
+    });
+
     // Atualiza dashboard a cada 10s
     setInterval(loadInicio, 10000);
 });
