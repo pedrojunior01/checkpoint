@@ -159,7 +159,9 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
     ) {
         Some(guard) => guard,
         None => {
-            tracing::info!("SaveVault já está em execução. Trazendo janela existente para o primeiro plano.");
+            tracing::info!(
+                "SaveVault já está em execução. Trazendo janela existente para o primeiro plano."
+            );
             savevault_app::focus_existing_instance();
             println!("SaveVault já está em execução.");
             return Ok(());

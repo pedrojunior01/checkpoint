@@ -91,9 +91,9 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
 
 ### 7. `savevault-sync` (Completo - Non-blocking Architecture)
 - **SyncEngine Desacoplado**:
-  - Consumo assíncrono da tabela `sync_queue` com liberação imediata de lock do banco durante tráfego de rede e uploads.
-  - Roteamento dinâmico via `resolve_active_cloud_provider` para clientes reais de nuvem (`GoogleDriveProvider` / `OneDriveProvider`) com fallback para pastas locais (F-04).
-  - Atualização automática e atômica do manifesto remoto `savevault_manifest.json` a cada snapshot enviado (F-05).
+  - Consumo assíncrono da tabela `sync_queue` com liberação imediata de lock do banco durante transferência de arquivos.
+  - Sincronização padronizada e exclusiva via **Pasta Sincronizada Local** (`LocalFolderProvider`), utilizando as pastas oficiais do Google Drive para Desktop, OneDrive ou Dropbox (F-04 removido do escopo em favor de footprint ultraleve e estabilidade sem chaves OAuth).
+  - Atualização automática e atômica do manifesto `savevault_manifest.json` a cada snapshot enviado (F-05).
 
 ### 8. `savevault-app` (Orquestrador, Desktop Tauri, Tray, Conflitos & DR)
 - **Tauri 2.0 Native UI & System Tray (F-06)**:
@@ -145,7 +145,7 @@ Atualmente a suíte conta com **262 testes automatizados (100% de aprovação)**
 | **F-02** | Crítico | Mascaramento de erros de restauração no IPC/UI retornando sucesso falso | **Corrigido** | IPC Tauri e REST propagam erros estritos e a interface exibe feedback de falha. |
 | **F-13** | Crítico | Inconsistência de case-folding NTFS usando ASCII em vez de Unicode | **Corrigido** | Normalização de caminhos atualizada para Unicode `to_lowercase()` em `path.rs`. |
 | **F-03** | Alto | Watcher e pipeline paralisados na inicialização com banco vazio | **Corrigido** | Removida checagem restritiva; pipeline e consumidor de nuvem agora iniciam sempre. |
-| **F-04** | Alto | Uploads em background direcionados apenas para o filesystem local | **Corrigido** | Implementado `resolve_active_cloud_provider` despachando para Google Drive / OneDrive reais. |
+| **F-04** | Neutro | Provedores remotos de nuvem via API direta (OAuth HTTP) | **Removido do Escopo** | Descontinuado por decisão de produto em favor da sincronização exclusiva e ultraleve via pasta local (Google Drive Desktop, OneDrive, etc.). |
 | **F-05** | Alto | Impossibilidade de Disaster Recovery em máquinas novas com banco vazio | **Corrigido** | Criado manifesto `savevault_manifest.json` na nuvem e rotina `reconstruct_catalog_from_cloud`. |
 | **F-06** | Alto | Autostart no Registro chamando navegador Edge em vez do Tauri nativo | **Corrigido** | Linha de comando `--tray` agora inicia o Tauri nativo minimizado no tray. |
 | **F-07** | Alto | Execução de múltiplas instâncias concorrentes causando conflito no SQLite | **Corrigido** | Implementado `SingleInstanceGuard` via Win32 `CreateMutexW` com foco na janela ativa (`SetForegroundWindow`). |

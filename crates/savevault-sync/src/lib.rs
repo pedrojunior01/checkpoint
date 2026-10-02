@@ -684,45 +684,36 @@ fn debug_or_warn(attempts: u32, backoff_ms: u64) {
 // API de alto nível (função de conveniência)
 // ---------------------------------------------------------------------------
 
-/// Resolve dinamicamente o provedor de nuvem ativo (Google Drive, OneDrive ou LocalFolder).
+/// Resolve dinamicamente o provedor de nuvem ativo.
+/// Conforme diretriz do projeto (F-04 removido do escopo), o SaveVault opera exclusivamente
+/// através do modelo leve de pasta sincronizada local (Google Drive para Desktop, OneDrive, Dropbox ou pasta customizada),
+/// eliminando a necessidade de chamadas diretas a APIs de nuvem e autenticação OAuth complexa.
 pub fn resolve_active_cloud_provider(
     provider_name: &str,
     backup_root: &std::path::Path,
 ) -> Box<dyn CloudProvider> {
-    match provider_name.to_lowercase().as_str() {
-        "google_drive" | "gdrive" => {
-            if let Some(gdrive) = savevault_cloud::GoogleDriveProvider::from_env() {
-                Box::new(gdrive)
-            } else {
-                tracing::warn!(
-                    "Credenciais do Google Drive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
-                );
-                resolve_local_cloud_provider(backup_root)
-            }
-        }
-        "onedrive" => {
-            if let Some(onedrive) = savevault_cloud::OneDriveProvider::from_env() {
-                Box::new(onedrive)
-            } else {
-                tracing::warn!(
-                    "Credenciais do OneDrive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
-                );
-                resolve_local_cloud_provider(backup_root)
-            }
-        }
-        _ => resolve_local_cloud_provider(backup_root),
-    }
+    resolve_local_cloud_provider(provider_name, backup_root)
 }
 
-fn resolve_local_cloud_provider(backup_root: &std::path::Path) -> Box<dyn CloudProvider> {
+fn resolve_local_cloud_provider(
+    provider_name: &str,
+    backup_root: &std::path::Path,
+) -> Box<dyn CloudProvider> {
     let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
         .map(std::path::PathBuf::from)
         .ok()
         .or_else(|| {
-            savevault_cloud::detect_cloud_folders()
-                .into_iter()
-                .next()
-                .map(|d| d.savevault_folder)
+            let folders = savevault_cloud::detect_cloud_folders();
+            let norm = provider_name.to_lowercase();
+            folders
+                .iter()
+                .find(|d| {
+                    d.provider_type.to_lowercase().contains(&norm)
+                        || d.name.to_lowercase().contains(&norm)
+                        || norm.contains(&d.provider_type.to_lowercase())
+                })
+                .map(|d| d.savevault_folder.clone())
+                .or_else(|| folders.into_iter().next().map(|d| d.savevault_folder))
         })
         .unwrap_or_else(|| backup_root.to_path_buf());
 

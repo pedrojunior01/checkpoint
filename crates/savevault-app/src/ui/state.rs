@@ -1381,22 +1381,33 @@ mod tests {
         }
 
         assert!(found_root, "Arquivo raiz deve constar no ZIP");
-        assert!(found_special, "Arquivo com apóstrofo no diretório deve constar no ZIP");
+        assert!(
+            found_special,
+            "Arquivo com apóstrofo no diretório deve constar no ZIP"
+        );
         assert!(found_unicode, "Arquivo com acentuação deve constar no ZIP");
     }
 
     #[test]
     fn test_open_path_in_explorer_nonexistent_does_not_create_directory() {
         let temp_dir = tempfile::tempdir().expect("Falha ao criar tempdir");
-        let nonexistent = temp_dir.path().join("pasta_inexistente_que_nao_deve_ser_criada");
+        let nonexistent = temp_dir
+            .path()
+            .join("pasta_inexistente_que_nao_deve_ser_criada");
 
-        assert!(!nonexistent.exists(), "A pasta não deve existir antes do teste");
+        assert!(
+            !nonexistent.exists(),
+            "A pasta não deve existir antes do teste"
+        );
 
         // Tenta abrir caminho inexistente
         let result = open_path_in_explorer(nonexistent.to_str().unwrap());
 
         // Deve retornar erro
-        assert!(result.is_err(), "open_path_in_explorer deve falhar para caminho inexistente");
+        assert!(
+            result.is_err(),
+            "open_path_in_explorer deve falhar para caminho inexistente"
+        );
 
         // CRÍTICO (F-09): O caminho NÃO deve ter sido criado no disco
         assert!(
