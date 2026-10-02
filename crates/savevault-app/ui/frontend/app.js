@@ -202,7 +202,6 @@ async function loadAtividade() {
     }
 }
 
-// Exposto no objeto window para funcionamento em eventos onclick no HTML dinâmico
 window.restoreSnapshot = async function(id, gameName) {
     if (!confirm(`Restaurar save de "${gameName}"?\n\nUm backup de segurança será criado antes da restauração.`)) return;
     try {
@@ -242,34 +241,84 @@ async function loadNuvem() {
 
 // ── Aba: Configurações ────────────────────────────────────────────────────────
 
+let currentConfig = null;
+
 async function loadConfig() {
-    const container = document.getElementById("config-info");
-    if (!container) return;
     try {
-        const data = await invoke("get_dashboard_status");
-        container.innerHTML = `
-            <div>
-                <div class="config-card">
-                    <p class="config-label">Banco de Dados</p>
-                    <p class="config-value">${data.db_path || "—"}</p>
-                </div>
-                <div class="config-card">
-                    <p class="config-label">Pasta de Backups</p>
-                    <p class="config-value">${data.backup_root || "—"}</p>
-                </div>
-                <div class="config-card">
-                    <p class="config-label">Intervalo de Reconciliação</p>
-                    <p class="config-value" style="font-family:inherit;">${data.reconciliation_interval_secs ?? 30} segundos</p>
-                </div>
-                <div class="config-card">
-                    <p class="config-label">Status do Watcher</p>
-                    <p class="config-value" style="font-family:inherit;">${data.watcher_status || "—"}</p>
-                </div>
-            </div>`;
+        const cfg = await invoke("get_config");
+        currentConfig = cfg;
+
+        const elBackupDir = document.getElementById("cfg-backup-dir");
+        const elDbPath = document.getElementById("cfg-database-path");
+        const elMaxVersions = document.getElementById("cfg-max-versions");
+        const elReconcile = document.getElementById("cfg-reconcile-interval");
+        const elDebounce = document.getElementById("cfg-debounce-ms");
+        const elLogLevel = document.getElementById("cfg-log-level");
+
+        if (elBackupDir) elBackupDir.value = cfg.backup_dir || "";
+        if (elDbPath) elDbPath.value = cfg.database_path || "";
+        if (elMaxVersions) elMaxVersions.value = String(cfg.max_versions || 10);
+        if (elReconcile) elReconcile.value = String(cfg.reconciliation_interval_secs || 30);
+        if (elDebounce) elDebounce.value = String(cfg.debounce_ms || 2000);
+        if (elLogLevel) elLogLevel.value = cfg.log_level || "info";
     } catch (e) {
-        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
+        console.error("Erro ao carregar configurações:", e);
     }
 }
+
+// Botão Salvar Configurações
+document.getElementById("btn-save-config")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-save-config");
+    if (btn) {
+        btn.textContent = "Salvando...";
+        btn.disabled = true;
+    }
+
+    try {
+        const backupDir = document.getElementById("cfg-backup-dir")?.value?.trim() || "";
+        const maxVersions = parseInt(document.getElementById("cfg-max-versions")?.value, 10) || 10;
+        const reconciliationInterval = parseInt(document.getElementById("cfg-reconcile-interval")?.value, 10) || 30;
+        const debounceMs = parseInt(document.getElementById("cfg-debounce-ms")?.value, 10) || 2000;
+        const logLevel = document.getElementById("cfg-log-level")?.value || "info";
+        const databasePath = document.getElementById("cfg-database-path")?.value || "";
+
+        const payload = {
+            max_versions: maxVersions,
+            debounce_ms: debounceMs,
+            reconciliation_interval_secs: reconciliationInterval,
+            log_level: logLevel,
+            backup_dir: backupDir,
+            database_path: databasePath,
+        };
+
+        const result = await invoke("save_config", { newCfg: payload });
+        alert(result || "Configurações salvas com sucesso!");
+        loadConfig();
+    } catch (e) {
+        alert(`Erro ao salvar configurações: ${e}`);
+    } finally {
+        if (btn) {
+            btn.textContent = "Salvar Alterações";
+            btn.disabled = false;
+        }
+    }
+});
+
+// Botão Abrir Pasta de Backups no Explorer
+document.getElementById("btn-open-backup-dir")?.addEventListener("click", () => {
+    const path = document.getElementById("cfg-backup-dir")?.value;
+    if (path) {
+        invoke("open_path_in_explorer", { path }).catch(err => alert(`Erro: ${err}`));
+    }
+});
+
+// Botão Abrir Pasta do Banco no Explorer
+document.getElementById("btn-open-db-dir")?.addEventListener("click", () => {
+    const path = document.getElementById("cfg-database-path")?.value;
+    if (path) {
+        invoke("open_path_in_explorer", { path }).catch(err => alert(`Erro: ${err}`));
+    }
+});
 
 // ── Botão Reconciliar ─────────────────────────────────────────────────────────
 

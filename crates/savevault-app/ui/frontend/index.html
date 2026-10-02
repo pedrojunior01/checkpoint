@@ -172,10 +172,84 @@
       <!-- ════ ABA: CONFIGURAÇÕES ════ -->
       <div id="tab-config" class="tab-content hidden">
         <div class="section-header">
-          <h2 class="section-title">Configurações</h2>
+          <div>
+            <h2 class="section-title">Configurações</h2>
+            <p class="section-subtitle">Ajuste os parâmetros de monitoramento e diretórios locais</p>
+          </div>
+          <button id="btn-save-config" class="btn-primary">
+            Salvar Alterações
+          </button>
         </div>
-        <div id="config-info">
-          <p style="font-size: 13px; color: #94a3b8;">Carregando...</p>
+
+        <div id="config-form">
+          <!-- Pasta de Backups -->
+          <div class="config-card">
+            <div class="config-header">
+              <span class="config-label">Pasta de Backups Locais</span>
+              <button id="btn-open-backup-dir" class="btn-secondary" type="button">Abrir no Explorer</button>
+            </div>
+            <input id="cfg-backup-dir" type="text" class="config-input" placeholder="C:\Users\...\SaveVault_Backups" />
+            <span class="config-help">Diretório onde os arquivos de save são empacotados antes da sincronização.</span>
+          </div>
+
+          <!-- Banco de Dados -->
+          <div class="config-card">
+            <div class="config-header">
+              <span class="config-label">Banco de Dados SQLite</span>
+              <button id="btn-open-db-dir" class="btn-secondary" type="button">Abrir Pasta</button>
+            </div>
+            <input id="cfg-database-path" type="text" class="config-input" readonly style="opacity:0.8; cursor:default;" />
+            <span class="config-help">Local do arquivo de índice e histórico dos snapshots locais.</span>
+          </div>
+
+          <!-- Grid de Parâmetros -->
+          <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+            <div class="config-card">
+              <span class="config-label">Versões Máximas por Save</span>
+              <select id="cfg-max-versions" class="config-select">
+                <option value="5">5 versões</option>
+                <option value="10">10 versões (Recomendado)</option>
+                <option value="20">20 versões</option>
+                <option value="50">50 versões</option>
+              </select>
+              <span class="config-help">Histórico máximo preservado por savegame antes da poda automática.</span>
+            </div>
+
+            <div class="config-card">
+              <span class="config-label">Intervalo de Reconciliação</span>
+              <select id="cfg-reconcile-interval" class="config-select">
+                <option value="15">15 segundos (Rápido)</option>
+                <option value="30">30 segundos (Padrão)</option>
+                <option value="60">1 minuto</option>
+                <option value="300">5 minutos</option>
+              </select>
+              <span class="config-help">Ciclo de varredura periódica para detecção de arquivos modificados fora do watcher.</span>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+            <div class="config-card">
+              <span class="config-label">Estabilização (Debounce)</span>
+              <select id="cfg-debounce-ms" class="config-select">
+                <option value="1000">1000 ms (1 segundo)</option>
+                <option value="2000">2000 ms (2 segundos)</option>
+                <option value="3000">3000 ms (3 segundos)</option>
+              </select>
+              <span class="config-help">Tempo de espera após o último salvamento para garantir que o jogo fechou o arquivo.</span>
+            </div>
+
+            <div class="config-card">
+              <span class="config-label">Nível de Log</span>
+              <select id="cfg-log-level" class="config-select">
+                <option value="info">Info (Padrão)</option>
+                <option value="debug">Debug (Detalhado)</option>
+                <option value="warn">Warn (Apenas avisos)</option>
+                <option value="error">Error (Apenas erros)</option>
+              </select>
+              <span class="config-help">Verbosidade das mensagens no console e diagnósticos.</span>
+            </div>
+          </div>
+
         </div>
       </div>
 
