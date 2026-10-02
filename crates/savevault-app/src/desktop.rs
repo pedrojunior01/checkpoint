@@ -35,7 +35,23 @@ const BRAVE_PATHS: &[&str] =
 pub fn find_app_mode_executable() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        // 1. Tenta Microsoft Edge (padrão absoluto no Windows 10/11)
+        // 1. Tenta Brave (preferido pelo usuário)
+        for path_str in BRAVE_PATHS {
+            let p = Path::new(path_str);
+            if p.exists() {
+                return Some(p.to_path_buf());
+            }
+        }
+
+        // 2. Tenta Google Chrome
+        for path_str in CHROME_PATHS {
+            let p = Path::new(path_str);
+            if p.exists() {
+                return Some(p.to_path_buf());
+            }
+        }
+
+        // 3. Tenta Microsoft Edge
         for path_str in EDGE_PATHS {
             let p = Path::new(path_str);
             if p.exists() {
@@ -43,7 +59,7 @@ pub fn find_app_mode_executable() -> Option<PathBuf> {
             }
         }
 
-        // 2. Tenta Edge no diretório AppData do usuário
+        // 4. Tenta Edge no diretório AppData do usuário
         if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
             let user_edge = PathBuf::from(local_appdata)
                 .join("Microsoft")
@@ -52,14 +68,6 @@ pub fn find_app_mode_executable() -> Option<PathBuf> {
                 .join("msedge.exe");
             if user_edge.exists() {
                 return Some(user_edge);
-            }
-        }
-
-        // 3. Fallbacks opcionais: Chrome ou Brave
-        for path_str in CHROME_PATHS.iter().chain(BRAVE_PATHS.iter()) {
-            let p = Path::new(path_str);
-            if p.exists() {
-                return Some(p.to_path_buf());
             }
         }
     }
@@ -73,6 +81,7 @@ pub fn is_desktop_mode_available() -> bool {
 }
 
 /// Retorna o caminho do diretório de dados/perfil isolado para a janela do desktop.
+#[allow(dead_code)]
 fn get_desktop_profile_dir() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
     PathBuf::from(appdata)
@@ -82,7 +91,7 @@ fn get_desktop_profile_dir() -> PathBuf {
 
 /// Abre a interface do SaveVault em uma Janela de Desktop Integrada e ultraleve.
 ///
-/// Se um executável com suporte a `--app` (ex.: Microsoft Edge) for encontrado,
+/// Se um executável com suporte a `--app` (ex.: Brave, Chrome, Edge) for encontrado,
 /// inicializa uma janela dedicada isolada (sem abas, sem URL bar, tamanho ajustado).
 /// Caso contrário, faz fallback seguro abrindo no navegador padrão do usuário.
 pub fn open_desktop_window(url: &str) -> anyhow::Result<()> {
@@ -96,11 +105,7 @@ pub fn open_desktop_window(url: &str) -> anyhow::Result<()> {
     }
 
     if let Some(exe_path) = find_app_mode_executable() {
-        let profile_dir = get_desktop_profile_dir();
-        let _ = std::fs::create_dir_all(&profile_dir);
-
         let app_arg = format!("--app={}", url);
-        let user_data_arg = format!("--user-data-dir={}", profile_dir.display());
 
         debug!(
             "Iniciando janela desktop via {} com url: {}",
@@ -110,11 +115,9 @@ pub fn open_desktop_window(url: &str) -> anyhow::Result<()> {
 
         let child = Command::new(&exe_path)
             .arg(&app_arg)
-            .arg(&user_data_arg)
             .arg("--window-size=1260,820")
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
-            .arg("--disable-features=Translate,OptimizationHints,MediaRouter")
             .spawn();
 
         match child {
