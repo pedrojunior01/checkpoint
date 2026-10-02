@@ -160,8 +160,10 @@ fn create_test_hierarchy(
     };
     backups_repo.insert(&backup).unwrap();
 
-    // Cria o arquivo físico na estrutura de backup: <backup_root>/<file_id>/v1/<filename>
-    let version_dir = backup_root.join(file_id.to_string()).join("v1");
+    // Cria o arquivo físico na estrutura correta: <backup_root>/<safe_game_name>/latest/<filename>
+    // Deve espelhar exatamente o que o SnapshotManager e o SyncEngine esperam encontrar no disco.
+    let safe_name = savevault_backup::snapshot::sanitize_name("SyncTestGame");
+    let version_dir = backup_root.join(&safe_name).join("latest");
     std::fs::create_dir_all(&version_dir).unwrap();
     let disk_file = version_dir.join(filename);
     std::fs::write(&disk_file, file_bytes).unwrap();
@@ -209,7 +211,7 @@ async fn test_case_a_successful_upload_flow() {
     // Prova que upload foi registrado na cloud
     let uploads = mock_cloud.uploads();
     assert_eq!(uploads.len(), 1);
-    assert!(uploads[0].1.contains("v1_savegame.sav"));
+    assert!(uploads[0].1.contains("v1_savegame.sav"), "cloud_path deve conter o nome versionado do arquivo");
 
     // Prova que item foi removido da fila após sucesso
     let remaining_queue = queue_repo.list_pending().unwrap();
@@ -299,9 +301,10 @@ async fn test_case_c_missing_physical_file_fails_deterministically() {
         create_test_hierarchy(&conn, &backup_root, "corrupted.sav", b"data");
 
     // Remove propositalmente o arquivo do disco local para simular ausência física
+    let safe_name = savevault_backup::snapshot::sanitize_name("SyncTestGame");
     let disk_file = backup_root
-        .join(backup.file_id.to_string())
-        .join("v1")
+        .join(&safe_name)
+        .join("latest")
         .join("corrupted.sav");
     std::fs::remove_file(disk_file).unwrap();
 
@@ -472,11 +475,13 @@ async fn test_case_f_strict_identification_backup_id_is_distinct_from_file_id() 
     assert_eq!(uploads.len(), 1);
     let (disk_path, cloud_path) = &uploads[0];
 
-    // Verifica que o arquivo lido do disco foi realmente do diretório com file.id
+    // Na nova arquitetura, o caminho físico usa o nome sanitizado do jogo (não o file_id).
+    // O file_id aparece apenas no cloud_path lógico (garantia de rastreabilidade remota).
+    let safe_game_name = savevault_backup::snapshot::sanitize_name("SyncTestGame");
     assert!(
-        disk_path.to_string_lossy().contains(&file.id.to_string()),
-        "Caminho local deve conter file_id ({}), mas foi: {}",
-        file.id,
+        disk_path.to_string_lossy().contains(&safe_game_name),
+        "Caminho local deve conter o nome do jogo sanitizado ({}), mas foi: {}",
+        safe_game_name,
         disk_path.display()
     );
 
@@ -724,9 +729,10 @@ async fn test_case_k_delete_pruned_backup_removes_db_record() {
         .unwrap();
 
     // Simula pruning local: arquivo em disco foi podado/removido
+    let safe_name = savevault_backup::snapshot::sanitize_name("SyncTestGame");
     let snapshot_file = backup_root
-        .join(backup.file_id.to_string())
-        .join(format!("v{}", backup.version))
+        .join(&safe_name)
+        .join("latest")
         .join("pruned_target.sav");
     assert!(snapshot_file.exists());
     std::fs::remove_file(&snapshot_file).unwrap();

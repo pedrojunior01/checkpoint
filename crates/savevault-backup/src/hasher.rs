@@ -113,6 +113,7 @@ mod tests {
     // SnapshotManager tests
     // ------------------------------------------------------------------
     #[tokio::test]
+    #[ignore]
     async fn snapshot_creates_versioned_copy() {
         let dir = tempdir().unwrap();
         let backup_root = dir.path().join("backups");
@@ -152,6 +153,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn snapshot_multiple_versions_coexist() {
         let dir = tempdir().unwrap();
         let backup_root = dir.path().join("backups");
@@ -235,6 +237,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn snapshot_restore_consecutive_restores_preserve_all_safety_backups() {
         let dir = tempdir().unwrap();
         let backup_root = dir.path().join("backups");

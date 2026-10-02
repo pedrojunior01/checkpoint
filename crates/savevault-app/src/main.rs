@@ -102,6 +102,21 @@ fn main() -> anyhow::Result<()> {
         _ => {}
     }
 
+    // ── Modo Desktop (Tauri) ──────────────────────────────────────────────────
+    // No Windows, a janela gráfica DEVE ser inicializada na thread principal.
+    // Por isso, quando compilado com --features desktop (e sem sub-comandos CLI),
+    // fazemos o seguinte:
+    //   1. Subimos o tokio runtime em uma thread separada de background.
+    //   2. Bloqueamos ESSA thread (principal) para iniciar o Tauri.
+    #[cfg(feature = "desktop")]
+    {
+        let should_run_ui = args.is_empty() || args.iter().any(|a| a == "--ui" || a == "ui");
+        if should_run_ui {
+            return run_desktop_main(args);
+        }
+    }
+
+    // ── Modo CLI / Headless ──────────────────────────────────────────────────
     // Executa o runtime assíncrono em thread com stack de 16MB para evitar
     // estouro do stack padrão de 1MB da thread primária do Windows sob GCC/MinGW
     let handle = std::thread::Builder::new()
@@ -121,6 +136,131 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Ponto de entrada do modo desktop: o tokio sobe em background e o
+/// Tauri (event loop de GUI) toma conta da thread principal.
+#[cfg(feature = "desktop")]
+fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
+    use std::sync::Arc;
+
+    dotenvy::dotenv().ok();
+
+    // Inicializa tracing
+    let log_level = std::env::var("SAVEVAULT_LOG").unwrap_or_else(|_| "info".into());
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level)),
+        )
+        .try_init();
+
+    // Carrega config e banco
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    let config_dir = std::path::PathBuf::from(&appdata).join("SaveVault");
+    let config_path = config_dir.join("config.toml");
+    let config = Config::load(&config_path).unwrap_or_default();
+    let _ = config.save(&config_path);
+
+    let db = savevault_db::Database::open(&config.paths.database_path)?;
+    let locations_repo = savevault_db::repositories::SaveLocationsRepo::new(&db.conn);
+    let all_locations = locations_repo.list_all().unwrap_or_default();
+    let db_conn = Arc::new(tokio::sync::Mutex::new(db.conn));
+
+    let reconciler = Arc::new(savevault_app::Reconciler::new(
+        db_conn.clone(),
+        config.paths.backup_dir.clone(),
+        config.general.max_versions,
+    ));
+
+    let state = Arc::new(savevault_app::DevUiState::new(
+        db_conn.clone(),
+        config.paths.database_path.clone(),
+        config.paths.backup_dir.clone(),
+        Some(reconciler.clone()),
+        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+    ));
+
+    // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, servidor HTTP)
+    let state_bg = state.clone();
+    let config_bg = config.clone();
+    let db_conn_bg = db_conn.clone();
+    let reconciler_bg = reconciler.clone();
+    std::thread::Builder::new()
+        .name("savevault-backend".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(8 * 1024 * 1024)
+                .build()
+                .expect("Falha ao criar runtime tokio");
+            rt.block_on(async move {
+                let reconciler_config = savevault_app::ReconciliationConfig::new(
+                    std::time::Duration::from_secs(config_bg.general.reconciliation_interval_secs),
+                );
+                let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
+                let recon_shutdown_rx = shutdown_tx.subscribe();
+                let server_shutdown_rx = shutdown_tx.subscribe();
+
+                // Reconciler
+                let _recon_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
+                    reconciler_bg.clone(),
+                    reconciler_config,
+                    recon_shutdown_rx,
+                ));
+
+                // Servidor HTTP (fallback dev-ui e API)
+                let _ = savevault_app::start_dev_ui_server(
+                    state_bg.clone(),
+                    4040,
+                    server_shutdown_rx,
+                )
+                .await;
+
+                // Watcher + Pipeline
+                let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
+                let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
+                watcher_config.debounce.debounce_duration =
+                    std::time::Duration::from_millis(config_bg.general.debounce_ms);
+
+                if !all_locations.is_empty() {
+                    match savevault_monitor::watcher::SaveWatcherService::start(
+                        watcher_config,
+                        all_locations,
+                        file_access,
+                    ) {
+                        Ok((_watcher, rx)) => {
+                            let _ = savevault_app::pipeline::run_pipeline(
+                                db_conn_bg.clone(),
+                                rx,
+                                config_bg.paths.backup_dir.clone(),
+                                config_bg.general.max_versions,
+                                pipeline_shutdown_rx,
+                                false,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Watcher não pôde ser iniciado: {}", e);
+                            let _ = tokio::signal::ctrl_c().await;
+                        }
+                    }
+                } else {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+
+                let _ = shutdown_tx.send(true);
+            });
+        })?;
+
+    // Thread principal fica bloqueada rodando o Tauri (event loop nativo do Windows)
+    println!("================================================================================");
+    println!("               checkpoint — Iniciando Interface Desktop                         ");
+    println!("================================================================================");
+
+    savevault_app::ui::tauri_app::run_tauri_app(state)
+}
+
+
 async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     // Inicializa o tracing
     let log_level = std::env::var("SAVEVAULT_LOG").unwrap_or_else(|_| "info".into());
@@ -139,11 +279,19 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     let _ = config.save(&config_path);
     savevault_app::notifications::init_from_config(&config.notifications);
 
-    // Roteia modo Janela Desktop / DEV-UI se solicitado
-    if args
+    // Se compilado com desktop, modo GUI é o padrão quando não há argumentos.
+    // Senão, exige `--ui`, `ui`, `desktop`, `--desktop` ou `--app`.
+    #[cfg(feature = "desktop")]
+    let should_run_ui = args.is_empty()
+        || args
+            .iter()
+            .any(|a| a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop");
+    #[cfg(not(feature = "desktop"))]
+    let should_run_ui = args
         .iter()
-        .any(|a| a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop")
-    {
+        .any(|a| a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop");
+
+    if should_run_ui {
         return handle_ui_command(&config, &config_path).await;
     }
 
@@ -310,6 +458,19 @@ async fn run_resident_daemon(
 
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
+    // Limpeza de Banco de Dados (Pruning)
+    let backups_repo = savevault_db::repositories::BackupsRepo::new(&db.conn);
+    let sync_queue_repo = savevault_db::repositories::SyncQueueRepo::new(&db.conn);
+    if let Ok(count) = backups_repo.prune_old_records(30) {
+        if count > 0 {
+            tracing::info!("Pruning: {} backups antigos removidos do DB.", count);
+        }
+    }
+    if let Ok(count) = sync_queue_repo.prune_completed_or_old(30) {
+        if count > 0 {
+            tracing::info!("Pruning: {} itens da fila de sync removidos.", count);
+        }
+    }
     let locations_repo = SaveLocationsRepo::new(&db.conn);
 
     tracing::info!(
@@ -1429,14 +1590,33 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
     let (addr, server_handle) =
         savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
 
+    #[cfg(feature = "desktop")]
+    {
+        println!("================================================================================");
+        println!("               checkpoint — Modo Desktop Ativo                                  ");
+        println!("================================================================================");
+
+        let state_clone = state.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = savevault_app::ui::tauri_app::run_tauri_app(state_clone) {
+                tracing::error!("Falha ao iniciar Tauri: {}", e);
+            }
+            std::process::exit(0);
+        });
+    }
+
+    #[cfg(not(feature = "desktop"))]
     let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), addr.port());
 
     let ui_url = format!("http://{}", addr);
-    println!("  Interface SaveVault ativa em: {}", ui_url);
-    println!("  Iniciando Janela Desktop ultraleve... (Pressione Ctrl+C ou feche a janela/bandeja para encerrar)");
-    println!("================================================================================");
+    #[cfg(not(feature = "desktop"))]
+    {
+        println!("  Interface SaveVault ativa em: {}", ui_url);
+        println!("  Iniciando Janela Desktop ultraleve... (Pressione Ctrl+C ou feche a janela/bandeja para encerrar)");
+        println!("================================================================================");
 
-    let _ = savevault_app::desktop::open_desktop_window(&ui_url);
+        let _ = savevault_app::desktop::open_desktop_window(&ui_url);
+    }
 
     let mut tray_shutdown_rx = shutdown_tx.subscribe();
 
