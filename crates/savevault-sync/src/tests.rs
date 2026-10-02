@@ -211,7 +211,10 @@ async fn test_case_a_successful_upload_flow() {
     // Prova que upload foi registrado na cloud
     let uploads = mock_cloud.uploads();
     assert_eq!(uploads.len(), 1);
-    assert!(uploads[0].1.contains("v1_savegame.sav"), "cloud_path deve conter o nome versionado do arquivo");
+    assert!(
+        uploads[0].1.contains("v1_savegame.sav"),
+        "cloud_path deve conter o nome versionado do arquivo"
+    );
 
     // Prova que item foi removido da fila após sucesso
     let remaining_queue = queue_repo.list_pending().unwrap();

@@ -1,7 +1,59 @@
-const { invoke } = window.__TAURI__.core;
-const { getCurrentWindow } = window.__TAURI__.window;
+const hasTauri = typeof window !== "undefined" && !!(window.__TAURI__ && window.__TAURI__.core);
+const appWindow = (typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.window)
+    ? window.__TAURI__.window.getCurrentWindow()
+    : {
+        minimize: () => {},
+        toggleMaximize: () => {},
+        close: () => window.close(),
+    };
 
-const appWindow = getCurrentWindow();
+async function invoke(command, args = {}) {
+    if (hasTauri) {
+        return window.__TAURI__.core.invoke(command, args);
+    }
+    switch (command) {
+        case "get_dashboard_status": {
+            const res = await fetch("/api/dashboard");
+            return await res.json();
+        }
+        case "get_locations": {
+            const res = await fetch("/api/locations");
+            return await res.json();
+        }
+        case "get_snapshots": {
+            const res = await fetch("/api/snapshots");
+            return await res.json();
+        }
+        case "get_safety_backups": {
+            const res = await fetch("/api/safety-backups");
+            return await res.json();
+        }
+        case "get_reconciliation_status": {
+            const res = await fetch("/api/reconciliation");
+            return await res.json();
+        }
+        case "trigger_reconcile": {
+            const res = await fetch("/api/reconcile-now", {
+                method: "POST",
+                headers: { "X-SaveVault-Request": "1" },
+            });
+            const data = await res.json();
+            return `${data.files_changed || 0} arquivo(s) modificado(s)`;
+        }
+        case "restore_snapshot": {
+            const res = await fetch("/api/restore", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    snapshot_id: args.snapshotId || args.snapshot_id,
+                }),
+            });
+            return await res.json();
+        }
+        default:
+            throw new Error(`Comando não implementado: ${command}`);
+    }
+}
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
@@ -255,11 +307,12 @@ async function loadNuvem() {
                 <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500 text-xl">☁️</div>
                     <div>
-                        <p class="font-semibold text-slate-800">Google Drive</p>
-                        <p class="text-sm text-slate-500">${data.app_status || "Verificando..."}</p>
+                        <p class="font-semibold text-slate-800">Pasta Local da Nuvem</p>
+                        <p class="text-sm text-slate-500">${data.app_status || "Ativo"}</p>
                     </div>
                 </div>
-                <div class="text-sm text-slate-600 space-y-1 pt-1 border-t border-slate-100">
+                <div class="text-sm text-slate-600 space-y-1.5 pt-1 border-t border-slate-100">
+                    <p>📁 Provedor: <strong>Sincronização via Pasta Local (OneDrive / Drive / Dropbox)</strong></p>
                     <p>📦 Itens na fila de sync: <strong>${data.sync_pending_count ?? 0}</strong></p>
                     <p>🔄 Último sync: <strong>${formatHour(data.last_reconciliation_time)}</strong></p>
                 </div>

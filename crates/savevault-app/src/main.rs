@@ -209,12 +209,9 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                 ));
 
                 // Servidor HTTP (fallback dev-ui e API)
-                let _ = savevault_app::start_dev_ui_server(
-                    state_bg.clone(),
-                    4040,
-                    server_shutdown_rx,
-                )
-                .await;
+                let _ =
+                    savevault_app::start_dev_ui_server(state_bg.clone(), 4040, server_shutdown_rx)
+                        .await;
 
                 // Watcher + Pipeline
                 let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
@@ -260,7 +257,6 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     savevault_app::ui::tauri_app::run_tauri_app(state)
 }
 
-
 async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     // Inicializa o tracing
     let log_level = std::env::var("SAVEVAULT_LOG").unwrap_or_else(|_| "info".into());
@@ -283,9 +279,9 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     // Senão, exige `--ui`, `ui`, `desktop`, `--desktop` ou `--app`.
     #[cfg(feature = "desktop")]
     let should_run_ui = args.is_empty()
-        || args
-            .iter()
-            .any(|a| a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop");
+        || args.iter().any(|a| {
+            a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop"
+        });
     #[cfg(not(feature = "desktop"))]
     let should_run_ui = args
         .iter()
@@ -1592,9 +1588,15 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
 
     #[cfg(feature = "desktop")]
     {
-        println!("================================================================================");
-        println!("               checkpoint — Modo Desktop Ativo                                  ");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
+        println!(
+            "               checkpoint — Modo Desktop Ativo                                  "
+        );
+        println!(
+            "================================================================================"
+        );
 
         let state_clone = state.clone();
         std::thread::spawn(move || {
@@ -1613,7 +1615,9 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
     {
         println!("  Interface SaveVault ativa em: {}", ui_url);
         println!("  Iniciando Janela Desktop ultraleve... (Pressione Ctrl+C ou feche a janela/bandeja para encerrar)");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
 
         let _ = savevault_app::desktop::open_desktop_window(&ui_url);
     }

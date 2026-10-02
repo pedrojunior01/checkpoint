@@ -61,7 +61,6 @@ impl<'a> BackupsRepo<'a> {
         Ok(deleted)
     }
 
-
     pub fn update_sync_status(&self, id: Uuid, status: &SyncStatus) -> Result<()> {
         self.conn.execute(
             "UPDATE backups SET sync_status = ?1 WHERE id = ?2",

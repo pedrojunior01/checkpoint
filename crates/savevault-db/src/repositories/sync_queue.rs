@@ -73,7 +73,6 @@ impl<'a> SyncQueueRepo<'a> {
         Ok(deleted)
     }
 
-
     pub fn delete(&self, id: Uuid) -> Result<()> {
         self.conn.execute(
             "DELETE FROM sync_queue WHERE id = ?1",

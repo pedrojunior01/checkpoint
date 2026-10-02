@@ -26,9 +26,7 @@ pub async fn get_locations(state: State<'_, Arc<DevUiState>>) -> Result<Vec<Loca
 }
 
 #[tauri::command]
-pub async fn get_snapshots(
-    state: State<'_, Arc<DevUiState>>,
-) -> Result<Vec<SnapshotView>, String> {
+pub async fn get_snapshots(state: State<'_, Arc<DevUiState>>) -> Result<Vec<SnapshotView>, String> {
     state.get_snapshots().await.map_err(|e| e.to_string())
 }
 
