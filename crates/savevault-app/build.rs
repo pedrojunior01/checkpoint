@@ -1,7 +1,6 @@
 // build.rs do savevault-app
-// Quando a feature 'desktop' está ativa, aciona o tauri-build para preparar
-// os recursos de janela, ícones e manifesto do Windows.
-// Sem a feature, este arquivo não faz nada, mantendo o build padrão CLI intacto.
+// Prepara os recursos do Windows (ícone da aplicação, ícone do tray e manifesto)
+// e os módulos da feature 'desktop' (Tauri).
 
 fn main() {
     #[cfg(feature = "desktop")]
@@ -20,5 +19,13 @@ fn main() {
                 }
             }
         }
+    }
+
+    #[cfg(windows)]
+    {
+        let mut res = winres::WindowsResource::new();
+        res.set_icon("icons/icon.ico");
+        res.set_resource_file("savevault.rc");
+        let _ = res.compile();
     }
 }

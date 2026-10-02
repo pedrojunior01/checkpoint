@@ -54,6 +54,7 @@ tauri = { workspace = true, optional = true }
 [build-dependencies]
 # tauri-build só compila quando 'desktop' está ativa
 tauri-build = { workspace = true, optional = true }
+winres = "0.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

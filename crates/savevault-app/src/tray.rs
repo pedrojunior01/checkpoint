@@ -102,10 +102,13 @@ pub fn setup_tray(
         let title = format!("SaveVault v{}", env!("CARGO_PKG_VERSION"));
         let mut tray = match TrayItem::new(&title, IconSource::Resource("tray-default")) {
             Ok(t) => t,
-            Err(e) => {
-                tracing::warn!("Falha ao inicializar System Tray: {}", e);
-                return None;
-            }
+            Err(_) => match TrayItem::new(&title, IconSource::Resource("1")) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Falha ao inicializar System Tray: {}", e);
+                    return None;
+                }
+            },
         };
 
         // Rótulo de título / versão

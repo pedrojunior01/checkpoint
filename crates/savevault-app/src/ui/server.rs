@@ -263,6 +263,17 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             .await?;
         }
 
+        ("GET", "/favicon.ico") => {
+            send_bytes_response(
+                &mut stream,
+                200,
+                "OK",
+                "image/x-icon",
+                include_bytes!("../../icons/icon.ico"),
+            )
+            .await?;
+        }
+
         // -------------------------------------------------------------
         // REST: Dashboard
         // -------------------------------------------------------------
@@ -713,6 +724,33 @@ async fn send_response(
     );
 
     stream.write_all(response.as_bytes()).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+/// Envia uma resposta HTTP/1.1 binária (ex: favicon/ícones) e fecha o stream.
+async fn send_bytes_response(
+    stream: &mut TcpStream,
+    status_code: u16,
+    reason: &str,
+    content_type: &str,
+    body: &[u8],
+) -> anyhow::Result<()> {
+    let header = format!(
+        "HTTP/1.1 {} {}\r\n\
+         Content-Type: {}\r\n\
+         Content-Length: {}\r\n\
+         Access-Control-Allow-Origin: http://127.0.0.1:4040\r\n\
+         Connection: close\r\n\
+         \r\n",
+        status_code,
+        reason,
+        content_type,
+        body.len()
+    );
+
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(body).await?;
     stream.flush().await?;
     Ok(())
 }
