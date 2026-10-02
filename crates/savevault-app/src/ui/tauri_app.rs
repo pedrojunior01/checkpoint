@@ -133,7 +133,10 @@ pub async fn add_game(
     name: String,
     path: String,
 ) -> Result<LocationView, String> {
-    state.add_game(&name, &path).await.map_err(|e| e.to_string())
+    state
+        .add_game(&name, &path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

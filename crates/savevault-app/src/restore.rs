@@ -467,7 +467,8 @@ pub async fn execute_restore_filesystem(
             ))
         })?;
 
-    let rel_path = savevault_core::path::compute_relative_path(dest_path, &metadata.save_location.path);
+    let rel_path =
+        savevault_core::path::compute_relative_path(dest_path, &metadata.save_location.path);
 
     let source_path = validate_snapshot_security(
         backup_root,

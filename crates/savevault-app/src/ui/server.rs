@@ -715,16 +715,34 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                     Ok(payload) => match state.add_game(&payload.name, &payload.path).await {
                         Ok(view) => {
                             let json = serde_json::to_string(&view)?;
-                            send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                            send_response(&mut stream, 200, "OK", "application/json", &json)
+                                .await?;
                         }
                         Err(e) => {
-                            let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                            send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                            let err_json =
+                                serde_json::json!({ "error": e.to_string() }).to_string();
+                            send_response(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                "application/json",
+                                &err_json,
+                            )
+                            .await?;
                         }
                     },
                     Err(e) => {
-                        let err_json = serde_json::json!({ "error": format!("JSON inválido: {}", e) }).to_string();
-                        send_response(&mut stream, 400, "Bad Request", "application/json", &err_json).await?;
+                        let err_json =
+                            serde_json::json!({ "error": format!("JSON inválido: {}", e) })
+                                .to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json",
+                            &err_json,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -747,16 +765,40 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 match serde_json::from_str::<OpenFolderPayload>(body) {
                     Ok(payload) => match open_path_in_explorer(&payload.path) {
                         Ok(()) => {
-                            send_response(&mut stream, 200, "OK", "application/json", r#"{"success":true}"#).await?;
+                            send_response(
+                                &mut stream,
+                                200,
+                                "OK",
+                                "application/json",
+                                r#"{"success":true}"#,
+                            )
+                            .await?;
                         }
                         Err(e) => {
-                            let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                            send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                            let err_json =
+                                serde_json::json!({ "error": e.to_string() }).to_string();
+                            send_response(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                "application/json",
+                                &err_json,
+                            )
+                            .await?;
                         }
                     },
                     Err(e) => {
-                        let err_json = serde_json::json!({ "error": format!("JSON inválido: {}", e) }).to_string();
-                        send_response(&mut stream, 400, "Bad Request", "application/json", &err_json).await?;
+                        let err_json =
+                            serde_json::json!({ "error": format!("JSON inválido: {}", e) })
+                                .to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json",
+                            &err_json,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -772,24 +814,42 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             }
             Err(e) => {
                 let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
             }
         },
 
         ("POST", "/api/cloud/update") => {
-            let payload: CloudUpdatePayload = serde_json::from_str(body).unwrap_or(CloudUpdatePayload {
-                provider: None,
-                local_sync_path: None,
-                enabled: None,
-            });
-            match state.update_cloud_config(payload.provider, payload.local_sync_path, payload.enabled).await {
+            let payload: CloudUpdatePayload =
+                serde_json::from_str(body).unwrap_or(CloudUpdatePayload {
+                    provider: None,
+                    local_sync_path: None,
+                    enabled: None,
+                });
+            match state
+                .update_cloud_config(payload.provider, payload.local_sync_path, payload.enabled)
+                .await
+            {
                 Ok(cfg) => {
                     let json = serde_json::to_string(&cfg)?;
                     send_response(&mut stream, 200, "OK", "application/json", &json).await?;
                 }
                 Err(e) => {
                     let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                    send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
                 }
             }
         }
@@ -804,7 +864,14 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             }
             Err(e) => {
                 let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
             }
         },
 
@@ -815,7 +882,14 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             }
             Err(e) => {
                 let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
-                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
             }
         },
 

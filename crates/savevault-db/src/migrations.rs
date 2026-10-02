@@ -236,4 +236,3 @@ DELETE FROM files WHERE save_location_id NOT IN (SELECT id FROM save_locations);
 DELETE FROM backups WHERE file_id NOT IN (SELECT id FROM files);
 DELETE FROM sync_queue WHERE backup_id NOT IN (SELECT id FROM backups);
 ";
-

@@ -309,10 +309,7 @@ impl SnapshotManager {
             .join(format!("v{}", version));
 
         let filename = rel_path.file_name().unwrap_or(rel_path.as_os_str());
-        let targets = [
-            version_dir.join(rel_path),
-            version_dir.join(filename),
-        ];
+        let targets = [version_dir.join(rel_path), version_dir.join(filename)];
 
         for target in targets {
             if target.exists() && target.is_file() {
@@ -340,10 +337,7 @@ impl SnapshotManager {
             .join(format!("v{}", version));
 
         if legacy_dir.exists() {
-            let legacy_targets = [
-                legacy_dir.join(rel_path),
-                legacy_dir.join(filename),
-            ];
+            let legacy_targets = [legacy_dir.join(rel_path), legacy_dir.join(filename)];
             for lt in legacy_targets {
                 if lt.exists() && lt.is_file() {
                     let _ = tokio::fs::remove_file(&lt).await;

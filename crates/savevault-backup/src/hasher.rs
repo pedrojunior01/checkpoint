@@ -386,8 +386,16 @@ mod tests {
             .unwrap();
 
         // Verificar que ambos coexistem sem sobrescrita
-        let snap1 = backup_root.join("DarkSouls").join("v1").join("slot1").join("data.sav");
-        let snap2 = backup_root.join("DarkSouls").join("v1").join("slot2").join("data.sav");
+        let snap1 = backup_root
+            .join("DarkSouls")
+            .join("v1")
+            .join("slot1")
+            .join("data.sav");
+        let snap2 = backup_root
+            .join("DarkSouls")
+            .join("v1")
+            .join("slot2")
+            .join("data.sav");
 
         assert!(snap1.exists(), "Snapshot do slot 1 deve existir isolado");
         assert!(snap2.exists(), "Snapshot do slot 2 deve existir isolado");
@@ -404,6 +412,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(std::fs::read_to_string(&restore_dest1).unwrap(), "conteudo slot 1");
+        assert_eq!(
+            std::fs::read_to_string(&restore_dest1).unwrap(),
+            "conteudo slot 1"
+        );
     }
 }

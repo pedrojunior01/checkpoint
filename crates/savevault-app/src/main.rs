@@ -973,11 +973,9 @@ async fn handle_cloud_list(config: &Config) -> anyhow::Result<()> {
         &config.cloud.provider,
         &config.paths.backup_dir,
     );
-    let _ = savevault_app::cloud_recovery::reconstruct_catalog_from_cloud(
-        &db.conn,
-        provider.as_ref(),
-    )
-    .await;
+    let _ =
+        savevault_app::cloud_recovery::reconstruct_catalog_from_cloud(&db.conn, provider.as_ref())
+            .await;
     let items =
         savevault_app::cloud_recovery::list_cloud_snapshots(&db.conn, &config.paths.backup_dir)?;
 

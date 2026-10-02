@@ -533,11 +533,25 @@ async fn test_end_to_end_subdirectories_snapshot_and_restore() {
 
     // Verificar que os arquivos no backup não se sobrescreveram
     let safe_game = savevault_backup::snapshot::sanitize_name(&game.name);
-    let backup_slot1_file = backup_dir.join(&safe_game).join("v1").join("slot1").join("save.dat");
-    let backup_slot2_file = backup_dir.join(&safe_game).join("v1").join("slot2").join("save.dat");
+    let backup_slot1_file = backup_dir
+        .join(&safe_game)
+        .join("v1")
+        .join("slot1")
+        .join("save.dat");
+    let backup_slot2_file = backup_dir
+        .join(&safe_game)
+        .join("v1")
+        .join("slot2")
+        .join("save.dat");
 
-    assert!(backup_slot1_file.exists(), "Snapshot do slot 1 deve existir em sua subpasta");
-    assert!(backup_slot2_file.exists(), "Snapshot do slot 2 deve existir em sua subpasta");
+    assert!(
+        backup_slot1_file.exists(),
+        "Snapshot do slot 1 deve existir em sua subpasta"
+    );
+    assert!(
+        backup_slot2_file.exists(),
+        "Snapshot do slot 2 deve existir em sua subpasta"
+    );
 
     assert_eq!(
         std::fs::read_to_string(&backup_slot1_file).unwrap(),

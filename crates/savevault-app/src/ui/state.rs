@@ -1019,12 +1019,7 @@ impl DevUiState {
             {
                 existing.id
             } else {
-                let game = Game::new(
-                    name,
-                    Platform::Generic,
-                    None,
-                    Confidence::High,
-                );
+                let game = Game::new(name, Platform::Generic, None, Confidence::High);
                 games_repo.insert(&game)?;
                 game.id
             };
@@ -1203,7 +1198,11 @@ impl DevUiState {
         #[cfg(not(target_os = "windows"))]
         {
             let output = std::process::Command::new("zip")
-                .args(["-r", target_zip.to_str().unwrap(), backup_dir.to_str().unwrap()])
+                .args([
+                    "-r",
+                    target_zip.to_str().unwrap(),
+                    backup_dir.to_str().unwrap(),
+                ])
                 .output()?;
             if !output.status.success() {
                 anyhow::bail!("Falha ao compactar arquivo no Linux/macOS");
@@ -1246,15 +1245,11 @@ pub fn open_path_in_explorer(path_str: &str) -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(target)
-            .spawn()?;
+        std::process::Command::new("explorer").arg(target).spawn()?;
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(target)
-            .spawn();
+        let _ = std::process::Command::new("xdg-open").arg(target).spawn();
     }
     Ok(())
 }
