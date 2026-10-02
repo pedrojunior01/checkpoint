@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo};
 use savevault_monitor::scanner::SaveScanner;
 
@@ -174,6 +175,15 @@ pub struct SetupStatusView {
     pub games_count: usize,
     pub autostart_enabled: bool,
     pub notifications_enabled: bool,
+}
+
+/// Configurações detalhadas da nuvem para a UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudConfigView {
+    pub provider: String,
+    pub local_sync_path: String,
+    pub enabled: bool,
+    pub detected_folders: Vec<savevault_cloud::DetectedCloudFolder>,
 }
 
 /// Jogo descoberto durante o scan do assistente.
@@ -973,6 +983,155 @@ impl DevUiState {
 
         self.get_setup_status().await
     }
+
+    /// Cadastra um jogo e local de save manualmente através da UI.
+    pub async fn add_game(&self, name: &str, path_str: &str) -> Result<LocationView> {
+        let raw_path = PathBuf::from(path_str);
+        let location_type = if raw_path.is_file() {
+            SaveLocationType::File
+        } else {
+            SaveLocationType::Directory
+        };
+
+        let (game_id, loc) = {
+            let conn = self.db.lock().await;
+            let games_repo = GamesRepo::new(&conn);
+            let locations_repo = SaveLocationsRepo::new(&conn);
+
+            let game_id = if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(name, &Platform::Generic)
+            {
+                existing.id
+            } else {
+                let game = Game::new(
+                    name,
+                    Platform::Generic,
+                    None,
+                    Confidence::High,
+                );
+                games_repo.insert(&game)?;
+                game.id
+            };
+
+            let loc = SaveLocation::new(game_id, raw_path.clone(), location_type);
+            locations_repo.upsert(&loc)?;
+            (game_id, loc)
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!("Jogo manual '{}' cadastrado com sucesso", name),
+            Some(raw_path.display().to_string()),
+        )
+        .await;
+
+        Ok(LocationView {
+            id: loc.id,
+            game_id,
+            game_name: name.to_string(),
+            platform: "Generic".to_string(),
+            path: raw_path.display().to_string(),
+            location_type: format!("{:?}", loc.location_type),
+            exists_on_disk: raw_path.exists(),
+            monitored_files_count: 0,
+            last_check: Utc::now().format("%H:%M:%S").to_string(),
+        })
+    }
+
+    /// Retorna as configurações atuais de nuvem.
+    pub async fn get_cloud_config(&self) -> Result<CloudConfigView> {
+        let config = self.get_config();
+        let detected = savevault_cloud::detect_cloud_folders();
+        let local_path = config
+            .cloud
+            .local_sync_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+
+        let enabled = config.cloud.provider != "none" && !local_path.is_empty();
+
+        Ok(CloudConfigView {
+            provider: config.cloud.provider,
+            local_sync_path: local_path,
+            enabled,
+            detected_folders: detected,
+        })
+    }
+
+    /// Atualiza as configurações de nuvem.
+    pub async fn update_cloud_config(
+        &self,
+        provider: Option<String>,
+        local_sync_path: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<CloudConfigView> {
+        let mut config = self.get_config();
+        let config_path = self.resolve_config_path();
+
+        if let Some(p) = provider {
+            config.cloud.provider = p;
+        }
+
+        if let Some(lsp) = local_sync_path {
+            let trimmed = lsp.trim();
+            if !trimmed.is_empty() {
+                let pb = PathBuf::from(trimmed);
+                let _ = std::fs::create_dir_all(&pb);
+                config.cloud.local_sync_path = Some(pb);
+            }
+        }
+
+        if let Some(en) = enabled {
+            if !en {
+                config.cloud.provider = "none".to_string();
+            } else if config.cloud.provider == "none" {
+                config.cloud.provider = "local_folder".to_string();
+            }
+        }
+
+        config.save(&config_path)?;
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Configurações de nuvem atualizadas".to_string(),
+            Some(format!(
+                "Provedor: {}, Pasta: {:?}",
+                config.cloud.provider, config.cloud.local_sync_path
+            )),
+        )
+        .await;
+
+        self.get_cloud_config().await
+    }
+}
+
+/// Abre uma pasta ou arquivo no Windows Explorer (ou gerenciador nativo).
+pub fn open_path_in_explorer(path_str: &str) -> anyhow::Result<()> {
+    let p = std::path::Path::new(path_str);
+    let target = if p.is_file() {
+        p.parent().unwrap_or(p)
+    } else {
+        p
+    };
+
+    if !target.exists() {
+        let _ = std::fs::create_dir_all(target);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(target)
+            .spawn()?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn();
+    }
+    Ok(())
 }
 
 /// Formata bytes de forma legível.

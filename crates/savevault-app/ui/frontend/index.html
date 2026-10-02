@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -25,6 +26,11 @@
           boxShadow: { xs: '0 1px 3px rgba(0,0,0,0.06)' }
         }
       }
+    };
+    if (localStorage.getItem("savevault-theme") === "dark" || (!localStorage.getItem("savevault-theme") && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
     }
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -44,26 +50,26 @@
 <body class="bg-transparent w-screen h-screen overflow-hidden select-none font-sans p-1">
 
 <!-- Desktop window wrapper -->
-<div class="w-full h-full bg-slate-50/95 backdrop-blur-md rounded-xl shadow-2xl border border-slate-300/70 overflow-hidden flex flex-col">
+<div class="w-full h-full bg-slate-50/95 dark:bg-slate-950 backdrop-blur-md rounded-xl shadow-2xl border border-slate-300/70 dark:border-slate-800 text-slate-900 dark:text-slate-100 overflow-hidden flex flex-col">
 
   <!-- ── TitleBar ── -->
-  <header data-tauri-drag-region class="h-9 px-4 flex items-center justify-between border-b border-slate-200/60 bg-white/60 shrink-0">
+  <header data-tauri-drag-region class="h-9 px-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/60 shrink-0">
     <div class="flex items-center gap-2 pointer-events-none">
-      <div class="w-4 h-4 bg-slate-800 rounded flex items-center justify-center">
+      <div class="w-4 h-4 bg-slate-800 dark:bg-emerald-600 rounded flex items-center justify-center">
         <svg class="w-2.5 h-2.5 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
-      <span class="text-xs font-semibold text-slate-600 tracking-tight">checkpoint</span>
+      <span class="text-xs font-semibold text-slate-600 dark:text-slate-300 tracking-tight">checkpoint</span>
     </div>
     <div class="flex items-center gap-1">
-      <button id="titlebar-minimize" aria-label="Minimizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 text-slate-400 hover:text-slate-700 transition-colors">
+      <button id="titlebar-minimize" aria-label="Minimizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
-      <button id="titlebar-maximize" aria-label="Maximizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 text-slate-400 hover:text-slate-700 transition-colors">
+      <button id="titlebar-maximize" aria-label="Maximizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button id="titlebar-close" aria-label="Fechar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors">
+      <button id="titlebar-close" aria-label="Fechar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition-colors">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -73,39 +79,58 @@
   <div class="flex flex-1 overflow-hidden">
 
     <!-- ── Sidebar ── -->
-    <aside class="w-52 bg-white/50 border-r border-slate-200/60 flex flex-col p-4 shrink-0">
+    <aside class="w-56 bg-white/50 dark:bg-slate-900/50 border-r border-slate-200/60 dark:border-slate-800 flex flex-col p-4 shrink-0">
       <!-- Logo -->
       <div class="flex items-center gap-2 px-2 mb-6">
-        <div class="w-7 h-7 bg-slate-800 rounded-lg flex items-center justify-center shadow-sm">
+        <div class="w-7 h-7 bg-slate-800 dark:bg-emerald-600 rounded-lg flex items-center justify-center shadow-sm">
           <svg class="w-4 h-4 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <span class="font-bold text-slate-800 text-base tracking-tight">checkpoint</span>
+        <span class="font-bold text-slate-800 dark:text-slate-100 text-base tracking-tight">checkpoint</span>
       </div>
 
       <!-- Navigation -->
       <nav class="space-y-0.5 flex-1">
-        <a id="nav-inicio" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer">
+        <a id="nav-inicio" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Início</span>
         </a>
-        <a id="nav-jogos" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer">
+        <a id="nav-jogos" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Jogos</span>
         </a>
-        <a id="nav-atividade" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer">
+        <a id="nav-atividade" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Atividade</span>
         </a>
-        <a id="nav-nuvem" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer">
+        <a id="nav-nuvem" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Nuvem</span>
         </a>
       </nav>
 
+      <!-- Botão de Ajuda (?) acima de Configurações -->
+      <a id="nav-ajuda" href="#" onclick="openHelpModal(event)" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-auto">
+        <div class="w-4 h-4 rounded-full border border-slate-400 dark:border-slate-500 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">?</div>
+        <span>Ajuda & Guia</span>
+      </a>
+
+      <!-- Alternador Modo Escuro -->
+      <button id="btn-theme-toggle" onclick="toggleTheme()" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer w-full text-left mt-1">
+        <span id="theme-toggle-icon" class="text-sm">🌙</span>
+        <span id="theme-toggle-label">Modo Escuro</span>
+      </button>
+
       <!-- Settings at bottom -->
-      <a id="nav-config" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer mt-2">
+      <a id="nav-config" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-1">
+        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Configurações</span>
+      </a>
+    </aside>
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round"/>
@@ -174,39 +199,47 @@
       <div id="tab-jogos" class="hidden p-6 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 class="text-lg font-bold text-slate-900">Jogos Detectados</h2>
-            <span class="text-sm text-slate-400">Todos os locais de save monitorados</span>
+            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Jogos Monitorados</h2>
+            <span class="text-sm text-slate-400">Todos os locais de save protegidos pelo SaveVault</span>
           </div>
 
-          <!-- Barra de Pesquisa com Lupa -->
-          <div class="relative w-full sm:w-72">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <circle cx="11" cy="11" r="8"></circle>
-                <path d="M21 21l-4.35-4.35" stroke-linecap="round" stroke-linejoin="round"></path>
-              </svg>
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <!-- Barra de Pesquisa com Lupa -->
+            <div class="relative flex-1 sm:w-64">
+              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <path d="M21 21l-4.35-4.35" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              </div>
+              <input
+                type="text"
+                id="jogos-search-input"
+                placeholder="Buscar por nome do jogo ou caminho..."
+                class="w-full pl-9 pr-8 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-800 dark:text-slate-100 placeholder-slate-400 shadow-xs"
+              />
+              <button
+                id="jogos-search-clear"
+                class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                title="Limpar busca"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
             </div>
-            <input
-              type="text"
-              id="jogos-search-input"
-              placeholder="Buscar por nome do jogo ou caminho..."
-              class="w-full pl-9 pr-8 py-1.5 text-xs bg-white border border-slate-200/90 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-400/40 focus:border-slate-400 transition-all text-slate-800 placeholder-slate-400 shadow-xs"
-            />
-            <button
-              id="jogos-search-clear"
-              class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
-              title="Limpar busca"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
+
+            <!-- Botão Adicionar Jogo Manualmente -->
+            <button onclick="openAddGameModal()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer">
+              <span class="text-sm font-bold leading-none">+</span>
+              <span>Adicionar Jogo</span>
             </button>
           </div>
         </div>
 
         <!-- Estatísticas da busca quando filtrado -->
-        <div id="jogos-search-stats" class="hidden text-xs text-slate-500 font-medium"></div>
+        <div id="jogos-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
 
         <div id="jogos-list" class="space-y-3">
           <p class="text-sm text-slate-400">Carregando...</p>
@@ -215,43 +248,59 @@
 
       <!-- ════ ABA: ATIVIDADE ════ -->
       <div id="tab-atividade" class="hidden p-6 space-y-4">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <h2 class="text-lg font-bold text-slate-900">Histórico de Snapshots</h2>
-            <p class="text-xs text-slate-500 mt-0.5">Veja todas as versões de saves capturadas e restaure quando necessário.</p>
+            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Histórico de Snapshots</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Pontos de restauração capturados com proteção de integridade Blake3.</p>
           </div>
-          <span class="text-xs text-slate-400 font-medium">Backup de segurança automático ao restaurar</span>
+          <span class="text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-200/60 dark:border-emerald-800/60 self-start sm:self-auto">
+            🛡️ Safety Backup automático ao restaurar
+          </span>
         </div>
 
-        <!-- Barra de Pesquisa de Snapshots com Lupa -->
-        <div class="relative flex items-center">
-          <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
+        <!-- Linha de Pesquisa e Filtro de Jogo -->
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <!-- Barra de Pesquisa de Snapshots com Lupa -->
+          <div class="relative flex-1">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+            </div>
+            <input
+              type="text"
+              id="atividade-search-input"
+              placeholder="Pesquisar por arquivo, versão ou hash..."
+              class="w-full pl-10 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl text-sm placeholder-slate-400 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
+              oninput="renderAtividadeList(this.value)"
+            />
+            <button
+              id="atividade-search-clear"
+              onclick="clearAtividadeSearch()"
+              class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              title="Limpar pesquisa"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
           </div>
-          <input
-            type="text"
-            id="atividade-search-input"
-            placeholder="Pesquisar snapshot por jogo, arquivo ou versão..."
-            class="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200/90 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
-            oninput="renderAtividadeList(this.value)"
-          />
-          <button
-            id="atividade-search-clear"
-            onclick="clearAtividadeSearch()"
-            class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
-            title="Limpar pesquisa"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
+
+          <!-- Dropdown Filtro por Jogo -->
+          <div class="w-full sm:w-60">
+            <select
+              id="atividade-game-filter"
+              onchange="onAtividadeFilterChange()"
+              class="w-full bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
+            >
+              <option value="">🎮 Todos os Jogos</option>
+            </select>
+          </div>
         </div>
 
         <!-- Estatísticas da busca de atividade -->
-        <div id="atividade-search-stats" class="hidden text-xs text-slate-500 font-medium"></div>
+        <div id="atividade-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
 
         <div id="atividade-list" class="space-y-3">
           <p class="text-sm text-slate-400">Carregando...</p>
@@ -260,7 +309,15 @@
 
       <!-- ════ ABA: NUVEM ════ -->
       <div id="tab-nuvem" class="hidden p-6 space-y-4">
-        <h2 class="text-lg font-bold text-slate-900">Status da Nuvem</h2>
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Sincronização em Nuvem</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Gerencie seu serviço de nuvem, pasta de sincronização e estado do backup.</p>
+          </div>
+          <button onclick="openCloudConfigModal()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer">
+            <span>⚙️</span> Alterar Nuvem / Pasta
+          </button>
+        </div>
         <div id="nuvem-info">
           <p class="text-sm text-slate-400">Carregando...</p>
         </div>
@@ -460,6 +517,254 @@
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- ════ CONTAINER DE TOASTS MODERNOS ════ -->
+<div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 pointer-events-none max-w-sm w-full"></div>
+
+<!-- ════ MODAL: CONFIRMAÇÃO MODERNA (Substitui confirm/alert) ════ -->
+<div id="custom-confirm-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+  <div class="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 transform transition-all">
+    <div class="flex items-start gap-3.5">
+      <div id="confirm-modal-icon" class="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 flex items-center justify-center text-amber-600 dark:text-amber-400 text-xl shrink-0">
+        ⚠️
+      </div>
+      <div class="flex-1">
+        <h3 id="confirm-modal-title" class="font-bold text-slate-900 dark:text-slate-100 text-base">Confirmar Ação</h3>
+        <p id="confirm-modal-message" class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed whitespace-pre-line"></p>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+      <button id="confirm-modal-cancel" onclick="closeConfirmModal(false)" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+        Cancelar
+      </button>
+      <button id="confirm-modal-ok" onclick="closeConfirmModal(true)" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+        Confirmar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ MODAL: CENTRAL DE AJUDA & GUIA RÁPIDO ════ -->
+<div id="help-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+  <div class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
+    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 font-bold text-sm">?</div>
+        <div>
+          <h3 class="font-bold text-sm">Guia do Usuário & Central de Ajuda</h3>
+          <p class="text-[11px] text-slate-300">Entenda como o SaveVault protege seus jogos</p>
+        </div>
+      </div>
+      <button onclick="closeHelpModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+        ✕
+      </button>
+    </div>
+
+    <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-600 dark:text-slate-300">
+      <!-- Card 1: Como Funciona -->
+      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+          <span>🎮</span> O que o SaveVault faz?
+        </div>
+        <p class="leading-relaxed">
+          O SaveVault monitora os saves dos seus jogos automaticamente em segundo plano. Sempre que você salva seu progresso dentro do jogo, o SaveVault detecta a mudança e cria um <strong>ponto de restauração seguro (snapshot)</strong> sem você precisar pausar ou sair da partida.
+        </p>
+      </div>
+
+      <!-- Card 2: Snapshots & Safety Backup -->
+      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+          <span>🛡️</span> Snapshots & Safety Backup (Restauração 100% Segura)
+        </div>
+        <p class="leading-relaxed">
+          Cada snapshot é versionado (v1, v2, v3...) e protegido com integridade criptográfica <strong>Blake3</strong>. Se você restaurar um save antigo na aba <em>Atividade</em>, o SaveVault cria primeiro um <strong>Safety Backup</strong> do save atual. Você <strong>nunca perde progresso por engano</strong>!
+        </p>
+      </div>
+
+      <!-- Card 3: Sincronização em Nuvem -->
+      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+          <span>☁️</span> Como funciona a Nuvem?
+        </div>
+        <p class="leading-relaxed">
+          O SaveVault sincroniza com o <strong>OneDrive, Google Drive ou Dropbox</strong> usando a pasta local do seu computador. Não é necessário digitar senhas nem autorizar tokens que expiram: basta o aplicativo da sua nuvem estar instalado no Windows. Você pode alterar o serviço a qualquer momento na aba <em>Nuvem</em>.
+        </p>
+      </div>
+
+      <!-- Card 4: Dicas Rápidas -->
+      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+          <span>💡</span> Dicas e Recursos Úteis
+        </div>
+        <ul class="list-disc list-inside space-y-1 pl-1 text-[11px] leading-relaxed">
+          <li><strong>Segundo Plano:</strong> O SaveVault minimiza para os ícones ocultos da barra de tarefas (System Tray).</li>
+          <li><strong>Lupa de Pesquisa:</strong> Use o campo de busca nas abas <em>Jogos</em> e <em>Atividade</em> para localizar qualquer save imediatamente.</li>
+          <li><strong>Adicionar Jogo:</strong> Se tiver um jogo não detectado automaticamente, use o botão <em>+ Adicionar Jogo</em> na aba Jogos.</li>
+          <li><strong>Abrir Pasta:</strong> Clique no ícone de pastinha 📂 em qualquer card para abrir o arquivo direto no Windows Explorer.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+      <button onclick="closeHelpModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+        Entendi, fechar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ MODAL: ADICIONAR JOGO MANUALMENTE ════ -->
+<div id="add-game-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+  <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-2">
+        <span class="text-base">🎮</span>
+        <h3 class="font-bold text-sm">Adicionar Jogo Manualmente</h3>
+      </div>
+      <button onclick="closeAddGameModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+        ✕
+      </button>
+    </div>
+
+    <div class="p-6 space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Nome do Jogo</label>
+        <input
+          type="text"
+          id="add-game-name"
+          placeholder="Ex: Hollow Knight, Elden Ring, Zelda..."
+          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+        />
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Caminho da Pasta ou Arquivo de Save</label>
+        <input
+          type="text"
+          id="add-game-path"
+          placeholder="Ex: C:\Users\SeuNome\AppData\LocalLow\Team Cherry\Hollow Knight"
+          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+        />
+        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+          💡 Dica: Cole o caminho da pasta onde o jogo grava os saves (ex: em AppData, Saved Games ou Documents).
+        </p>
+      </div>
+    </div>
+
+    <div class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
+      <button onclick="closeAddGameModal()" class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
+        Cancelar
+      </button>
+      <button onclick="submitAddGame()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+        Salvar e Monitorar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ MODAL: ALTERAR PROVEDOR / PASTA DA NUVEM ════ -->
+<div id="cloud-config-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+  <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-2">
+        <span class="text-base">☁️</span>
+        <h3 class="font-bold text-sm">Configurar Sincronização em Nuvem</h3>
+      </div>
+      <button onclick="closeCloudConfigModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+        ✕
+      </button>
+    </div>
+
+    <div class="p-6 space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">Serviços Detectados no seu PC</label>
+        <div id="cloud-modal-detected-list" class="space-y-2">
+          <!-- Populado dinamicamente com opções do OneDrive, Google Drive, Dropbox -->
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
+        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Ou especifique uma Pasta Personalizada</label>
+        <input
+          type="text"
+          id="cloud-modal-custom-path"
+          placeholder="Ex: D:\Nuvem\SaveVault ou E:\Backups\SaveVault"
+          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+        />
+        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+          Você pode usar qualquer pasta local, pen drive ou pasta compartilhada de rede (NAS).
+        </p>
+      </div>
+    </div>
+
+    <div class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
+      <button onclick="closeCloudConfigModal()" class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
+        Cancelar
+      </button>
+      <button onclick="submitCloudConfig()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+        Salvar Configuração
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ MODAL: DETALHES DO JOGO ════ -->
+<div id="game-details-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+  <div class="w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
+    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-3">
+        <div id="game-details-avatar" class="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center text-white font-bold text-xs shrink-0">
+          🎮
+        </div>
+        <div>
+          <h3 id="game-details-title" class="font-bold text-sm">Detalhes do Jogo</h3>
+          <p id="game-details-subtitle" class="text-[11px] text-slate-300 font-mono truncate max-w-sm"></p>
+        </div>
+      </div>
+      <button onclick="closeGameDetailsModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+        ✕
+      </button>
+    </div>
+
+    <div class="p-6 overflow-y-auto space-y-4">
+      <!-- Info Bar -->
+      <div class="grid grid-cols-2 gap-3 text-xs">
+        <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
+          <p class="text-slate-400 text-[11px]">Plataforma</p>
+          <p id="game-details-platform" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
+        </div>
+        <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
+          <p class="text-slate-400 text-[11px]">Arquivos Monitorados</p>
+          <p id="game-details-files-count" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-2">
+        <button id="game-details-btn-open-folder" class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+          <span>📂</span> Abrir no Windows Explorer
+        </button>
+        <button id="game-details-btn-scan" class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+          <span>🔍</span> Fazer Scan Agora
+        </button>
+      </div>
+
+      <!-- Snapshots desse jogo -->
+      <div>
+        <h4 class="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Snapshots Recentes deste Jogo</h4>
+        <div id="game-details-snapshots-list" class="space-y-2">
+          <!-- Populado dinamicamente -->
+        </div>
+      </div>
+    </div>
+
+    <div class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+      <button onclick="closeGameDetailsModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+        Fechar
+      </button>
+    </div>
   </div>
 </div>
 

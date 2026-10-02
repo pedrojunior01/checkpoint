@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::assets::{APP_JS, INDEX_HTML};
-use super::state::{DevUiEventLevel, DevUiState};
+use super::state::{open_path_in_explorer, DevUiEventLevel, DevUiState};
 
 #[derive(Debug, Deserialize)]
 struct RestorePayload {
@@ -36,6 +36,24 @@ struct SetupCompletePayload {
     autostart: Option<bool>,
     notifications: Option<bool>,
     local_sync_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddGamePayload {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenFolderPayload {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudUpdatePayload {
+    provider: Option<String>,
+    local_sync_path: Option<String>,
+    enabled: Option<bool>,
 }
 
 /// Executa o loop principal do servidor HTTP atendendo conexões concorrentes até receber sinal de shutdown.
@@ -675,6 +693,103 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                         &err_json,
                     )
                     .await?;
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // REST: Cadastro Manual de Jogos
+        // -------------------------------------------------------------
+        ("POST", "/api/games/add") => {
+            if body.is_empty() {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json",
+                    r#"{"error":"Corpo da requisição vazio"}"#,
+                )
+                .await?;
+            } else {
+                match serde_json::from_str::<AddGamePayload>(body) {
+                    Ok(payload) => match state.add_game(&payload.name, &payload.path).await {
+                        Ok(view) => {
+                            let json = serde_json::to_string(&view)?;
+                            send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                        }
+                        Err(e) => {
+                            let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                            send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                        }
+                    },
+                    Err(e) => {
+                        let err_json = serde_json::json!({ "error": format!("JSON inválido: {}", e) }).to_string();
+                        send_response(&mut stream, 400, "Bad Request", "application/json", &err_json).await?;
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // REST: Abrir Pasta no Windows Explorer
+        // -------------------------------------------------------------
+        ("POST", "/api/open-folder") => {
+            if body.is_empty() {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json",
+                    r#"{"error":"Corpo da requisição vazio"}"#,
+                )
+                .await?;
+            } else {
+                match serde_json::from_str::<OpenFolderPayload>(body) {
+                    Ok(payload) => match open_path_in_explorer(&payload.path) {
+                        Ok(()) => {
+                            send_response(&mut stream, 200, "OK", "application/json", r#"{"success":true}"#).await?;
+                        }
+                        Err(e) => {
+                            let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                            send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+                        }
+                    },
+                    Err(e) => {
+                        let err_json = serde_json::json!({ "error": format!("JSON inválido: {}", e) }).to_string();
+                        send_response(&mut stream, 400, "Bad Request", "application/json", &err_json).await?;
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // REST: Configuração de Nuvem
+        // -------------------------------------------------------------
+        ("GET", "/api/cloud/config") => match state.get_cloud_config().await {
+            Ok(cfg) => {
+                let json = serde_json::to_string(&cfg)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+            }
+        },
+
+        ("POST", "/api/cloud/update") => {
+            let payload: CloudUpdatePayload = serde_json::from_str(body).unwrap_or(CloudUpdatePayload {
+                provider: None,
+                local_sync_path: None,
+                enabled: None,
+            });
+            match state.update_cloud_config(payload.provider, payload.local_sync_path, payload.enabled).await {
+                Ok(cfg) => {
+                    let json = serde_json::to_string(&cfg)?;
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                    send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
                 }
             }
         }

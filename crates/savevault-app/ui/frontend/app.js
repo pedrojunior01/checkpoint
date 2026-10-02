@@ -90,6 +90,43 @@ async function invoke(command, args = {}) {
             });
             return await res.json();
         }
+        case "add_game": {
+            const res = await fetch("/api/games/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    name: args.name,
+                    path: args.path,
+                }),
+            });
+            return await res.json();
+        }
+        case "open_folder": {
+            const res = await fetch("/api/open-folder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    path: args.path,
+                }),
+            });
+            return await res.json();
+        }
+        case "get_cloud_config": {
+            const res = await fetch("/api/cloud/config");
+            return await res.json();
+        }
+        case "update_cloud_config": {
+            const res = await fetch("/api/cloud/update", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    provider: args.provider,
+                    local_sync_path: args.localSyncPath || args.local_sync_path,
+                    enabled: args.enabled,
+                }),
+            });
+            return await res.json();
+        }
         default:
             throw new Error(`Comando não implementado: ${command}`);
     }
@@ -105,6 +142,139 @@ function escapeHtml(str) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+// ── Toasts & Notificações Modernas ───────────────────────────────────────────
+
+function showToast(message, type = "success") {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+
+    const toast = document.createElement("div");
+    toast.className = "pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border text-xs font-semibold transform transition-all duration-300 translate-y-3 opacity-0";
+
+    const icons = {
+        success: "✅",
+        error: "❌",
+        warning: "⚠️",
+        info: "ℹ️",
+    };
+
+    if (type === "success") {
+        toast.classList.add("bg-white", "dark:bg-slate-900", "border-emerald-300", "dark:border-emerald-700", "text-slate-800", "dark:text-slate-100");
+    } else if (type === "error") {
+        toast.classList.add("bg-white", "dark:bg-slate-900", "border-red-300", "dark:border-red-700", "text-red-700", "dark:text-red-400");
+    } else if (type === "warning") {
+        toast.classList.add("bg-white", "dark:bg-slate-900", "border-amber-300", "dark:border-amber-700", "text-amber-800", "dark:text-amber-300");
+    } else {
+        toast.classList.add("bg-white", "dark:bg-slate-900", "border-slate-300", "dark:border-slate-700", "text-slate-800", "dark:text-slate-100");
+    }
+
+    toast.innerHTML = `
+        <span class="text-base flex-shrink-0">${icons[type] || "ℹ️"}</span>
+        <span class="flex-1 leading-snug">${escapeHtml(message)}</span>
+        <button class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-2 cursor-pointer" onclick="this.parentElement.remove()">✕</button>
+    `;
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.classList.remove("translate-y-3", "opacity-0");
+        toast.classList.add("translate-y-0", "opacity-100");
+    });
+
+    setTimeout(() => {
+        toast.classList.add("opacity-0", "translate-y-2");
+        setTimeout(() => toast.remove(), 300);
+    }, 3500);
+}
+
+// ── Modal de Confirmação Moderno ──────────────────────────────────────────────
+
+let pendingConfirmAction = null;
+
+function showConfirmDialog({ title, message, confirmText = "Confirmar", cancelText = "Cancelar", isDanger = false, onConfirm }) {
+    const modal = document.getElementById("custom-confirm-modal");
+    if (!modal) {
+        if (confirm(`${title}\n\n${message}`)) {
+            if (onConfirm) onConfirm();
+        }
+        return;
+    }
+
+    const titleEl = document.getElementById("confirm-modal-title");
+    const msgEl = document.getElementById("confirm-modal-message");
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
+
+    const okBtn = document.getElementById("confirm-modal-ok");
+    const cancelBtn = document.getElementById("confirm-modal-cancel");
+    if (okBtn) okBtn.textContent = confirmText;
+    if (cancelBtn) cancelBtn.textContent = cancelText;
+
+    if (okBtn) {
+        if (isDanger) {
+            okBtn.className = "px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer";
+        } else {
+            okBtn.className = "px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer";
+        }
+    }
+
+    pendingConfirmAction = onConfirm;
+    modal.classList.remove("hidden");
+}
+
+function closeConfirmModal(confirmed) {
+    const modal = document.getElementById("custom-confirm-modal");
+    if (modal) modal.classList.add("hidden");
+    if (confirmed && typeof pendingConfirmAction === "function") {
+        pendingConfirmAction();
+    }
+    pendingConfirmAction = null;
+}
+
+// ── Tema Escuro (Dark Mode) ───────────────────────────────────────────────────
+
+function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle("dark");
+    localStorage.setItem("savevault-theme", isDark ? "dark" : "light");
+    updateThemeUI(isDark);
+    showToast(isDark ? "Modo Escuro ativado" : "Modo Claro ativado", "info");
+}
+
+function updateThemeUI(isDark) {
+    const icon = document.getElementById("theme-toggle-icon");
+    const label = document.getElementById("theme-toggle-label");
+    if (icon) icon.textContent = isDark ? "☀️" : "🌙";
+    if (label) label.textContent = isDark ? "Modo Claro" : "Modo Escuro";
+}
+
+function initTheme() {
+    const isDark = document.documentElement.classList.contains("dark");
+    updateThemeUI(isDark);
+}
+
+// ── Central de Ajuda & Guia Rápido ────────────────────────────────────────────
+
+function openHelpModal(e) {
+    if (e) e.preventDefault();
+    document.getElementById("help-modal")?.classList.remove("hidden");
+}
+
+function closeHelpModal() {
+    document.getElementById("help-modal")?.classList.add("hidden");
+}
+
+// ── Abrir Pasta no Windows Explorer ───────────────────────────────────────────
+
+async function openFolder(path) {
+    if (!path) return;
+    try {
+        await invoke("open_folder", { path });
+        showToast("Pasta aberta no Windows Explorer", "info");
+    } catch (e) {
+        showToast(`Erro ao abrir pasta: ${e}`, "error");
+    }
 }
 
 function timeAgo(isoString) {

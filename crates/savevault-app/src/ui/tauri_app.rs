@@ -7,8 +7,9 @@ use tauri::{
 use uuid::Uuid;
 
 use crate::ui::state::{
-    DashboardSummary, DevUiState, DiscoveredGameView, LocationView, ReconciliationView,
-    RestoreApiResponse, SafetyBackupGroup, SetupStatusView, SnapshotView,
+    open_path_in_explorer, CloudConfigView, DashboardSummary, DevUiState, DiscoveredGameView,
+    LocationView, ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SetupStatusView,
+    SnapshotView,
 };
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -120,6 +121,40 @@ pub async fn complete_setup(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn add_game(
+    state: State<'_, Arc<DevUiState>>,
+    name: String,
+    path: String,
+) -> Result<LocationView, String> {
+    state.add_game(&name, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_folder(path: String) -> Result<(), String> {
+    open_path_in_explorer(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cloud_config(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<CloudConfigView, String> {
+    state.get_cloud_config().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_cloud_config(
+    state: State<'_, Arc<DevUiState>>,
+    provider: Option<String>,
+    local_sync_path: Option<String>,
+    enabled: Option<bool>,
+) -> Result<CloudConfigView, String> {
+    state
+        .update_cloud_config(provider, local_sync_path, enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -140,6 +175,10 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_cloud_folders,
             save_setup_cloud,
             complete_setup,
+            add_game,
+            open_folder,
+            get_cloud_config,
+            update_cloud_config,
         ])
         .setup(|app| {
             // Mostra janela e dá foco
