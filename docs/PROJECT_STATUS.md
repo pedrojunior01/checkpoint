@@ -99,8 +99,14 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
 - **Tauri 2.0 Native UI & System Tray (F-06)**:
   - Interface gráfica desktop nativa sem janelas de navegadores externos.
   - Minimização para a bandeja do sistema perto do relógio (`start_minimized = true`) ao iniciar com o Windows via `--tray`.
-- **Proteção de Instância Única (`SingleInstanceGuard`) (F-07)**:
+- **Proteção de Instância Única (`SingleInstanceGuard`) e Foco Ativo (F-07)**:
   - Mutex do sistema operacional Windows (`CreateMutexW`) garantindo que apenas uma instância desktop/residente seja executada simultaneamente.
+  - Quando uma segunda instância é iniciada pelo usuário, ela localiza a janela existente via `EnumWindows`, unminimiza/restaura (`ShowWindow` `SW_RESTORE`) e a traz para o primeiro plano (`SetForegroundWindow`) antes de encerrar de forma limpa.
+- **Compactação Nativa de Backups (.zip) (F-08)**:
+  - Compactação recursiva nativa em Rust via crate `zip` (`zip::ZipWriter` + `walkdir`) com algoritmo DEFLATE em streaming.
+  - Eliminação de processos externos (PowerShell / `Compress-Archive`), prevenindo falhas de sintaxe com aspas/apóstrofos e riscos de injeção de parâmetros em caminhos de usuários.
+- **Validação Estrita de Caminhos no Explorer (F-09)**:
+  - Remoção de `create_dir_all` em `open_path_in_explorer`. Se o caminho solicitado não existir no disco, a função retorna erro estrito sem alterar ou poluir o sistema de arquivos.
 - **Recuperação de Desastre em Máquinas Novas (F-05)**:
   - Função `reconstruct_catalog_from_cloud` para recuperar registros de jogos e backups a partir do manifesto em nuvem mesmo com o banco local vazio.
 - **Resolução de Conflitos Multi-PC (`src/conflict.rs`)**:
@@ -112,15 +118,15 @@ A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o c
 
 ## 3. Bateria de Testes Automatizados (QA)
 
-Atualmente a suíte conta com **257 testes automatizados (100% de aprovação)** sem warnings de compilação ou do Clippy:
+Atualmente a suíte conta com **262 testes automatizados (100% de aprovação)** sem warnings de compilação ou do Clippy:
 
 1. **`savevault-core` (26 testes)**: Normalização de caminhos Windows, Unicode Case-Folding (F-13), cálculo de `compute_relative_path` (F-01), autostart no Registro e roundtrip de configurações.
 2. **`savevault-db` (40 testes)**: Migrações 001 a 007, índices compostos únicos, `ON DELETE CASCADE`, desduplicação e consistência relacional.
 3. **`savevault-backup` (9 testes ativos + 3 lentos)**: Hashing BLAKE3 em streaming, snapshots com subpastas aninhadas (F-01), integridade de arquivos versionados e safety backups anti-colisão.
 4. **`savevault-cloud` (38 testes)**: Mocks do Google Drive e OneDrive, upload multipart, token refresh, manifestos remotos e provedor de pastas locais.
 5. **`savevault-sync` (12 testes)**: Sincronização não-bloqueante, retentativas com backoff exponencial e atualização de manifesto remoto.
-6. **`savevault-app` (55 testes)**:
-   - `src/lib.rs` (32 testes unitários, incluindo recuperação de catálogo de nuvem em banco vazio).
+6. **`savevault-app` (60 testes)**:
+   - `src/lib.rs` (37 testes unitários, incluindo recuperação de catálogo de nuvem em banco vazio, exclusão mútua do mutex `SingleInstanceGuard`, verificação de `focus_existing_instance`, compactação nativa `.zip` com caracteres especiais/acentos e validação estrita de integridade de caminhos sem criação de diretórios fantasmas).
    - `dev_ui_integration.rs` (8 testes de API e endpoints).
    - `discovery_persistence.rs` (5 testes de persistência de descobertas).
    - `pipeline_integration.rs` (2 testes de integração contínua do watcher).
@@ -142,20 +148,20 @@ Atualmente a suíte conta com **257 testes automatizados (100% de aprovação)**
 | **F-04** | Alto | Uploads em background direcionados apenas para o filesystem local | **Corrigido** | Implementado `resolve_active_cloud_provider` despachando para Google Drive / OneDrive reais. |
 | **F-05** | Alto | Impossibilidade de Disaster Recovery em máquinas novas com banco vazio | **Corrigido** | Criado manifesto `savevault_manifest.json` na nuvem e rotina `reconstruct_catalog_from_cloud`. |
 | **F-06** | Alto | Autostart no Registro chamando navegador Edge em vez do Tauri nativo | **Corrigido** | Linha de comando `--tray` agora inicia o Tauri nativo minimizado no tray. |
-| **F-07** | Alto | Execução de múltiplas instâncias concorrentes causando conflito no SQLite | **Corrigido** | Implementado `SingleInstanceGuard` via Win32 `CreateMutexW` no startup do app. |
+| **F-07** | Alto | Execução de múltiplas instâncias concorrentes causando conflito no SQLite | **Corrigido** | Implementado `SingleInstanceGuard` via Win32 `CreateMutexW` com foco na janela ativa (`SetForegroundWindow`). |
+| **F-08** | Médio | Concatenação de caminhos e vulnerabilidade no export de backup via PowerShell | **Corrigido** | Compactação recursiva nativa em Rust via crate `zip` (`zip::ZipWriter` + `walkdir`). |
+| **F-09** | Médio | Criação irrestrita de pastas inexistentes ao abrir caminho no Explorer | **Corrigido** | Validação estrita de existência em `open_path_in_explorer` sem mutação do filesystem. |
 
 ---
 
-## 5. Próximos Passos (Fases 3 e 4)
+## 5. Próximos Passos
 
 - [x] **Fase 1 (Crítico)**: F-01, F-02 e F-13 corrigidos e testados.
 - [x] **Fase 2 (Alto)**: F-03, F-04, F-05, F-06 e F-07 corrigidos e testados.
-- [ ] **Fase 3 (Médio / Robustez & Segurança)**:
-  - F-08: Rotação e refresh proativo de tokens OAuth no background worker.
-  - F-09: Isolamento de escopo por token no banco de dados SQLite.
-  - F-10: Tratamento gracioso de shutdown assíncrono em conexões ativas.
-  - F-11: Sanitização de logs sensíveis em modo debug.
-  - F-12: Fallback estrito de heurística de discovery em diretórios protegidos.
-- [ ] **Fase 4 (Baixo / Polimento & Distribuição)**:
-  - F-14: Redução de footprints de dependências desnecessárias.
-  - F-15: Empacotamento de instalador `.msi` para distribuição final.
+- [x] **Otimizações de Performance & Memória**: Remoção do Tailwind CDN (Babel runtime), CSS estático compilado, `content-visibility: auto`, paginação de atividades, memory trimming no tray, executável release de 19 MB e memória resident reduzida de 733 MB para ~15-30 MB.
+- [x] **Etapa 4 (Robustez de Filesystem e Processos)**: F-08 (ZIP nativo), F-09 (Validação de Explorer) e F-07 refinamento (Foco ativo em janela já em execução).
+- [ ] **Etapa 5 (Descoberta & Plataformas)**:
+  - F-11: Detecção de instalação do cliente Steam via Registro do Windows (`HKLM`/`HKCU`).
+  - F-10: Correção do script Inno Setup (`checkpoint.iss`) alinhando diretivas relativas e chave de inicialização.
+  - F-12: Limpeza do módulo legado e duplicado `ludusavi/`.
+- [ ] **Etapa 6 (Hardening & Testes de Regressão)**.

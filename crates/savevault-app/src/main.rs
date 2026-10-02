@@ -159,7 +159,8 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
     ) {
         Some(guard) => guard,
         None => {
-            tracing::info!("SaveVault já está em execução. Encerrando esta instância secundária.");
+            tracing::info!("SaveVault já está em execução. Trazendo janela existente para o primeiro plano.");
+            savevault_app::focus_existing_instance();
             println!("SaveVault já está em execução.");
             return Ok(());
         }
@@ -556,7 +557,8 @@ async fn run_resident_daemon(
     ) {
         Some(guard) => guard,
         None => {
-            tracing::info!("SaveVault já está em execução em segundo plano. Encerrando instância.");
+            tracing::info!("SaveVault já está em execução em segundo plano. Trazendo janela existente para o primeiro plano.");
+            savevault_app::focus_existing_instance();
             println!("SaveVault já está em execução em segundo plano.");
             return Ok(());
         }

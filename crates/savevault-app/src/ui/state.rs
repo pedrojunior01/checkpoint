@@ -1171,45 +1171,10 @@ impl DevUiState {
         }
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-        let zip_file_name = format!("checkpoint_backup_{}.zip", timestamp);
+        let zip_file_name = format!("savevault_backup_{}.zip", timestamp);
         let target_zip = downloads_dir.join(&zip_file_name);
 
-        #[cfg(target_os = "windows")]
-        {
-            let output = std::process::Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    &format!(
-                        "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        backup_dir.display(),
-                        target_zip.display()
-                    ),
-                ])
-                .output()?;
-
-            if !output.status.success() {
-                let err = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("Falha ao gerar arquivo ZIP: {}", err);
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let output = std::process::Command::new("zip")
-                .args([
-                    "-r",
-                    target_zip.to_str().unwrap(),
-                    backup_dir.to_str().unwrap(),
-                ])
-                .output()?;
-            if !output.status.success() {
-                anyhow::bail!("Falha ao compactar arquivo no Linux/macOS");
-            }
-        }
-
-        let size = std::fs::metadata(&target_zip).map(|m| m.len()).unwrap_or(0);
+        let size = create_zip_from_directory(backup_dir, &target_zip)?;
         let size_formatted = format_bytes(size);
 
         self.record_event(
@@ -1230,25 +1195,102 @@ impl DevUiState {
     }
 }
 
+/// Compacta recursivamente o conteúdo de um diretório em um arquivo .zip nativo em Rust.
+/// Elimina a dependência de processos externos do SO (PowerShell/zip) e protege contra
+/// problemas de escape de aspas em caminhos.
+pub fn create_zip_from_directory(
+    source_dir: &std::path::Path,
+    target_zip: &std::path::Path,
+) -> anyhow::Result<u64> {
+    if !source_dir.exists() {
+        anyhow::bail!("O diretório de origem não existe: {}", source_dir.display());
+    }
+
+    if let Some(parent) = target_zip.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let file = std::fs::File::create(target_zip).map_err(|e| {
+        anyhow::anyhow!(
+            "Falha ao criar arquivo ZIP de destino '{}': {}",
+            target_zip.display(),
+            e
+        )
+    })?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for entry in walkdir::WalkDir::new(source_dir) {
+        let entry = entry.map_err(|e| anyhow::anyhow!("Erro ao varrer diretório: {}", e))?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(source_dir)
+            .map_err(|e| anyhow::anyhow!("Erro ao calcular caminho relativo: {}", e))?;
+
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+
+        let name = relative.to_string_lossy().replace('\\', "/");
+
+        if entry.file_type().is_dir() {
+            let dir_name = if name.ends_with('/') {
+                name
+            } else {
+                format!("{}/", name)
+            };
+            zip.add_directory(dir_name, options)
+                .map_err(|e| anyhow::anyhow!("Erro ao adicionar pasta ao ZIP: {}", e))?;
+        } else if entry.file_type().is_file() {
+            zip.start_file(name, options)
+                .map_err(|e| anyhow::anyhow!("Erro ao iniciar arquivo no ZIP: {}", e))?;
+            let mut f = std::fs::File::open(path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Erro ao abrir arquivo para compactação ('{}'): {}",
+                    path.display(),
+                    e
+                )
+            })?;
+            std::io::copy(&mut f, &mut zip)
+                .map_err(|e| anyhow::anyhow!("Erro ao gravar dados no ZIP: {}", e))?;
+        }
+    }
+
+    zip.finish()
+        .map_err(|e| anyhow::anyhow!("Falha ao finalizar arquivo ZIP: {}", e))?;
+
+    let size = std::fs::metadata(target_zip).map(|m| m.len()).unwrap_or(0);
+    Ok(size)
+}
+
 /// Abre uma pasta ou arquivo no Windows Explorer (ou gerenciador nativo).
+/// Valida estritamente a existência do caminho no disco e NÃO cria pastas inexistentes.
 pub fn open_path_in_explorer(path_str: &str) -> anyhow::Result<()> {
     let p = std::path::Path::new(path_str);
-    let target = if p.is_file() {
-        p.parent().unwrap_or(p)
-    } else {
-        p
-    };
-
-    if !target.exists() {
-        let _ = std::fs::create_dir_all(target);
+    if !p.exists() {
+        anyhow::bail!("Caminho especificado não existe no disco: {}", p.display());
     }
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer").arg(target).spawn()?;
+        if p.is_file() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", p.display()))
+                .spawn()?;
+        } else {
+            std::process::Command::new("explorer").arg(p).spawn()?;
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let target = if p.is_file() {
+            p.parent().unwrap_or(p)
+        } else {
+            p
+        };
         let _ = std::process::Command::new("xdg-open").arg(target).spawn();
     }
     Ok(())
@@ -1264,5 +1306,102 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    #[test]
+    fn test_create_zip_from_directory_with_special_characters_and_subdirs() {
+        let temp_dir = tempfile::tempdir().expect("Falha ao criar tempdir");
+        let src = temp_dir.path().join("source_data");
+        std::fs::create_dir_all(&src).unwrap();
+
+        // 1. Arquivo normal na raiz
+        let root_file = src.join("root.txt");
+        std::fs::write(&root_file, b"Conteudo raiz").unwrap();
+
+        // 2. Subdiretório com apóstrofo/aspas simples (vulnerabilidade F-08 no PowerShell)
+        let special_dir = src.join("John's Profile");
+        std::fs::create_dir_all(&special_dir).unwrap();
+        let special_file = special_dir.join("save_slot_1.sav");
+        std::fs::write(&special_file, b"Dados do save do John com aspas").unwrap();
+
+        // 3. Subdiretório com acentuação e caracteres internacionais
+        let unicode_dir = src.join("Configurações_e_Saves");
+        std::fs::create_dir_all(&unicode_dir).unwrap();
+        let unicode_file = unicode_dir.join("dados_ação.dat");
+        std::fs::write(&unicode_file, b"Acentuacao Unicode salva com sucesso").unwrap();
+
+        let zip_dest = temp_dir.path().join("export_test.zip");
+
+        // Executa a compactação nativa em Rust
+        let size = create_zip_from_directory(&src, &zip_dest).expect("Falha ao criar ZIP nativo");
+        assert!(size > 0, "O tamanho do arquivo ZIP deve ser maior que zero");
+        assert!(zip_dest.exists(), "O arquivo ZIP deve existir no disco");
+
+        // Lê e valida o conteúdo do ZIP criado usando zip::ZipArchive
+        let zip_file = std::fs::File::open(&zip_dest).expect("Falha ao abrir ZIP para leitura");
+        let mut archive = zip::ZipArchive::new(zip_file).expect("Falha ao parsear ZIP");
+
+        // Valida que todos os arquivos esperados estão no arquivo ZIP e seus conteúdos conferem
+        let mut found_root = false;
+        let mut found_special = false;
+        let mut found_unicode = false;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).expect("Falha ao ler entrada do ZIP");
+            let name = file.name().to_string();
+
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents).unwrap();
+
+            if name == "root.txt" {
+                assert_eq!(contents, b"Conteudo raiz");
+                found_root = true;
+            } else if name == "John's Profile/save_slot_1.sav" {
+                assert_eq!(contents, b"Dados do save do John com aspas");
+                found_special = true;
+            } else if name == "Configurações_e_Saves/dados_ação.dat" {
+                assert_eq!(contents, b"Acentuacao Unicode salva com sucesso");
+                found_unicode = true;
+            }
+        }
+
+        assert!(found_root, "Arquivo raiz deve constar no ZIP");
+        assert!(found_special, "Arquivo com apóstrofo no diretório deve constar no ZIP");
+        assert!(found_unicode, "Arquivo com acentuação deve constar no ZIP");
+    }
+
+    #[test]
+    fn test_open_path_in_explorer_nonexistent_does_not_create_directory() {
+        let temp_dir = tempfile::tempdir().expect("Falha ao criar tempdir");
+        let nonexistent = temp_dir.path().join("pasta_inexistente_que_nao_deve_ser_criada");
+
+        assert!(!nonexistent.exists(), "A pasta não deve existir antes do teste");
+
+        // Tenta abrir caminho inexistente
+        let result = open_path_in_explorer(nonexistent.to_str().unwrap());
+
+        // Deve retornar erro
+        assert!(result.is_err(), "open_path_in_explorer deve falhar para caminho inexistente");
+
+        // CRÍTICO (F-09): O caminho NÃO deve ter sido criado no disco
+        assert!(
+            !nonexistent.exists(),
+            "open_path_in_explorer NUNCA deve criar diretórios no disco se inexistentes!"
+        );
     }
 }

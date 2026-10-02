@@ -50,6 +50,9 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 # Walkdir
 walkdir = "2"
 
+# Zip archive compression (pure-Rust, lightweight deflate)
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
 
