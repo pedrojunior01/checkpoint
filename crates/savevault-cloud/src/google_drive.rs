@@ -128,9 +128,23 @@ impl GoogleDriveProvider {
     /// Tenta criar um provider a partir das variáveis de ambiente.
     /// Retorna `None` se as variáveis não estiverem definidas.
     pub fn from_env() -> Option<Self> {
-        let client_id = std::env::var("SAVEVAULT_GOOGLE_CLIENT_ID").ok()?;
-        let client_secret = std::env::var("SAVEVAULT_GOOGLE_CLIENT_SECRET").ok()?;
-        Some(Self::new(client_id, client_secret))
+        Self::from_env_or_config(None, None)
+    }
+
+    /// Tenta criar um provider a partir das variáveis de ambiente ou de parâmetros de configuração.
+    pub fn from_env_or_config(
+        client_id: Option<String>,
+        client_secret: Option<String>,
+    ) -> Option<Self> {
+        let cid = std::env::var("SAVEVAULT_GOOGLE_CLIENT_ID")
+            .ok()
+            .or(client_id)
+            .filter(|s| !s.trim().is_empty())?;
+        let csec = std::env::var("SAVEVAULT_GOOGLE_CLIENT_SECRET")
+            .ok()
+            .or(client_secret)
+            .filter(|s| !s.trim().is_empty())?;
+        Some(Self::new(cid, csec))
     }
 
     /// Retorna `true` se o usuário já realizou o login (há um refresh token salvo).

@@ -24,6 +24,20 @@ struct ScanPayload {
     location_id: Option<Uuid>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SetupLoginPayload {
+    provider: Option<String>,
+    local_sync_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetupCompletePayload {
+    provider: Option<String>,
+    autostart: Option<bool>,
+    notifications: Option<bool>,
+    local_sync_path: Option<String>,
+}
+
 /// Executa o loop principal do servidor HTTP atendendo conexões concorrentes até receber sinal de shutdown.
 pub async fn run_dev_ui_server(
     state: Arc<DevUiState>,
@@ -493,6 +507,138 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             match res {
                 Ok(new_status) => {
                     let json = serde_json::to_string(&new_status)?;
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // REST: Assistente de Primeiro Acesso (Setup Wizard)
+        // -------------------------------------------------------------
+        ("GET", "/api/setup/status") => match state.get_setup_status().await {
+            Ok(status) => {
+                let json = serde_json::to_string(&status)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
+
+        ("POST", "/api/setup/scan") => match state.run_setup_discovery().await {
+            Ok(games) => {
+                let json = serde_json::json!({
+                    "success": true,
+                    "games": games
+                })
+                .to_string();
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json =
+                    serde_json::json!({ "success": false, "error": e.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
+
+        ("GET", "/api/setup/cloud-folders") => {
+            let folders = savevault_cloud::detect_cloud_folders();
+            let json = serde_json::to_string(&folders)?;
+            send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+        }
+
+        ("POST", "/api/setup/login-cloud") => {
+            let payload: SetupLoginPayload =
+                serde_json::from_str(body).unwrap_or(SetupLoginPayload {
+                    provider: None,
+                    local_sync_path: None,
+                });
+
+            let mut config = state.get_config();
+
+            let target_path = if let Some(ref lsp) = payload.local_sync_path {
+                let trimmed = lsp.trim();
+                if !trimmed.is_empty() {
+                    let p = std::path::PathBuf::from(trimmed);
+                    let _ = std::fs::create_dir_all(&p);
+                    config.cloud.local_sync_path = Some(p.clone());
+                    Some(p)
+                } else {
+                    None
+                }
+            } else {
+                config.cloud.local_sync_path.clone().or_else(|| {
+                    savevault_cloud::detect_cloud_folders().first().map(|d| {
+                        let _ = std::fs::create_dir_all(&d.savevault_folder);
+                        config.cloud.local_sync_path = Some(d.savevault_folder.clone());
+                        d.savevault_folder.clone()
+                    })
+                })
+            };
+
+            let chosen_provider = payload.provider.as_deref().unwrap_or("local_folder");
+            config.cloud.provider = chosen_provider.to_string();
+            let _ = state.save_config(&config);
+
+            let path_display = target_path
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "Pasta local".into());
+            let json = serde_json::json!({
+                "success": true,
+                "status": "connected",
+                "provider": "local_folder",
+                "path": path_display,
+                "message": "Pasta sincronizada configurada com sucesso!"
+            })
+            .to_string();
+            send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+        }
+
+        ("POST", "/api/setup/complete") => {
+            let payload: SetupCompletePayload =
+                serde_json::from_str(body).unwrap_or(SetupCompletePayload {
+                    provider: None,
+                    autostart: None,
+                    notifications: None,
+                    local_sync_path: None,
+                });
+            match state
+                .complete_setup(
+                    payload.provider,
+                    payload.autostart,
+                    payload.notifications,
+                    payload.local_sync_path,
+                )
+                .await
+            {
+                Ok(status) => {
+                    let json = serde_json::to_string(&status)?;
                     send_response(&mut stream, 200, "OK", "application/json", &json).await?;
                 }
                 Err(e) => {

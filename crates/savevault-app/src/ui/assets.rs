@@ -132,6 +132,13 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     /* Loading Spinner */
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: white; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Wizard Styles */
+    .wizard-step-pill { font-size: 0.75rem; color: var(--text-muted); padding: 5px 12px; border-radius: 6px; font-weight: 600; background: #131d31; border: 1px solid var(--border-color); }
+    .wizard-step-pill.active { background: #312e81; color: #a5b4fc; border-color: #4338ca; }
+    .cloud-card { background: #131d31; border: 2px solid var(--border-color); border-radius: 8px; padding: 16px; cursor: pointer; transition: all 0.2s; }
+    .cloud-card:hover { border-color: var(--primary); background: #1e293b; }
+    .cloud-card.selected { border-color: var(--primary); background: rgba(59, 130, 246, 0.1); }
   </style>
 </head>
 <body>
@@ -139,9 +146,12 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
   <header>
     <div class="brand">
       <h1>SaveVault</h1>
-      <span class="dev-badge">DEV-UI-01</span>
+      <span class="dev-badge">v0.9.0</span>
     </div>
     <div class="header-actions">
+      <button class="btn btn-secondary" id="btn-wizard" onclick="openSetupWizard()" title="Abrir Assistente de Configuração Inicial">
+        <span>🧙 Assistente de Setup</span>
+      </button>
       <div id="autostart-control" style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; background: #131d31; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);">
         <span style="color: var(--text-muted);">Windows Autostart:</span>
         <label class="switch">
@@ -219,6 +229,10 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
           <div class="info-item">
             <span class="info-label">Cofre de Backups</span>
             <span class="info-val" id="dash-backup-root">-</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Sincronização em Nuvem</span>
+            <span class="info-val" id="dash-cloud-provider">Carregando...</span>
           </div>
         </div>
       </div>
@@ -436,6 +450,201 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- MODAL: Assistente de Primeiro Acesso (Setup Wizard) -->
+  <div class="modal-backdrop" id="setup-wizard-modal">
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #1e1b4b 0%, #1e293b 100%); border-bottom: 1px solid #4338ca;">
+        <div>
+          <h3 style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.3rem;">🧙</span> Assistente de Configuração — SaveVault
+          </h3>
+          <p style="font-size: 0.8rem; color: #a5b4fc; margin-top: 4px;" id="wizard-step-subtitle">Passo 1 de 5: Boas-vindas</p>
+        </div>
+        <button class="btn btn-secondary" style="padding: 4px 8px;" onclick="closeSetupWizard()">✕</button>
+      </div>
+      
+      <!-- Stepper indicator -->
+      <div style="display: flex; background: #090d16; padding: 10px 20px; border-bottom: 1px solid var(--border-color); gap: 8px; justify-content: space-between;">
+        <div class="wizard-step-pill active" id="pill-step-1">1. Início</div>
+        <div class="wizard-step-pill" id="pill-step-2">2. Nuvem</div>
+        <div class="wizard-step-pill" id="pill-step-3">3. Jogos</div>
+        <div class="wizard-step-pill" id="pill-step-4">4. Preferências</div>
+        <div class="wizard-step-pill" id="pill-step-5">5. Concluir</div>
+      </div>
+
+      <div class="modal-body" style="padding: 24px;">
+        <!-- STEP 1: Boas-vindas -->
+        <div id="wizard-pane-1" class="wizard-pane">
+          <div style="text-align: center; padding: 12px 0;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">🛡️🎮</div>
+            <h2 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 8px;">Proteção Definitiva para seus Saves</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; max-width: 500px; margin: 0 auto; line-height: 1.6;">
+              O <strong>SaveVault</strong> protege seus jogos automaticamente em segundo plano, criando snapshots locais com integridade BLAKE3 e sincronizando com seu provedor de nuvem pessoal para você nunca perder seu progresso.
+            </p>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px;">
+            <div style="background: #131d31; padding: 14px; border-radius: 8px; text-align: center; border: 1px solid var(--border-color);">
+              <div style="font-size: 1.4rem; margin-bottom: 4px;">⚡</div>
+              <div style="font-weight: 600; font-size: 0.85rem;">Zero Impacto</div>
+              <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">Monitor ultraleve sem travar os jogos</div>
+            </div>
+            <div style="background: #131d31; padding: 14px; border-radius: 8px; text-align: center; border: 1px solid var(--border-color);">
+              <div style="font-size: 1.4rem; margin-bottom: 4px;">☁️</div>
+              <div style="font-weight: 600; font-size: 0.85rem;">Sua Nuvem</div>
+              <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">OneDrive, Google Drive, Dropbox</div>
+            </div>
+            <div style="background: #131d31; padding: 14px; border-radius: 8px; text-align: center; border: 1px solid var(--border-color);">
+              <div style="font-size: 1.4rem; margin-bottom: 4px;">💻</div>
+              <div style="font-weight: 600; font-size: 0.85rem;">Multi-PC</div>
+              <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">Resolução inteligente de conflitos</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 2: Nuvem -->
+        <div id="wizard-pane-2" class="wizard-pane" style="display: none;">
+          <h4 style="margin-bottom: 6px;">Sincronização em Nuvem</h4>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">
+            O SaveVault sincroniza seus snapshots diretamente com a pasta do seu serviço de nuvem favorito (OneDrive, Google Drive para Desktop, Dropbox, etc.) de forma 100% automática e segura.
+          </p>
+
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <!-- Card Único: Pasta da Nuvem -->
+            <div class="cloud-card selected" id="card-cloud-local">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <span style="font-size: 2rem;">☁️📂</span>
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-weight: 600; font-size: 1rem;">Pasta da Nuvem (OneDrive / Google Drive / Dropbox)</span>
+                      <span class="badge badge-success" style="font-size: 0.7rem;">⭐ Ativo</span>
+                      <span class="badge badge-info" style="font-size: 0.7rem;">Zero Burocracia / Sem API</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
+                      Seus saves são espelhados com integridade BLAKE3 para a pasta local da nuvem. O aplicativo oficial da nuvem no Windows se encarrega do upload automático para os servidores da Microsoft/Google.
+                    </div>
+                  </div>
+                </div>
+                <div id="status-cloud-local">
+                  <span class="badge badge-success">Pronto para uso</span>
+                </div>
+              </div>
+
+              <!-- Lista de pastas detectadas e seletor -->
+              <div id="box-local-cloud-config" style="margin-top: 14px; padding: 14px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px dashed rgba(255,255,255,0.2);">
+                <div style="font-size: 0.82rem; font-weight: 600; color: #93c5fd; margin-bottom: 8px;">
+                  Pastas de Nuvem Detectadas no seu Windows:
+                </div>
+                <div id="detected-folders-list" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;">
+                  <div style="font-size: 0.8rem; color: var(--text-muted);">Procurando pastas de nuvem...</div>
+                </div>
+                <div>
+                  <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">Pasta de Destino dos Saves:</label>
+                  <div style="display: flex; gap: 8px; margin-top: 6px;">
+                    <input type="text" id="input-local-sync-path" placeholder="C:\Users\...\OneDrive\SaveVault" style="flex: 1; padding: 8px 12px; font-size: 0.85rem; background: var(--bg-card); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; font-family: monospace;" />
+                    <button class="btn btn-primary" id="btn-activate-local-folder" style="font-size: 0.85rem; white-space: nowrap;" onclick="activateLocalFolderSync()">✅ Conectar Esta Pasta</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 10px 14px; font-size: 0.8rem; color: #bfdbfe; margin-top: 4px;">
+              💡 <strong>Dica:</strong> Se você usa OneDrive ou Google Drive para Desktop no Windows, a pasta acima já sincroniza seus jogos automaticamente para a nuvem sem exigir nenhuma chave ou configuração de desenvolvedor!
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 3: Detecção de Jogos -->
+        <div id="wizard-pane-3" class="wizard-pane" style="display: none;">
+          <h4 style="margin-bottom: 6px;">Mapeamento de Jogos Instalados</h4>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">
+            O SaveVault varre automaticamente Steam, GOG Galaxy, Emuladores, catálogo Ludusavi e pastas locais de saves.
+          </p>
+
+          <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px;">
+            <button class="btn btn-primary" id="btn-wizard-scan" onclick="runWizardDiscovery()">
+              <span>🔍 Detectar Jogos Agora</span>
+            </button>
+            <span id="wizard-scan-status" style="font-size: 0.85rem; color: var(--text-muted);">Clique para iniciar a varredura</span>
+          </div>
+
+          <div id="wizard-games-list" style="max-height: 240px; overflow-y: auto; background: #090d16; border-radius: 8px; border: 1px solid var(--border-color); padding: 8px;">
+            <div style="text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 24px;">
+              Nenhum scan executado ainda. Clique no botão acima para mapear seus jogos.
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 4: Preferências -->
+        <div id="wizard-pane-4" class="wizard-pane" style="display: none;">
+          <h4 style="margin-bottom: 6px;">Preferências do Sistema</h4>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">
+            Configure o comportamento do SaveVault no seu Windows.
+          </p>
+
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: #131d31; padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <div>
+                <div style="font-weight: 600; font-size: 0.9rem;">Iniciar Automaticamente com o Windows</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Executa silenciosamente na bandeja do sistema ao ligar o PC.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="wizard-opt-autostart" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; background: #131d31; padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <div>
+                <div style="font-weight: 600; font-size: 0.9rem;">Notificações Discretas do Windows</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Alertas no Centro de Ações quando a sincronização for concluída.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="wizard-opt-notifications" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 5: Concluir -->
+        <div id="wizard-pane-5" class="wizard-pane" style="display: none;">
+          <div style="text-align: center; padding: 12px 0;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">🎉</div>
+            <h2 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 8px;">Configuração Concluída com Sucesso!</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; max-width: 500px; margin: 0 auto; line-height: 1.6;">
+              O SaveVault está ativo e protegendo seu progresso. Seus saves estão monitorados e serão versionados automaticamente.
+            </p>
+          </div>
+          <div class="card" style="margin-top: 16px; background: #131d31; border-color: var(--border-color);">
+            <div class="info-list">
+              <div class="info-item">
+                <span class="info-label">Provedor Ativo</span>
+                <span class="info-val" id="wizard-summary-provider">Google Drive</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Iniciar com o Windows</span>
+                <span class="info-val" id="wizard-summary-autostart">Habilitado</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Notificações</span>
+                <span class="info-val" id="wizard-summary-notifications">Ativas</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button class="btn btn-secondary" id="btn-wizard-prev" onclick="wizardPrevStep()" style="display: none;">⬅ Voltar</button>
+        <div style="display: flex; gap: 8px; margin-left: auto;">
+          <button class="btn btn-secondary" onclick="closeSetupWizard()">Pular / Fechar</button>
+          <button class="btn btn-primary" id="btn-wizard-next" onclick="wizardNextStep()">Avançar ➔</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast"></div>
 
@@ -480,7 +689,272 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
     // Initial Load
     window.addEventListener('DOMContentLoaded', () => {
       loadDashboard();
+      checkInitialSetup();
     });
+
+    // ==========================================
+    // 0. ASSISTENTE DE PRIMEIRO ACESSO (WIZARD)
+    // ==========================================
+    let currentWizardStep = 1;
+
+    async function checkInitialSetup() {
+      try {
+        const res = await fetch('/api/setup/status');
+        if (res.ok) {
+          const status = await res.json();
+          if (!status.setup_completed) {
+            openSetupWizard();
+          }
+        }
+      } catch (e) {
+        console.warn("Falha ao consultar status de setup inicial:", e);
+      }
+    }
+
+    async function openSetupWizard() {
+      currentWizardStep = 1;
+      document.getElementById('setup-wizard-modal').classList.add('open');
+      wizardGoToStep(1);
+      await loadWizardSetupStatus();
+    }
+
+    function closeSetupWizard() {
+      document.getElementById('setup-wizard-modal').classList.remove('open');
+    }
+
+    async function loadWizardSetupStatus() {
+      try {
+        const res = await fetch('/api/setup/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Preenche lista de pastas de nuvem detectadas
+        const foldersContainer = document.getElementById('detected-folders-list');
+        const pathInput = document.getElementById('input-local-sync-path');
+        
+        if (data.detected_cloud_folders && data.detected_cloud_folders.length > 0) {
+          let html = '';
+          data.detected_cloud_folders.forEach(df => {
+            const safeFolder = escapeJsString(df.savevault_folder);
+            html += `
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #131d31; border-radius: 4px; border: 1px solid var(--border-color); font-size: 0.8rem;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span>${(df.name || '').includes('Google') ? '📁' : '☁️'}</span>
+                  <div>
+                    <strong style="color: #fff;">${escapeHtml(df.name)}</strong>
+                    <div style="color: var(--text-muted); font-size: 0.75rem; font-family: monospace;">${escapeHtml(df.savevault_folder)}</div>
+                  </div>
+                </div>
+                <button class="btn btn-secondary" style="font-size: 0.75rem; padding: 2px 8px;" onclick="event.stopPropagation(); setLocalFolderSyncPath('${safeFolder}')">Usar Esta</button>
+              </div>
+            `;
+          });
+          if (foldersContainer) foldersContainer.innerHTML = html;
+          
+          if (pathInput) {
+            pathInput.value = data.local_sync_path || data.detected_cloud_folders[0].savevault_folder;
+          }
+        } else {
+          if (foldersContainer) {
+            foldersContainer.innerHTML = '<div style="font-size: 0.8rem; color: var(--text-muted); padding: 4px;">Nenhuma pasta de nuvem encontrada automaticamente no perfil. Você pode informar o caminho de qualquer pasta de nuvem (OneDrive, Drive, Dropbox) abaixo.</div>';
+          }
+          if (pathInput && data.local_sync_path) {
+            pathInput.value = data.local_sync_path;
+          }
+        }
+
+        const localBadge = document.getElementById('status-cloud-local');
+        if (localBadge) {
+          if (data.local_sync_path) {
+            localBadge.innerHTML = '<span class="badge badge-success">🟢 Configurado</span>';
+          } else {
+            localBadge.innerHTML = '<span class="badge badge-info">Pronto para uso</span>';
+          }
+        }
+
+        // Atualiza checkboxes de preferências
+        document.getElementById('wizard-opt-autostart').checked = !!data.autostart_enabled;
+        document.getElementById('wizard-opt-notifications').checked = !!data.notifications_enabled;
+      } catch (e) {
+        console.error("Erro ao carregar status do wizard:", e);
+      }
+    }
+
+    function setLocalFolderSyncPath(p) {
+      const input = document.getElementById('input-local-sync-path');
+      if (input) input.value = p;
+    }
+
+    async function activateLocalFolderSync() {
+      const input = document.getElementById('input-local-sync-path');
+      const pathVal = input ? input.value.trim() : '';
+      if (!pathVal) {
+        showToast("Por favor, informe ou selecione o caminho da pasta de sincronização.", true);
+        return;
+      }
+      try {
+        const res = await fetch('/api/setup/login-cloud', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SaveVault-Request': '1' },
+          body: JSON.stringify({
+            provider: 'local_folder',
+            local_sync_path: pathVal
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          const badge = document.getElementById('status-cloud-local');
+          if (badge) {
+            badge.innerHTML = '<span class="badge badge-success">🟢 Conectado</span>';
+          }
+          showToast("Pasta sincronizada configurada com sucesso!");
+          setTimeout(() => {
+            wizardGoToStep(3);
+          }, 600);
+        } else {
+          showToast(data.message || data.error, true);
+        }
+      } catch (e) {
+        showToast("Erro ao configurar pasta: " + e, true);
+      }
+    }
+
+    function escapeJsString(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+
+    async function runWizardDiscovery() {
+      const btn = document.getElementById('btn-wizard-scan');
+      const statusEl = document.getElementById('wizard-scan-status');
+      const listEl = document.getElementById('wizard-games-list');
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Varrendo biblioteca...';
+      statusEl.textContent = 'Consultando Steam, GOG, emuladores e pastas de saves...';
+
+      try {
+        const res = await fetch('/api/setup/scan', {
+          method: 'POST',
+          headers: { 'X-SaveVault-Request': '1' }
+        });
+        const data = await res.json();
+
+        if (data.success && data.games && data.games.length > 0) {
+          statusEl.innerHTML = `<strong style="color: var(--success);">✅ ${data.games.length} locais de save mapeados!</strong>`;
+          listEl.innerHTML = '';
+          for (const g of data.games) {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;';
+            item.innerHTML = `
+              <div>
+                <strong>${escapeHtml(g.name)}</strong>
+                <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">${escapeHtml(g.save_path)}</div>
+              </div>
+              <span class="badge badge-info">${escapeHtml(g.platform)}</span>
+            `;
+            listEl.appendChild(item);
+          }
+        } else {
+          statusEl.textContent = 'Varredura concluída. Nenhum save novo detectado neste momento.';
+        }
+      } catch (e) {
+        statusEl.textContent = 'Erro ao realizar varredura: ' + e;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🔍 Detectar Jogos Agora</span>';
+      }
+    }
+
+    function wizardGoToStep(step) {
+      currentWizardStep = step;
+
+      // Atualiza pills
+      for (let i = 1; i <= 5; i++) {
+        const pill = document.getElementById(`pill-step-${i}`);
+        if (pill) {
+          pill.className = i === step ? 'wizard-step-pill active' : 'wizard-step-pill';
+        }
+        const pane = document.getElementById(`wizard-pane-${i}`);
+        if (pane) {
+          pane.style.display = i === step ? 'block' : 'none';
+        }
+      }
+
+      // Atualiza legenda
+      const subtitles = [
+        "Passo 1 de 5: Boas-vindas",
+        "Passo 2 de 5: Conexão com a Nuvem",
+        "Passo 3 de 5: Detecção de Jogos",
+        "Passo 4 de 5: Preferências do Sistema",
+        "Passo 5 de 5: Concluir e Ativar"
+      ];
+      document.getElementById('wizard-step-subtitle').textContent = subtitles[step - 1];
+
+      // Atualiza botões
+      const prevBtn = document.getElementById('btn-wizard-prev');
+      const nextBtn = document.getElementById('btn-wizard-next');
+
+      if (step === 1) {
+        prevBtn.style.display = 'none';
+        nextBtn.textContent = 'Começar Configuração ➔';
+      } else {
+        prevBtn.style.display = 'inline-flex';
+        if (step === 5) {
+          nextBtn.textContent = '🎉 Finalizar e Abrir Painel';
+          nextBtn.className = 'btn btn-success';
+        } else {
+          nextBtn.textContent = 'Avançar ➔';
+          nextBtn.className = 'btn btn-primary';
+        }
+      }
+
+      if (step === 5) {
+        const p = document.getElementById('input-local-sync-path')?.value;
+        const provLabel = p ? `Pasta da Nuvem (${p})` : 'Pasta Local da Nuvem (OneDrive/Drive)';
+        document.getElementById('wizard-summary-provider').textContent = provLabel;
+        document.getElementById('wizard-summary-autostart').textContent =
+          document.getElementById('wizard-opt-autostart').checked ? 'Habilitado' : 'Desabilitado';
+        document.getElementById('wizard-summary-notifications').textContent =
+          document.getElementById('wizard-opt-notifications').checked ? 'Ativas' : 'Desativadas';
+      }
+    }
+
+    async function wizardNextStep() {
+      if (currentWizardStep < 4) {
+        wizardGoToStep(currentWizardStep + 1);
+      } else if (currentWizardStep === 4) {
+        // Envia confirmação para a API antes de ir ao passo 5
+        const autostart = document.getElementById('wizard-opt-autostart').checked;
+        const notifications = document.getElementById('wizard-opt-notifications').checked;
+        const localSyncPath = document.getElementById('input-local-sync-path')?.value || null;
+        try {
+          await fetch('/api/setup/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-SaveVault-Request': '1' },
+            body: JSON.stringify({
+              provider: 'local_folder',
+              autostart: autostart,
+              notifications: notifications,
+              local_sync_path: localSyncPath
+            })
+          });
+        } catch (e) {
+          console.error("Falha ao salvar setup:", e);
+        }
+        wizardGoToStep(5);
+      } else if (currentWizardStep === 5) {
+        closeSetupWizard();
+        showToast("SaveVault configurado e ativado!");
+        refreshCurrentTab();
+      }
+    }
+
+    function wizardPrevStep() {
+      if (currentWizardStep > 1) {
+        wizardGoToStep(currentWizardStep - 1);
+      }
+    }
 
     function showToast(msg, isError = false) {
       const toast = document.getElementById('toast');
@@ -523,6 +997,18 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
         } else {
           errCard.style.display = 'none';
         }
+
+        try {
+          const sRes = await fetch('/api/setup/status');
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            const cloudEl = document.getElementById('dash-cloud-provider');
+            if (cloudEl) {
+              const pathText = sData.local_sync_path ? `Pasta da Nuvem (${sData.local_sync_path})` : 'Pasta da Nuvem (OneDrive / Drive)';
+              cloudEl.textContent = pathText;
+            }
+          }
+        } catch (e) {}
 
         await loadAutostart();
       } catch (e) {

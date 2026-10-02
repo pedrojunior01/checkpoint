@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod google_drive;
+pub mod local_folder;
 pub mod onedrive;
 pub mod onedrive_auth;
 
@@ -36,5 +37,23 @@ pub trait CloudProvider: Send + Sync {
 // Re-exports de conveniência
 pub use auth::AuthService;
 pub use google_drive::GoogleDriveProvider;
+pub use local_folder::{detect_cloud_folders, DetectedCloudFolder, LocalFolderProvider};
 pub use onedrive::OneDriveProvider;
 pub use onedrive_auth::OneDriveAuthService;
+
+/// Verifica se existem credenciais salvas do Google Drive no Windows Credential Manager.
+pub fn is_google_authenticated() -> bool {
+    keyring::Entry::new(auth::KEYRING_SERVICE, "google_drive_refresh_token")
+        .and_then(|e| e.get_password())
+        .is_ok()
+}
+
+/// Verifica se existem credenciais salvas do OneDrive no Windows Credential Manager.
+pub fn is_onedrive_authenticated() -> bool {
+    keyring::Entry::new(
+        auth::KEYRING_SERVICE,
+        onedrive_auth::KEYRING_ONEDRIVE_REFRESH,
+    )
+    .and_then(|e| e.get_password())
+    .is_ok()
+}

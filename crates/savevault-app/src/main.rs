@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         [flag] if flag == "--version" || flag == "-V" => {
-            println!("SaveVault v0.6.0");
+            println!("SaveVault v{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         [autostart_cmd, sub] if autostart_cmd == "autostart" => {
@@ -135,38 +135,40 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
     let config_dir = PathBuf::from(&appdata).join("SaveVault");
     let config_path = config_dir.join("config.toml");
-    let config = Config::load(&config_path).unwrap_or_default();
+    let mut config = Config::load(&config_path).unwrap_or_default();
     let _ = config.save(&config_path);
     savevault_app::notifications::init_from_config(&config.notifications);
 
-    // Roteia modo DEV-UI se solicitado
-    if args.iter().any(|a| a == "--ui" || a == "ui") {
-        return handle_ui_command(&config).await;
+    // Roteia modo Janela Desktop / DEV-UI se solicitado
+    if args
+        .iter()
+        .any(|a| a == "--ui" || a == "ui" || a == "--app" || a == "desktop" || a == "--desktop")
+    {
+        return handle_ui_command(&config, &config_path).await;
     }
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
         // ----------------------------------------------------------------
+        // savevault auth — gerencia sincronização com a pasta da nuvem
         // ----------------------------------------------------------------
-        // savevault auth — login, logout, status OAuth 2.0 (Google Drive / OneDrive)
-        // ----------------------------------------------------------------
-        [cmd, sub, provider] if cmd == "auth" => {
-            handle_auth_command(sub, Some(provider), &config.cloud.provider).await?;
+        [cmd, sub, path_or_target] if cmd == "auth" => {
+            handle_auth_command(sub, Some(path_or_target), &mut config, &config_path).await?;
             return Ok(());
         }
 
         [cmd, sub] if cmd == "auth" => {
-            handle_auth_command(sub, None, &config.cloud.provider).await?;
+            handle_auth_command(sub, None, &mut config, &config_path).await?;
             return Ok(());
         }
 
         [cmd] if cmd == "auth" => {
-            eprintln!("Uso: savevault auth <login | logout | status> [google | onedrive]");
+            eprintln!("Uso: savevault auth <status | login [pasta] | logout>");
             return Ok(());
         }
 
         [login_cmd] if login_cmd == "login" => {
-            handle_auth_command("login", None, &config.cloud.provider).await?;
+            handle_auth_command("login", None, &mut config, &config_path).await?;
             return Ok(());
         }
 
@@ -393,13 +395,17 @@ async fn run_resident_daemon(
     ));
 
     // Inicializa a interface web DEV-UI em background para acesso via Tray ou navegador
-    let ui_state = std::sync::Arc::new(savevault_app::DevUiState::new(
-        db_conn.clone(),
-        config.paths.database_path.clone(),
-        config.paths.backup_dir.clone(),
-        Some(reconciler.clone()),
-        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
-    ));
+    let config_path = config_dir.join("config.toml");
+    let ui_state = std::sync::Arc::new(
+        savevault_app::DevUiState::new(
+            db_conn.clone(),
+            config.paths.database_path.clone(),
+            config.paths.backup_dir.clone(),
+            Some(reconciler.clone()),
+            std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+        )
+        .with_config_path(config_path.clone()),
+    );
 
     let server_shutdown_rx = shutdown_tx.subscribe();
     let (ui_addr, server_handle) =
@@ -416,6 +422,21 @@ async fn run_resident_daemon(
 
     let ui_port = ui_addr.map(|a| a.port()).unwrap_or(4040);
     let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), ui_port);
+
+    // Se for primeira execução (setup pendente) e não estiver em modo silencioso/tray, abre a janela desktop
+    if !config.general.setup_completed
+        && !args
+            .iter()
+            .any(|a| a == "--tray" || a == "--silent" || a == "--minimized")
+    {
+        if let Some(addr) = ui_addr {
+            let app_url = format!("http://{}", addr);
+            tracing::info!(
+                "Primeira execução detectada (setup pendente). Abrindo Assistente de Configuração..."
+            );
+            let _ = savevault_app::desktop::open_desktop_window(&app_url);
+        }
+    }
 
     tracing::info!("SaveVault monitorando em modo residente (Watcher + Reconciler + Sync + Tray). Pressione Ctrl+C para encerrar.");
 
@@ -478,144 +499,64 @@ async fn run_resident_daemon(
 
 async fn handle_auth_command(
     sub: &str,
-    provider_arg: Option<&str>,
-    configured_provider: &str,
+    target_path_arg: Option<&str>,
+    config: &mut Config,
+    config_path: &Path,
 ) -> anyhow::Result<()> {
-    if sub == "status" && provider_arg.is_none() {
-        println!("==================================================");
-        println!("           SaveVault — Status da Nuvem            ");
-        println!("==================================================");
-        let google_auth =
-            savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
-        let google_status = if google_auth {
-            "✅ Autenticado"
-        } else if savevault_cloud::GoogleDriveProvider::from_env().is_some() {
-            "❌ Não autenticado (execute: savevault auth login google)"
-        } else {
-            "⚠️  Variáveis de ambiente ausentes"
-        };
-        println!("  Google Drive:       {}", google_status);
-
-        let onedrive_auth =
-            savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
-        let onedrive_status = if onedrive_auth {
-            "✅ Autenticado"
-        } else if savevault_cloud::OneDriveProvider::from_env().is_some() {
-            "❌ Não autenticado (execute: savevault auth login onedrive)"
-        } else {
-            "⚠️  Variáveis de ambiente ausentes"
-        };
-        println!("  Microsoft OneDrive: {}", onedrive_status);
-        println!("  Provedor Ativo:     {}", configured_provider);
-        println!("==================================================");
-        return Ok(());
-    }
-
-    let target = provider_arg.unwrap_or(configured_provider).to_lowercase();
-    match target.as_str() {
-        "onedrive" => handle_auth_onedrive(sub).await,
-        "google_drive" | "google" | "drive" => handle_auth_google(sub).await,
-        other => {
-            eprintln!(
-                "Provedor de nuvem '{}' não reconhecido. Use: 'google' ou 'onedrive'.",
-                other
-            );
-            Ok(())
-        }
-    }
-}
-
-async fn handle_auth_onedrive(sub: &str) -> anyhow::Result<()> {
     match sub {
-        "login" => {
-            let provider = match savevault_cloud::OneDriveProvider::from_env() {
-                Some(p) => p,
-                None => {
-                    eprintln!(
-                        "Erro: variáveis de ambiente para o OneDrive não definidas.\n\
-                        Configure:\n  \
-                        SAVEVAULT_ONEDRIVE_CLIENT_ID=<seu_client_id>\n  \
-                        SAVEVAULT_ONEDRIVE_CLIENT_SECRET=<seu_client_secret> (opcional para clientes públicos)\n\n\
-                        Obtenha as credenciais em: https://portal.azure.com/ -> Entra ID -> App Registrations"
-                    );
-                    return Err(anyhow::anyhow!("Credenciais do OneDrive não configuradas"));
-                }
-            };
-
-            if provider.is_authenticated() {
-                println!("Já autenticado no OneDrive. Use 'savevault auth logout onedrive' primeiro para reconectar.");
-                return Ok(());
-            }
-            provider.login().await?;
-            println!("✅ Login realizado com sucesso! Suas saves serão sincronizadas com o Microsoft OneDrive.");
-        }
-        "logout" => {
-            let auth = savevault_cloud::OneDriveAuthService::new("".into(), None);
-            auth.logout()?;
-            println!("✅ Credenciais removidas. Microsoft OneDrive desvinculado.");
-        }
         "status" => {
-            let is_auth =
-                savevault_cloud::OneDriveAuthService::new("".into(), None).is_authenticated();
-            if is_auth {
-                println!("✅ Autenticado no Microsoft OneDrive.");
+            println!("==================================================");
+            println!("           SaveVault — Status da Nuvem            ");
+            println!("==================================================");
+            let detected = savevault_cloud::detect_cloud_folders();
+            let local_status = if let Some(ref p) = config.cloud.local_sync_path {
+                format!("✅ Ativo ({})", p.display())
+            } else if let Some(first) = detected.first() {
+                format!("💡 Detectado ({})", first.savevault_folder.display())
             } else {
-                println!("❌ Não autenticado no Microsoft OneDrive. Execute: savevault auth login onedrive");
-            }
-        }
-        other => {
-            eprintln!(
-                "Subcomando desconhecido: 'auth {} onedrive'. Use: login | logout | status",
-                other
-            );
-        }
-    }
-    Ok(())
-}
-
-async fn handle_auth_google(sub: &str) -> anyhow::Result<()> {
-    match sub {
-        "login" => {
-            let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
-                Some(p) => p,
-                None => {
-                    eprintln!(
-                        "Erro: variáveis de ambiente não definidas.\n\
-                        Configure:\n  \
-                        SAVEVAULT_GOOGLE_CLIENT_ID=<seu_client_id>\n  \
-                        SAVEVAULT_GOOGLE_CLIENT_SECRET=<seu_client_secret>\n\n\
-                        Obtenha as credenciais em: https://console.cloud.google.com/"
-                    );
-                    return Err(anyhow::anyhow!("Credenciais não configuradas"));
-                }
+                "⚪ Nenhuma pasta detectada".to_string()
             };
-
-            if provider.is_authenticated() {
-                println!("Já autenticado no Google Drive. Use 'savevault auth logout google' primeiro para reconectar.");
-                return Ok(());
+            println!("  Sincronização:      Pasta Local da Nuvem");
+            println!("  Pasta Alvo:         {}", local_status);
+            if !detected.is_empty() {
+                println!("  Pastas Detectadas no Sistema:");
+                for d in &detected {
+                    println!("    - {}: {}", d.name, d.savevault_folder.display());
+                }
             }
-            provider.login().await?;
-            println!("✅ Login realizado com sucesso! Suas saves serão sincronizadas com o Google Drive.");
+            println!("==================================================");
         }
-        "logout" => {
-            let auth = savevault_cloud::AuthService::new("".into(), "".into());
-            auth.logout()?;
-            println!("✅ Credenciais removidas. Google Drive desvinculado.");
-        }
-        "status" => {
-            let is_auth =
-                savevault_cloud::AuthService::new("".into(), "".into()).is_authenticated();
-            if is_auth {
-                println!("✅ Autenticado no Google Drive.");
-            } else {
+        "login" | "configure" | "set" => {
+            let path = target_path_arg
+                .map(PathBuf::from)
+                .or_else(|| config.cloud.local_sync_path.clone())
+                .or_else(|| {
+                    savevault_cloud::detect_cloud_folders()
+                        .first()
+                        .map(|d| d.savevault_folder.clone())
+                });
+            if let Some(p) = path {
+                let _ = std::fs::create_dir_all(&p);
+                config.cloud.provider = "local_folder".to_string();
+                config.cloud.local_sync_path = Some(p.clone());
+                let _ = config.save(config_path);
                 println!(
-                    "❌ Não autenticado no Google Drive. Execute: savevault auth login google"
+                    "✅ Sincronização via Pasta Local da Nuvem ativa em: {}",
+                    p.display()
                 );
+            } else {
+                eprintln!("⚠️ Nenhuma pasta de nuvem informada ou detectada.");
+                eprintln!("Uso: savevault auth login [caminho_da_pasta]");
             }
+        }
+        "logout" | "clear" => {
+            config.cloud.local_sync_path = None;
+            let _ = config.save(config_path);
+            println!("✅ Pasta de sincronização em nuvem desvinculada.");
         }
         other => {
             eprintln!(
-                "Subcomando desconhecido: 'auth {} google'. Use: login | logout | status",
+                "Subcomando desconhecido: '{}'. Use: status | login [pasta] | logout",
                 other
             );
         }
@@ -1203,10 +1144,11 @@ fn print_global_help() {
     println!(
         "  savevault cloud pull [jogo]                 Baixa da nuvem snapshots ausentes no disco"
     );
-    println!("  savevault auth [login|status|logout]        Gerencia autenticação OAuth (Google Drive / OneDrive)");
+    println!("  savevault auth [status|login|logout]        Gerencia pasta local de sincronização de nuvem");
     println!("  savevault autostart [enable|disable|status] Configura inicialização automática com o Windows");
     println!("  savevault notifications [on|off|all|status] Configura frequência das notificações (modo gamer)");
     println!("  savevault conflict [list|resolve]           Gerencia e resolve divergências entre múltiplos PCs");
+    println!("  savevault desktop                           Inicia a Janela de Desktop integrada ultraleve");
     println!("  savevault --ui                              Inicia a interface de testes DEV-UI (porta 4040)");
     println!("  savevault --help                            Exibe esta ajuda");
     println!("  savevault --version                         Exibe a versão do SaveVault");
@@ -1419,9 +1361,9 @@ fn print_restore_help() {
     println!("  savevault restore list");
 }
 
-async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
+async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     println!("================================================================================");
-    println!("               SaveVault DEV-UI-01 — Modo de Teste Provisório                   ");
+    println!("               SaveVault — Interface Desktop Integrada (DEV-UI)                 ");
     println!("================================================================================");
     println!("  Banco de dados: {}", config.paths.database_path.display());
     println!("  Cofre backups:  {}", config.paths.backup_dir.display());
@@ -1441,13 +1383,16 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
         config.general.max_versions,
     ));
 
-    let state = std::sync::Arc::new(savevault_app::DevUiState::new(
-        db_conn.clone(),
-        config.paths.database_path.clone(),
-        config.paths.backup_dir.clone(),
-        Some(reconciler.clone()),
-        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
-    ));
+    let state = std::sync::Arc::new(
+        savevault_app::DevUiState::new(
+            db_conn.clone(),
+            config.paths.database_path.clone(),
+            config.paths.backup_dir.clone(),
+            Some(reconciler.clone()),
+            std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+        )
+        .with_config_path(config_path.to_path_buf()),
+    );
 
     let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
     let recon_shutdown_rx = shutdown_tx.subscribe();
@@ -1487,16 +1432,11 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), addr.port());
 
     let ui_url = format!("http://{}", addr);
-    println!("  DEV-UI ativa em: {}", ui_url);
-    println!("  Abrindo navegador... (Pressione Ctrl+C ou use o menu da bandeja para encerrar)");
+    println!("  Interface SaveVault ativa em: {}", ui_url);
+    println!("  Iniciando Janela Desktop ultraleve... (Pressione Ctrl+C ou feche a janela/bandeja para encerrar)");
     println!("================================================================================");
 
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", &ui_url])
-            .spawn();
-    }
+    let _ = savevault_app::desktop::open_desktop_window(&ui_url);
 
     let mut tray_shutdown_rx = shutdown_tx.subscribe();
 
@@ -1544,11 +1484,11 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
 }
 
 fn print_auth_help() {
-    println!("Uso: savevault auth <login | logout | status> [google | onedrive]");
+    println!("Uso: savevault auth <status | login [pasta] | logout>");
     println!();
     println!("Subcomandos:");
-    println!("  login     Inicia o fluxo OAuth 2.0 no navegador padrão");
-    println!("  status    Verifica o estado da autenticação com o provedor de nuvem");
-    println!("  logout    Remove o token de acesso do Windows Credential Manager");
-    println!("  help      Exibe esta mensagem de ajuda");
+    println!("  status          Verifica a pasta de nuvem configurada e detectada");
+    println!("  login [pasta]   Configura a pasta local da nuvem para sincronização");
+    println!("  logout          Desvincula a pasta de nuvem configurada");
+    println!("  help            Exibe esta mensagem de ajuda");
 }

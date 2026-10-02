@@ -618,140 +618,56 @@ fn debug_or_warn(attempts: u32, backoff_ms: u64) {
 // API de alto nível (função de conveniência)
 // ---------------------------------------------------------------------------
 
-/// Processa a fila de sync com o provedor Google Drive padrão.
-///
-/// Lê as credenciais das variáveis de ambiente:
-/// - `SAVEVAULT_GOOGLE_CLIENT_ID`
-/// - `SAVEVAULT_GOOGLE_CLIENT_SECRET`
-///
-/// Se as variáveis não estiverem definidas ou o usuário não estiver autenticado,
-/// a função registra um aviso e retorna `Ok(0)` sem falhar — permitindo que o
-/// SaveVault funcione normalmente em modo offline.
-pub async fn process_queue_google_drive(
-    conn: &Connection,
-    backup_root: std::path::PathBuf,
-) -> Result<usize> {
-    let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
-        Some(p) => p,
-        None => {
-            warn!(
-                "Credenciais do Google Drive não encontradas (env vars ausentes). \
-                Sincronização desativada."
-            );
-            return Ok(0);
-        }
-    };
-
-    if !provider.is_authenticated() {
-        warn!(
-            "Usuário não autenticado no Google Drive. \
-            Execute: cargo run --bin savevault -- auth login"
-        );
-        return Ok(0);
-    }
-
-    let engine = SyncEngine::new(provider, backup_root);
-    engine.process_queue(conn).await
-}
-
-/// Processa a fila de sync com o provedor Microsoft OneDrive.
-///
-/// Lê as credenciais das variáveis de ambiente:
-/// - `SAVEVAULT_ONEDRIVE_CLIENT_ID`
-/// - `SAVEVAULT_ONEDRIVE_CLIENT_SECRET` (opcional para clientes públicos nativos)
-///
-/// Se as variáveis não estiverem definidas ou o usuário não estiver autenticado,
-/// a função registra um aviso e retorna `Ok(0)` sem falhar — permitindo que o
-/// SaveVault funcione normalmente em modo offline.
-pub async fn process_queue_onedrive(
-    conn: &Connection,
-    backup_root: std::path::PathBuf,
-) -> Result<usize> {
-    let provider = match savevault_cloud::OneDriveProvider::from_env() {
-        Some(p) => p,
-        None => {
-            warn!(
-                "Credenciais do OneDrive não encontradas (env vars ausentes). \
-                Sincronização desativada."
-            );
-            return Ok(0);
-        }
-    };
-
-    if !provider.is_authenticated() {
-        warn!(
-            "Usuário não autenticado no OneDrive. \
-            Execute: cargo run --bin savevault -- auth login onedrive"
-        );
-        return Ok(0);
-    }
-
-    let engine = SyncEngine::new(provider, backup_root);
-    engine.process_queue(conn).await
-}
-
-/// Processa a fila de sync usando o provedor de nuvem configurado ("google_drive", "onedrive").
+/// Processa a fila de sync usando a pasta local da nuvem ("local_folder").
 pub async fn process_queue_active_provider(
     conn: &Connection,
     backup_root: std::path::PathBuf,
     provider_name: &str,
 ) -> Result<usize> {
     match provider_name.to_lowercase().as_str() {
-        "onedrive" => process_queue_onedrive(conn, backup_root).await,
-        "google_drive" | "google" | "drive" => process_queue_google_drive(conn, backup_root).await,
-        other => {
-            warn!(
-                "Provedor de nuvem '{}' não reconhecido ou não suportado. Provedores válidos: 'google_drive', 'onedrive'.",
-                other
-            );
-            Ok(0)
+        "none" | "disabled" | "offline" => Ok(0),
+        _ => {
+            let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
+                .map(std::path::PathBuf::from)
+                .ok()
+                .or_else(|| {
+                    savevault_cloud::detect_cloud_folders()
+                        .into_iter()
+                        .next()
+                        .map(|d| d.savevault_folder)
+                })
+                .unwrap_or_else(|| backup_root.clone());
+
+            let provider = savevault_cloud::LocalFolderProvider::new(sync_path);
+            let engine = SyncEngine::new(provider, backup_root);
+            engine.process_queue(conn).await
         }
     }
 }
 
-/// Processa a fila de sync sem reter o Mutex do banco durante os uploads e retries de rede.
+/// Processa a fila de sync sem reter o Mutex do banco durante a cópia dos snapshots para a pasta de nuvem.
 pub async fn process_queue_active_provider_unlocked(
     db: &std::sync::Arc<tokio::sync::Mutex<Connection>>,
     backup_root: std::path::PathBuf,
     provider_name: &str,
 ) -> Result<usize> {
     match provider_name.to_lowercase().as_str() {
-        "onedrive" => {
-            let provider = match savevault_cloud::OneDriveProvider::from_env() {
-                Some(p) => p,
-                None => {
-                    warn!("Credenciais do OneDrive não encontradas (env vars ausentes).");
-                    return Ok(0);
-                }
-            };
-            if !provider.is_authenticated() {
-                warn!("Usuário não autenticado no OneDrive.");
-                return Ok(0);
-            }
+        "none" | "disabled" | "offline" => Ok(0),
+        _ => {
+            let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
+                .map(std::path::PathBuf::from)
+                .ok()
+                .or_else(|| {
+                    savevault_cloud::detect_cloud_folders()
+                        .into_iter()
+                        .next()
+                        .map(|d| d.savevault_folder)
+                })
+                .unwrap_or_else(|| backup_root.clone());
+
+            let provider = savevault_cloud::LocalFolderProvider::new(sync_path);
             let engine = SyncEngine::new(provider, backup_root);
             engine.process_queue_unlocked(db).await
-        }
-        "google_drive" | "google" | "drive" => {
-            let provider = match savevault_cloud::GoogleDriveProvider::from_env() {
-                Some(p) => p,
-                None => {
-                    warn!("Credenciais do Google Drive não encontradas (env vars ausentes).");
-                    return Ok(0);
-                }
-            };
-            if !provider.is_authenticated() {
-                warn!("Usuário não autenticado no Google Drive.");
-                return Ok(0);
-            }
-            let engine = SyncEngine::new(provider, backup_root);
-            engine.process_queue_unlocked(db).await
-        }
-        other => {
-            warn!(
-                "Provedor de nuvem '{}' não reconhecido ou não suportado. Provedores válidos: 'google_drive', 'onedrive'.",
-                other
-            );
-            Ok(0)
         }
     }
 }

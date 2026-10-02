@@ -111,11 +111,11 @@ pub fn setup_tray(
         // Rótulo de título / versão
         let _ = tray.add_label(&title);
 
-        // Ação: Abrir Painel Web
+        // Ação: Abrir Janela do SaveVault (Desktop Integrada)
         let web_url = format!("http://127.0.0.1:{}", ui_port);
         let url_clone = web_url.clone();
-        let _ = tray.add_menu_item("🌐 Abrir Painel Web", move || {
-            open_browser(&url_clone);
+        let _ = tray.add_menu_item("🖥️ Abrir SaveVault", move || {
+            let _ = crate::desktop::open_desktop_window(&url_clone);
         });
 
         // Ação: Alternar Console (Exibir/Ocultar)

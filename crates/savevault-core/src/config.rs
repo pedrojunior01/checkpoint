@@ -88,6 +88,9 @@ pub struct GeneralConfig {
     /// Política de resolução de conflitos entre múltiplos computadores
     #[serde(default)]
     pub conflict_policy: ConflictPolicy,
+    /// Se o assistente de primeiro acesso (setup wizard) foi concluído.
+    #[serde(default)]
+    pub setup_completed: bool,
 }
 
 fn default_device_name() -> String {
@@ -102,8 +105,11 @@ fn default_reconciliation_interval_secs() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudConfig {
-    /// Provedor ativo: "google_drive" (MVP). Outros pós-MVP.
+    /// Provedor ativo: "local_folder" | "none"
     pub provider: String,
+    /// Caminho da pasta de sincronização local da nuvem (ex.: C:\Users\...\OneDrive\SaveVault)
+    #[serde(default)]
+    pub local_sync_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,9 +132,11 @@ impl Default for Config {
                 autostart: false,
                 device_name: default_device_name(),
                 conflict_policy: ConflictPolicy::KeepBoth,
+                setup_completed: false,
             },
             cloud: CloudConfig {
-                provider: "google_drive".into(),
+                provider: "local_folder".into(),
+                local_sync_path: None,
             },
             paths: PathsConfig {
                 backup_dir: base.join("backups"),

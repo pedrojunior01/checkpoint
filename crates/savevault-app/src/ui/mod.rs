@@ -5,9 +5,9 @@ pub mod server;
 pub mod state;
 
 pub use state::{
-    DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView, LocationView,
-    ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SafetyBackupItem,
-    ScanLocationResult, SnapshotView,
+    DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView,
+    DiscoveredGameView, LocationView, ReconciliationView, RestoreApiResponse, SafetyBackupGroup,
+    SafetyBackupItem, ScanLocationResult, SetupStatusView, SnapshotView,
 };
 
 use std::net::SocketAddr;

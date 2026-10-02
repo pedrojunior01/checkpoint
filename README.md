@@ -116,9 +116,8 @@ crates/
 git clone https://github.com/pedrojunior01/Savevalt.git
 cd Savevalt
 
-# 2. Configurar variáveis para Google Drive (Opcional)
+# 2. Configurar variáveis opcionais (Opcional - detecção automática da pasta de nuvem já é o padrão)
 copy .env.example .env
-# Preencha GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env caso vá usar a sincronização em nuvem direta
 
 # 3. Compilar em modo release
 cargo build --release

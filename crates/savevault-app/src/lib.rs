@@ -4,6 +4,7 @@
 
 pub mod cloud_recovery;
 pub mod conflict;
+pub mod desktop;
 pub mod notifications;
 pub mod orchestrator;
 pub mod pipeline;

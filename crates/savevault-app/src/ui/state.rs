@@ -164,11 +164,32 @@ pub struct RestoreApiResponse {
     pub details: Option<String>,
 }
 
+/// Estado e visão do Assistente de Primeiro Acesso (Setup Wizard).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupStatusView {
+    pub setup_completed: bool,
+    pub cloud_provider: String,
+    pub local_sync_path: Option<String>,
+    pub detected_cloud_folders: Vec<savevault_cloud::DetectedCloudFolder>,
+    pub games_count: usize,
+    pub autostart_enabled: bool,
+    pub notifications_enabled: bool,
+}
+
+/// Jogo descoberto durante o scan do assistente.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredGameView {
+    pub name: String,
+    pub platform: String,
+    pub save_path: String,
+}
+
 /// Estado compartilhado e thread-safe da DEV-UI.
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
     pub db_path: PathBuf,
     pub backup_root: PathBuf,
+    pub config_path: Option<PathBuf>,
     pub reconciler: Option<Arc<Reconciler>>,
     pub reconciliation_interval: Duration,
     pub watcher_active: AtomicBool,
@@ -192,6 +213,7 @@ impl DevUiState {
             db,
             db_path,
             backup_root,
+            config_path: None,
             reconciler,
             reconciliation_interval,
             watcher_active: AtomicBool::new(true),
@@ -202,6 +224,12 @@ impl DevUiState {
             last_reconciliation_report: Mutex::new(None),
             last_reconcile_time: Mutex::new(None),
         }
+    }
+
+    /// Define o caminho do arquivo de configuração para o estado da UI.
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
     }
 
     /// Registra um evento no log em memória da DEV-UI.
@@ -787,6 +815,163 @@ impl DevUiState {
                 }
             }
         }
+    }
+
+    /// Resolve o caminho efetivo do arquivo de configuração config.toml.
+    pub fn resolve_config_path(&self) -> PathBuf {
+        if let Some(ref p) = self.config_path {
+            p.clone()
+        } else {
+            let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+            PathBuf::from(appdata).join("SaveVault").join("config.toml")
+        }
+    }
+
+    /// Carrega a configuração atual a partir do caminho resolvido.
+    pub fn get_config(&self) -> savevault_core::config::Config {
+        let config_path = self.resolve_config_path();
+        savevault_core::config::Config::load(&config_path).unwrap_or_default()
+    }
+
+    /// Salva a configuração fornecida no caminho resolvido.
+    pub fn save_config(&self, config: &savevault_core::config::Config) -> Result<()> {
+        let config_path = self.resolve_config_path();
+        config.save(&config_path)
+    }
+
+    /// Obtém o status do Assistente de Primeiro Acesso (Setup Wizard).
+    pub async fn get_setup_status(&self) -> Result<SetupStatusView> {
+        let config = self.get_config();
+
+        let detected_cloud_folders = savevault_cloud::detect_cloud_folders();
+        let local_sync_path = config
+            .cloud
+            .local_sync_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .or_else(|| {
+                detected_cloud_folders
+                    .first()
+                    .map(|d| d.savevault_folder.to_string_lossy().to_string())
+            });
+
+        let games_count = {
+            let conn = self.db.lock().await;
+            let repo = GamesRepo::new(&conn);
+            repo.list_all().map(|g| g.len()).unwrap_or(0)
+        };
+
+        let autostart_enabled =
+            savevault_core::autostart::is_enabled().unwrap_or(config.general.autostart);
+
+        Ok(SetupStatusView {
+            setup_completed: config.general.setup_completed,
+            cloud_provider: config.cloud.provider,
+            local_sync_path,
+            detected_cloud_folders,
+            games_count,
+            autostart_enabled,
+            notifications_enabled: config.notifications.enabled,
+        })
+    }
+
+    /// Executa o scan inicial de jogos durante o assistente de primeiro acesso.
+    pub async fn run_setup_discovery(&self) -> Result<Vec<DiscoveredGameView>> {
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Assistente de Configuração: iniciando detecção de jogos e saves...",
+            None,
+        )
+        .await;
+
+        let config_path = self.resolve_config_path();
+        let config_dir = config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let result = savevault_discovery::run_all(config_dir).await?;
+
+        let _report = {
+            let conn = self.db.lock().await;
+            crate::orchestrator::persist_discovery_result(&conn, &result)?
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Detecção concluída: {} jogos e {} locais mapeados.",
+                result.games.len(),
+                result.save_locations.len()
+            ),
+            None,
+        )
+        .await;
+
+        let conn = self.db.lock().await;
+        let games_repo = GamesRepo::new(&conn);
+        let locs_repo = SaveLocationsRepo::new(&conn);
+        let games = games_repo.list_all()?;
+        let mut views = Vec::new();
+        for g in games {
+            if let Ok(locs) = locs_repo.list_by_game(g.id) {
+                for loc in locs {
+                    views.push(DiscoveredGameView {
+                        name: g.name.clone(),
+                        platform: format!("{:?}", g.platform),
+                        save_path: loc.path.display().to_string(),
+                    });
+                }
+            }
+        }
+        Ok(views)
+    }
+
+    /// Conclui o assistente de primeiro acesso e persiste as preferências no config.toml.
+    pub async fn complete_setup(
+        &self,
+        provider: Option<String>,
+        autostart: Option<bool>,
+        notifications: Option<bool>,
+        local_sync_path: Option<String>,
+    ) -> Result<SetupStatusView> {
+        let config_path = self.resolve_config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        if let Some(p) = provider {
+            config.cloud.provider = p;
+        }
+        if let Some(ref lsp) = local_sync_path {
+            let trimmed = lsp.trim();
+            if !trimmed.is_empty() {
+                let p = PathBuf::from(trimmed);
+                let _ = std::fs::create_dir_all(&p);
+                config.cloud.local_sync_path = Some(p);
+            }
+        }
+        if let Some(a) = autostart {
+            config.general.autostart = a;
+            if a {
+                let _ = savevault_core::autostart::enable(None);
+            } else {
+                let _ = savevault_core::autostart::disable();
+            }
+        }
+        if let Some(n) = notifications {
+            config.notifications.enabled = n;
+        }
+        config.general.setup_completed = true;
+        config.save(&config_path)?;
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            "Assistente de Primeiro Acesso concluído com sucesso!",
+            Some(format!(
+                "Provedor ativo: {}, Iniciar com Windows: {}, Notificações: {}",
+                config.cloud.provider, config.general.autostart, config.notifications.enabled
+            )),
+        )
+        .await;
+
+        self.get_setup_status().await
     }
 }
 
