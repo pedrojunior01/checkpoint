@@ -7,7 +7,8 @@ use tokio::io::AsyncReadExt;
 pub async fn hash_file(path: &Path) -> Result<String> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0u8; 65536];
+    // Buffer alocado no heap para evitar estouro de stack frame da Future do Tokio
+    let mut buffer = vec![0u8; 65536];
 
     loop {
         let n = file.read(&mut buffer).await?;

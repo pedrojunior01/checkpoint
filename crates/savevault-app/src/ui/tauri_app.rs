@@ -50,11 +50,37 @@ pub async fn get_reconciliation_status(
 
 #[tauri::command]
 pub async fn trigger_reconcile(state: State<'_, Arc<DevUiState>>) -> Result<String, String> {
-    state
-        .trigger_reconcile()
-        .await
-        .map(|r| format!("{} arquivo(s) modificado(s)", r.files_changed))
-        .map_err(|e| e.to_string())
+    let state_clone = Arc::clone(&state);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    std::thread::Builder::new()
+        .name("savevault-reconcile".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match rt {
+                Ok(rt) => {
+                    let res = rt.block_on(async move {
+                        state_clone.trigger_reconcile().await
+                    });
+                    let _ = tx.send(res);
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(crate::reconciler::ReconciliationError::Pipeline(
+                        anyhow::anyhow!("Falha ao instanciar runtime para reconciliação: {}", e),
+                    )));
+                }
+            }
+        })
+        .map_err(|e| format!("Falha ao iniciar thread de reconciliação: {}", e))?;
+
+    match rx.await {
+        Ok(Ok(r)) => Ok(format!("{} arquivo(s) modificado(s)", r.files_changed)),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Operação de reconciliação cancelada ou interrompida".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -320,9 +346,19 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                         "reconcile" => {
                             let state = app.state::<Arc<DevUiState>>();
                             let state_clone = Arc::clone(&state);
-                            tauri::async_runtime::spawn(async move {
-                                let _ = state_clone.trigger_reconcile().await;
-                            });
+                            let _ = std::thread::Builder::new()
+                                .name("savevault-tray-reconcile".into())
+                                .stack_size(16 * 1024 * 1024)
+                                .spawn(move || {
+                                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                                        .enable_all()
+                                        .build()
+                                    {
+                                        rt.block_on(async move {
+                                            let _ = state_clone.trigger_reconcile().await;
+                                        });
+                                    }
+                                });
                         }
                         "quit" => {
                             app.exit(0);
