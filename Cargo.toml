@@ -64,3 +64,7 @@ keyring = "3"
 
 # Windows Registry (GOG detector)
 winreg = "0.52"
+
+# Desktop UI (Tauri 2) — usado apenas com --features desktop
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-build = { version = "2", features = [] }

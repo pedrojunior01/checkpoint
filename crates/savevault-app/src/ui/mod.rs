@@ -4,6 +4,9 @@ pub mod assets;
 pub mod server;
 pub mod state;
 
+#[cfg(feature = "desktop")]
+pub mod tauri_app;
+
 pub use state::{
     DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView, LocationView,
     ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SafetyBackupItem,
