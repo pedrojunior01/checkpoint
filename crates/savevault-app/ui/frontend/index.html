@@ -3,54 +3,37 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SaveVault — checkpoint (DEV-UI-01)</title>
+  <title>checkpoint — SaveVault (DEV-UI-01)</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="style.css" />
   <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            app: {
-              bg:           '#f8fafc',
-              card:         '#ffffff',
-              sidebar:      '#f1f5f9',
-              border:       'rgba(203,213,225,0.7)',
-              emeraldBadge: '#dcfce7',
-              emeraldText:  '#15803d',
-            }
-          },
-          fontFamily: { sans: ['Inter', 'sans-serif'] },
-          boxShadow: { xs: '0 1px 3px rgba(0,0,0,0.06)' }
-        }
-      }
-    };
     if (localStorage.getItem("savevault-theme") === "dark" || (!localStorage.getItem("savevault-theme") && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="app.js" defer></script>
   <style>
     * { -webkit-app-region: no-drag; }
     [data-tauri-drag-region] { -webkit-app-region: drag; }
     [data-tauri-drag-region] button,
     [data-tauri-drag-region] a { -webkit-app-region: no-drag; }
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     .hidden { display: none !important; }
+    .snapshot-card {
+      content-visibility: auto;
+      contain-intrinsic-size: 0 76px;
+    }
   </style>
 </head>
 <body class="bg-transparent w-screen h-screen overflow-hidden select-none font-sans p-1">
 
 <!-- Desktop window wrapper -->
-<div class="w-full h-full bg-slate-50/95 dark:bg-slate-950 backdrop-blur-md rounded-xl shadow-2xl border border-slate-300/70 dark:border-slate-800 text-slate-900 dark:text-slate-100 overflow-hidden flex flex-col">
+<div class="w-full h-full bg-slate-50 dark:bg-slate-950 rounded-xl shadow-2xl border border-slate-300/70 dark:border-slate-800 text-slate-900 dark:text-slate-100 overflow-hidden flex flex-col">
 
   <!-- ── TitleBar ── -->
   <header data-tauri-drag-region class="h-9 px-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/60 shrink-0">
@@ -272,7 +255,7 @@
               id="atividade-search-input"
               placeholder="Pesquisar por arquivo, versão ou hash..."
               class="w-full pl-10 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl text-sm placeholder-slate-400 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
-              oninput="renderAtividadeList(this.value)"
+              oninput="onAtividadeSearchInput(this.value)"
             />
             <button
               id="atividade-search-clear"

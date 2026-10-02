@@ -777,13 +777,34 @@ function populateAtividadeGameFilter() {
         }).join("");
 }
 
+let atividadePage = 1;
+const ATIVIDADE_PAGE_SIZE = 30;
+let atividadeSearchDebounceTimer = null;
+
+function onAtividadeSearchInput(val) {
+    if (atividadeSearchDebounceTimer) clearTimeout(atividadeSearchDebounceTimer);
+    atividadeSearchDebounceTimer = setTimeout(() => {
+        renderAtividadeList(val, true);
+    }, 120);
+}
+
 function onAtividadeFilterChange() {
     const searchInput = document.getElementById("atividade-search-input");
     const query = searchInput ? searchInput.value.trim() : "";
-    renderAtividadeList(query);
+    renderAtividadeList(query, true);
 }
 
-function renderAtividadeList(query = "") {
+function carregarMaisAtividade() {
+    atividadePage++;
+    const searchInput = document.getElementById("atividade-search-input");
+    const query = searchInput ? searchInput.value.trim() : "";
+    renderAtividadeList(query, false);
+}
+
+function renderAtividadeList(query = "", resetPage = true) {
+    if (resetPage) {
+        atividadePage = 1;
+    }
     const container = document.getElementById("atividade-list");
     const statsEl = document.getElementById("atividade-search-stats");
     const clearBtn = document.getElementById("atividade-search-clear");
@@ -861,7 +882,9 @@ function renderAtividadeList(query = "") {
         return;
     }
 
-    container.innerHTML = filtered.map(s => {
+    const toShow = filtered.slice(0, atividadePage * ATIVIDADE_PAGE_SIZE);
+
+    let html = toShow.map(s => {
         const gameTitle = s.game_name || "Jogo Desconhecido";
         const fileName = s.file_name || "save";
         const versionLabel = `v${s.version || 1}`;
@@ -872,7 +895,7 @@ function renderAtividadeList(query = "") {
         const safeFilePath = (s.file_path || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
         return `
-            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="snapshot-card bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div class="flex items-start gap-3 min-w-0">
                     <div class="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 mt-0.5">
                         ${versionLabel}
@@ -912,6 +935,18 @@ function renderAtividadeList(query = "") {
                 </div>
             </div>`;
     }).join("");
+
+    if (filtered.length > toShow.length) {
+        html += `
+            <div class="text-center py-4">
+                <button onclick="carregarMaisAtividade()" class="px-5 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors shadow-xs cursor-pointer">
+                    Carregar mais snapshots (mostrando ${toShow.length} de ${filtered.length}) ↓
+                </button>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
 }
 
 function clearAtividadeSearch() {
@@ -919,7 +954,7 @@ function clearAtividadeSearch() {
     if (input) input.value = "";
     const filterEl = document.getElementById("atividade-game-filter");
     if (filterEl) filterEl.value = "";
-    renderAtividadeList("");
+    renderAtividadeList("", true);
 }
 
 function formatBytes(bytes) {
@@ -1570,6 +1605,19 @@ document.addEventListener("DOMContentLoaded", () => {
         clearJogosSearch();
     });
 
-    // Atualiza dashboard a cada 10s
-    setInterval(loadInicio, 10000);
+    // Atualiza dashboard a cada 10s apenas se a janela estiver visível
+    setInterval(() => {
+        if (!document.hidden) {
+            loadInicio();
+        }
+    }, 10000);
+
+    // Quando a janela volta a ficar visível, atualiza imediatamente. Quando oculta, aciona GC se disponível.
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            loadInicio();
+        } else if (window.gc) {
+            try { window.gc(); } catch (_) {}
+        }
+    });
 });

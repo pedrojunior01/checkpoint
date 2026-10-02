@@ -164,12 +164,31 @@ pub async fn update_cloud_config(
         .map_err(|e| e.to_string())
 }
 
+/// Oculta a janela e solicita ao Windows que libere páginas inativas da memória de trabalho.
+pub fn hide_window_to_tray(window: &tauri::WebviewWindow) {
+    let _ = window.hide();
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Threading::SetProcessWorkingSetSize(
+            windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            usize::MAX,
+            usize::MAX,
+        );
+    }
+}
+
+/// Restaura e traz para foco a janela principal.
+pub fn show_main_window(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
 #[tauri::command]
 pub async fn hide_window(
     window: tauri::WebviewWindow,
     state: State<'_, Arc<DevUiState>>,
 ) -> Result<(), String> {
-    let _ = window.hide();
     let config = state.get_config();
     if config.notifications.enabled {
         #[cfg(windows)]
@@ -180,12 +199,22 @@ pub async fn hide_window(
             );
         }
     }
+    hide_window_to_tray(&window);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn minimize_window(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.minimize().map_err(|e| e.to_string())
+    window.minimize().map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Threading::SetProcessWorkingSetSize(
+            windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            usize::MAX,
+            usize::MAX,
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -266,11 +295,9 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                     let _ = win.set_icon(ic.clone());
                 }
                 if start_minimized {
-                    let _ = win.hide();
+                    hide_window_to_tray(&win);
                 } else {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
+                    show_main_window(&win);
                 }
             }
 
@@ -282,14 +309,12 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "show" => {
                             if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.show();
-                                let _ = win.unminimize();
-                                let _ = win.set_focus();
+                                show_main_window(&win);
                             }
                         }
                         "hide" => {
                             if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.hide();
+                                hide_window_to_tray(&win);
                             }
                         }
                         "reconcile" => {
@@ -301,6 +326,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                         }
                         "quit" => {
                             app.exit(0);
+                            std::process::exit(0);
                         }
                         _ => {}
                     })
@@ -309,11 +335,9 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                             let app = tray.app_handle();
                             if let Some(win) = app.get_webview_window("main") {
                                 if win.is_visible().unwrap_or(false) {
-                                    let _ = win.hide();
+                                    hide_window_to_tray(&win);
                                 } else {
-                                    let _ = win.show();
-                                    let _ = win.unminimize();
-                                    let _ = win.set_focus();
+                                    show_main_window(&win);
                                 }
                             }
                         }
@@ -327,7 +351,6 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
             // Fechar [X] = ocultar para a bandeja/apps ocultos (processo permanece ativo protegendo saves)
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
                 let app = window.app_handle();
                 let state = app.state::<Arc<DevUiState>>();
                 let config = state.get_config();
@@ -339,6 +362,9 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                             "O aplicativo foi minimizado para os apps ocultos perto do relógio. Seus saves continuam protegidos.",
                         );
                     }
+                }
+                if let Some(win) = app.get_webview_window(window.label()) {
+                    hide_window_to_tray(&win);
                 }
             }
         })

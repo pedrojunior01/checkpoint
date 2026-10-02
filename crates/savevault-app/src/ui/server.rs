@@ -10,7 +10,7 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::assets::{APP_JS, INDEX_HTML};
+use super::assets::{APP_JS, INDEX_HTML, STYLE_CSS};
 use super::state::{open_path_in_explorer, DevUiEventLevel, DevUiState};
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +279,10 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 APP_JS,
             )
             .await?;
+        }
+
+        ("GET", "/style.css") => {
+            send_response(&mut stream, 200, "OK", "text/css; charset=utf-8", STYLE_CSS).await?;
         }
 
         ("GET", "/favicon.ico") => {

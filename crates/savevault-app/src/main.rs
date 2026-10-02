@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Ponto de entrada principal do SaveVault.
 //!
 //! ## Uso
@@ -166,6 +168,30 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
     let start_minimized = args
         .iter()
         .any(|a| a == "--tray" || a == "--minimized" || a == "--silent");
+
+    #[cfg(windows)]
+    {
+        // Otimização agressiva de consumo de memória do WebView2 (Chromium):
+        // - Limita heap do motor V8 a 64MB (evita que o Chromium retenha centenas de MB de GC inativo)
+        // - Desativa telemetria em segundo plano, componentes desnecessários e sincronização
+        // - Limita a 1 único processo de renderização
+        // - Restringe limites de cache em disco e memória
+        if std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_err() {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions \
+                 --js-flags=--max-old-space-size=64 \
+                 --renderer-process-limit=1 \
+                 --disable-background-networking \
+                 --disable-component-update \
+                 --disable-sync \
+                 --disable-breakpad \
+                 --disable-default-apps \
+                 --disk-cache-size=1048576 \
+                 --media-cache-size=1048576",
+            );
+        }
+    }
 
     dotenvy::dotenv().ok();
 
