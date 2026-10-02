@@ -147,11 +147,11 @@ pub fn canonicalize_windows_path_str(raw: &str) -> Result<String, PathError> {
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         let drive = (bytes[0] as char).to_ascii_uppercase();
         let remainder = &normalized[2..];
-        return Ok(format!("{}:{}", drive, remainder.to_ascii_lowercase()));
+        return Ok(format!("{}:{}", drive, remainder.to_lowercase()));
     }
 
     // Caso contrário (UNC ou relativo), tudo em lowercase
-    Ok(normalized.to_ascii_lowercase())
+    Ok(normalized.to_lowercase())
 }
 
 /// Retorna a versão canônica de um `Path` como `PathBuf`.
@@ -159,6 +159,39 @@ pub fn canonicalize_windows_path(path: &Path) -> Result<PathBuf, PathError> {
     let s = path.to_str().ok_or(PathError::NonUtf8)?;
     let canon = canonicalize_windows_path_str(s)?;
     Ok(PathBuf::from(canon))
+}
+
+/// Calcula o caminho relativo seguro entre um arquivo e seu diretório base.
+/// Se o arquivo for igual à base ou não estiver dentro dela, retorna apenas o nome do arquivo.
+pub fn compute_relative_path(file_path: &Path, base_path: &Path) -> PathBuf {
+    if let (Ok(canon_file), Ok(canon_base)) = (
+        canonicalize_windows_path(file_path),
+        canonicalize_windows_path(base_path),
+    ) {
+        if let Ok(rel) = canon_file.strip_prefix(&canon_base) {
+            if !rel.as_os_str().is_empty() {
+                let base_comps = canon_base.components().count();
+                let file_comps: Vec<_> = file_path.components().collect();
+                if file_comps.len() > base_comps {
+                    let mut rel_original = PathBuf::new();
+                    for c in &file_comps[base_comps..] {
+                        rel_original.push(c);
+                    }
+                    return rel_original;
+                }
+                return rel.to_path_buf();
+            }
+        }
+    }
+    if let Ok(rel) = file_path.strip_prefix(base_path) {
+        if !rel.as_os_str().is_empty() {
+            return rel.to_path_buf();
+        }
+    }
+    file_path
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("save.dat"))
 }
 
 /// Verifica se um arquivo é de uso interno/temporário do SaveVault (backups de segurança, arquivos temporários de restore, etc.).
@@ -275,5 +308,31 @@ mod tests {
             r"C:\Saves\slot1.dat"
         )));
         assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\savegame")));
+    }
+
+    #[test]
+    fn test_compute_relative_path() {
+        let base = Path::new(r"C:\Users\Player\Saved Games\EldenRing");
+        let file_sub = Path::new(r"C:\Users\Player\Saved Games\EldenRing\slot1\save.dat");
+        let rel = compute_relative_path(file_sub, base);
+        assert_eq!(rel, PathBuf::from(r"slot1\save.dat"));
+
+        // Case insensitive match
+        let base_lower = Path::new(r"c:\users\player\saved games\eldenring");
+        let file_upper = Path::new(r"C:\Users\Player\Saved Games\EldenRing\slot2\deep\save.dat");
+        let rel2 = compute_relative_path(file_upper, base_lower);
+        assert_eq!(rel2, PathBuf::from(r"slot2\deep\save.dat"));
+
+        // File equal to base (Single file save location)
+        let single_file = Path::new(r"C:\Saves\save.dat");
+        let rel_single = compute_relative_path(single_file, single_file);
+        assert_eq!(rel_single, PathBuf::from("save.dat"));
+    }
+
+    #[test]
+    fn test_unicode_case_folding() {
+        let p1 = canonicalize_windows_path_str(r"C:\Users\JOÃO\Saved Games").unwrap();
+        let p2 = canonicalize_windows_path_str(r"c:\users\joão\saved games").unwrap();
+        assert_eq!(p1, p2);
     }
 }

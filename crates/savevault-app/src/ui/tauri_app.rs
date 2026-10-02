@@ -63,7 +63,13 @@ pub async fn restore_snapshot(
     snapshot_id: String,
 ) -> Result<RestoreApiResponse, String> {
     let id = Uuid::parse_str(&snapshot_id).map_err(|e| e.to_string())?;
-    Ok(state.trigger_restore(id, None).await)
+    let resp = state.trigger_restore(id, None).await;
+    if !resp.success {
+        return Err(resp
+            .error
+            .unwrap_or_else(|| "Falha na restauração do snapshot".to_string()));
+    }
+    Ok(resp)
 }
 
 #[tauri::command]
@@ -165,7 +171,7 @@ pub async fn hide_window(
     if config.notifications.enabled {
         #[cfg(windows)]
         {
-            let _ = crate::notifications::send_toast(
+            crate::notifications::notify(
                 "checkpoint em segundo plano",
                 "O aplicativo foi minimizado para os apps ocultos perto do relógio. Seus saves continuam protegidos.",
             );
@@ -206,7 +212,7 @@ pub async fn export_backup_zip(
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
 /// Deve ser chamada na thread principal do processo.
-pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
+pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::Result<()> {
     tauri::Builder::default()
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -232,7 +238,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             optimize_database,
             export_backup_zip,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // Configura System Tray
             let show_item = MenuItemBuilder::with_id("show", "Abrir checkpoint").build(app)?;
             let hide_item = MenuItemBuilder::with_id("hide", "Ocultar").build(app)?;
@@ -249,21 +255,20 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                 .item(&quit_item)
                 .build()?;
 
-            let tray_icon = app
-                .default_window_icon()
-                .cloned()
-                .or_else(|| {
-                    tauri::image::Image::from_bytes(include_bytes!("../../icons/32x32.png")).ok()
-                });
+            let tray_icon = app.default_window_icon().cloned();
 
             // Mostra janela principal e garante que tenha o ícone
             if let Some(win) = app.get_webview_window("main") {
                 if let Some(ref ic) = tray_icon {
                     let _ = win.set_icon(ic.clone());
                 }
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
+                if start_minimized {
+                    let _ = win.hide();
+                } else {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
             }
 
             if let Some(ic) = tray_icon {
@@ -326,7 +331,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                 if config.notifications.enabled {
                     #[cfg(windows)]
                     {
-                        let _ = crate::notifications::send_toast(
+                        crate::notifications::notify(
                             "checkpoint em segundo plano",
                             "O aplicativo foi minimizado para os apps ocultos perto do relógio. Seus saves continuam protegidos.",
                         );

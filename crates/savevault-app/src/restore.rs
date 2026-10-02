@@ -279,18 +279,32 @@ pub fn validate_snapshot_security(
     backup_root: &Path,
     game_name: &str,
     version: u32,
-    filename: &str,
+    rel_path: &Path,
 ) -> Result<PathBuf, RestoreError> {
-    if filename.is_empty()
-        || filename.contains('/')
-        || filename.contains('\\')
-        || filename.contains("..")
-        || filename.contains('\0')
-    {
-        return Err(RestoreError::PathSecurityViolation(format!(
-            "Nome de arquivo de snapshot inseguro: '{}'",
-            filename
-        )));
+    if rel_path.as_os_str().is_empty() {
+        return Err(RestoreError::PathSecurityViolation(
+            "Caminho relativo de snapshot vazio".into(),
+        ));
+    }
+
+    for component in rel_path.components() {
+        match component {
+            Component::Normal(seg) => {
+                let s = seg.to_string_lossy();
+                if s.contains('\0') {
+                    return Err(RestoreError::PathSecurityViolation(format!(
+                        "Segmento de caminho de snapshot contém byte nulo: '{}'",
+                        s
+                    )));
+                }
+            }
+            _ => {
+                return Err(RestoreError::PathSecurityViolation(format!(
+                    "Segmento de caminho de snapshot inseguro: '{:?}'",
+                    component
+                )));
+            }
+        }
     }
 
     let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
@@ -298,24 +312,47 @@ pub fn validate_snapshot_security(
     let version_path = backup_root
         .join(&safe_game_name)
         .join(format!("v{}", version))
-        .join(filename);
+        .join(rel_path);
 
     let latest_path = backup_root
         .join(&safe_game_name)
         .join("latest")
-        .join(filename);
+        .join(rel_path);
 
     let daily_path = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(rel_path);
+
+    // Fallbacks para arquivos achatados legados
+    let filename = rel_path.file_name().unwrap_or(rel_path.as_os_str());
+    let flat_version_path = backup_root
+        .join(&safe_game_name)
+        .join(format!("v{}", version))
+        .join(filename);
+
+    let flat_latest_path = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    let flat_daily_path = backup_root
         .join(&safe_game_name)
         .join("daily")
         .join(filename);
 
     let source_path = if version_path.exists() {
         version_path
+    } else if flat_version_path.exists() {
+        flat_version_path
     } else if version == 1 && daily_path.exists() {
         daily_path
+    } else if version == 1 && flat_daily_path.exists() {
+        flat_daily_path
     } else if version == 1 && latest_path.exists() {
         latest_path
+    } else if version == 1 && flat_latest_path.exists() {
+        flat_latest_path
     } else {
         version_path
     };
@@ -430,11 +467,13 @@ pub async fn execute_restore_filesystem(
             ))
         })?;
 
+    let rel_path = savevault_core::path::compute_relative_path(dest_path, &metadata.save_location.path);
+
     let source_path = validate_snapshot_security(
         backup_root,
         metadata.game.name.as_str(),
         metadata.backup.version,
-        filename,
+        &rel_path,
     )?;
 
     // 5. Validação da existência do snapshot físico no disco (com recuperação automática da nuvem)

@@ -137,6 +137,136 @@ pub fn list_cloud_snapshots(
     Ok(result)
 }
 
+/// Reconstrói ou sincroniza o catálogo local no banco SQLite a partir do manifesto remoto (F-05).
+/// Permite recuperar registros de jogos, save_locations, files e backups mesmo em máquina nova/reformatada.
+pub async fn reconstruct_catalog_from_cloud(
+    conn: &Connection,
+    provider: &dyn savevault_cloud::CloudProvider,
+) -> Result<usize> {
+    let manifest_opt = provider.get_manifest().await?;
+    let manifest = match manifest_opt {
+        Some(m) => m,
+        None => return Ok(0),
+    };
+
+    let mut imported_count = 0;
+
+    for entry in manifest.entries {
+        // 1. Garante a existência do jogo (games)
+        let game_id: Uuid = conn
+            .query_row(
+                "SELECT id FROM games WHERE LOWER(name) = LOWER(?1)",
+                [&entry.game_name],
+                |r| {
+                    let s: String = r.get(0)?;
+                    Ok(Uuid::parse_str(&s).unwrap_or_else(|_| Uuid::new_v4()))
+                },
+            )
+            .unwrap_or_else(|_| {
+                let new_id = Uuid::new_v4();
+                let now = Utc::now().to_rfc3339();
+                let _ = conn.execute(
+                    "INSERT INTO games (id, name, platform, confidence, created_at)
+                     VALUES (?1, ?2, ?3, 'high', ?4)",
+                    (new_id.to_string(), &entry.game_name, &entry.platform, now),
+                );
+                new_id
+            });
+
+        // 2. Garante a existência do local de save (save_locations)
+        let location_id: Uuid = conn
+            .query_row(
+                "SELECT id FROM save_locations WHERE game_id = ?1 AND path = ?2",
+                [&game_id.to_string(), &entry.save_location_path],
+                |r| {
+                    let s: String = r.get(0)?;
+                    Ok(Uuid::parse_str(&s).unwrap_or_else(|_| Uuid::new_v4()))
+                },
+            )
+            .unwrap_or_else(|_| {
+                let new_id = Uuid::new_v4();
+                let _ = conn.execute(
+                    "INSERT INTO save_locations (id, game_id, path, location_type)
+                     VALUES (?1, ?2, ?3, 'directory')",
+                    (
+                        new_id.to_string(),
+                        &game_id.to_string(),
+                        &entry.save_location_path,
+                    ),
+                );
+                new_id
+            });
+
+        // 3. Garante a existência do registro do arquivo (files)
+        let full_file_path =
+            PathBuf::from(&entry.save_location_path).join(&entry.relative_file_path);
+        let full_file_path_str = full_file_path.to_string_lossy().to_string();
+
+        let file_id: Uuid = conn
+            .query_row(
+                "SELECT id FROM files WHERE save_location_id = ?1 AND path = ?2",
+                [&location_id.to_string(), &full_file_path_str],
+                |r| {
+                    let s: String = r.get(0)?;
+                    Ok(Uuid::parse_str(&s).unwrap_or_else(|_| Uuid::new_v4()))
+                },
+            )
+            .unwrap_or_else(|_| {
+                let new_id = Uuid::new_v4();
+                let now = Utc::now().to_rfc3339();
+                let _ = conn.execute(
+                    "INSERT INTO files (id, save_location_id, path, hash, size_bytes, modified_at)
+                     VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                    (
+                        new_id.to_string(),
+                        &location_id.to_string(),
+                        &full_file_path_str,
+                        &entry.file_hash,
+                        now,
+                    ),
+                );
+                new_id
+            });
+
+        // 4. Garante a existência do registro do backup (backups)
+        let backup_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM backups WHERE file_id = ?1 AND version = ?2",
+                [&file_id.to_string(), &entry.version.to_string()],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if !backup_exists {
+            let backup_id = Uuid::new_v4();
+            let created_at = if entry.created_at.is_empty() {
+                Utc::now().to_rfc3339()
+            } else {
+                entry.created_at
+            };
+
+            let inserted = conn.execute(
+                "INSERT INTO backups (id, file_id, version, cloud_path, drive_file_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                (
+                    backup_id.to_string(),
+                    file_id.to_string(),
+                    entry.version,
+                    &entry.cloud_path,
+                    &entry.cloud_file_id,
+                    created_at,
+                ),
+            );
+
+            if inserted.is_ok() {
+                imported_count += 1;
+            }
+        }
+    }
+
+    Ok(imported_count)
+}
+
 /// Baixa todos os snapshots ausentes localmente da nuvem para o disco local de backups.
 ///
 /// Permite recuperar todo o histórico de saves ou filtrar por um jogo específico.
@@ -146,6 +276,12 @@ pub async fn pull_snapshots_from_cloud(
     preferred_provider: Option<&str>,
     filter_game: Option<&str>,
 ) -> Result<PullReport> {
+    // Sincroniza primeiro o catálogo da nuvem se fornecido provedor ou se banco local estiver vazio (F-05)
+    if let Some(prov_name) = preferred_provider {
+        let provider = savevault_sync::resolve_active_cloud_provider(prov_name, backup_root);
+        let _ = reconstruct_catalog_from_cloud(conn, provider.as_ref()).await;
+    }
+
     let all = list_cloud_snapshots(conn, backup_root)?;
     let mut report = PullReport {
         total_scanned: all.len(),
@@ -283,5 +419,66 @@ mod tests {
             Some("remote-drive-id-123")
         );
         assert!(!list[0].local_exists);
+    }
+
+    #[tokio::test]
+    async fn test_reconstruct_catalog_from_cloud_on_empty_database() {
+        use savevault_cloud::CloudProvider;
+        let conn = setup_test_db();
+        let tmp = tempdir().unwrap();
+
+        // Inicializa LocalFolderProvider apontando para a pasta temporária
+        let provider = savevault_cloud::LocalFolderProvider::new(tmp.path().to_path_buf());
+
+        // Cria e salva um manifesto simulando backups existentes na nuvem
+        let manifest = savevault_cloud::CloudCatalogManifest {
+            schema_version: 1,
+            updated_at: Utc::now().to_rfc3339(),
+            entries: vec![
+                savevault_cloud::CloudManifestEntry {
+                    game_name: "Hollow Knight".to_string(),
+                    platform: "steam".to_string(),
+                    save_location_path: r"C:\Games\HollowKnight\Saves".to_string(),
+                    relative_file_path: "user1.dat".to_string(),
+                    file_hash: "hash_hk_1".to_string(),
+                    version: 1,
+                    cloud_file_id: "hk-v1-cloud-id".to_string(),
+                    cloud_path: "loc/file/v1_user1.dat".to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                },
+                savevault_cloud::CloudManifestEntry {
+                    game_name: "Hollow Knight".to_string(),
+                    platform: "steam".to_string(),
+                    save_location_path: r"C:\Games\HollowKnight\Saves".to_string(),
+                    relative_file_path: "user1.dat".to_string(),
+                    file_hash: "hash_hk_2".to_string(),
+                    version: 2,
+                    cloud_file_id: "hk-v2-cloud-id".to_string(),
+                    cloud_path: "loc/file/v2_user1.dat".to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                },
+            ],
+        };
+
+        provider.save_manifest(&manifest).await.unwrap();
+
+        // Verifica que o banco local está completamente vazio
+        let count_before: usize = conn
+            .query_row("SELECT count(*) FROM games", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_before, 0);
+
+        // Executa a reconstrução de desastre (F-05)
+        let imported = reconstruct_catalog_from_cloud(&conn, &provider)
+            .await
+            .unwrap();
+        assert_eq!(imported, 2);
+
+        // Valida que o banco SQLite foi populado
+        let snapshots = list_cloud_snapshots(&conn, tmp.path()).unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].game_name, "Hollow Knight");
+        assert_eq!(snapshots[0].version, 2);
+        assert_eq!(snapshots[1].version, 1);
     }
 }

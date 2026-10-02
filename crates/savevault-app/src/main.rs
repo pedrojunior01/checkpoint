@@ -112,7 +112,14 @@ fn main() -> anyhow::Result<()> {
     {
         let should_run_ui = args.is_empty()
             || args.iter().any(|a| {
-                a == "--ui" || a == "ui" || a == "desktop" || a == "--desktop" || a == "--app"
+                a == "--ui"
+                    || a == "ui"
+                    || a == "desktop"
+                    || a == "--desktop"
+                    || a == "--app"
+                    || a == "--tray"
+                    || a == "--minimized"
+                    || a == "--silent"
             });
         if should_run_ui {
             return run_desktop_main(args);
@@ -142,8 +149,23 @@ fn main() -> anyhow::Result<()> {
 /// Ponto de entrada do modo desktop: o tokio sobe em background e o
 /// Tauri (event loop de GUI) toma conta da thread principal.
 #[cfg(feature = "desktop")]
-fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
+fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
     use std::sync::Arc;
+
+    let _single_instance = match savevault_app::SingleInstanceGuard::acquire(
+        "Local\\SaveVault_SingleInstance_Mutex",
+    ) {
+        Some(guard) => guard,
+        None => {
+            tracing::info!("SaveVault já está em execução. Encerrando esta instância secundária.");
+            println!("SaveVault já está em execução.");
+            return Ok(());
+        }
+    };
+
+    let start_minimized = args
+        .iter()
+        .any(|a| a == "--tray" || a == "--minimized" || a == "--silent");
 
     dotenvy::dotenv().ok();
 
@@ -216,36 +238,32 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                     savevault_app::start_dev_ui_server(state_bg.clone(), 4040, server_shutdown_rx)
                         .await;
 
-                // Watcher + Pipeline
+                // Watcher + Pipeline (F-03: sempre inicia watcher e cloud sync worker mesmo com banco vazio)
                 let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
                 let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
                 watcher_config.debounce.debounce_duration =
                     std::time::Duration::from_millis(config_bg.general.debounce_ms);
 
-                if !all_locations.is_empty() {
-                    match savevault_monitor::watcher::SaveWatcherService::start(
-                        watcher_config,
-                        all_locations,
-                        file_access,
-                    ) {
-                        Ok((_watcher, rx)) => {
-                            let _ = savevault_app::pipeline::run_pipeline(
-                                db_conn_bg.clone(),
-                                rx,
-                                config_bg.paths.backup_dir.clone(),
-                                config_bg.general.max_versions,
-                                pipeline_shutdown_rx,
-                                false,
-                            )
-                            .await;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Watcher não pôde ser iniciado: {}", e);
-                            let _ = tokio::signal::ctrl_c().await;
-                        }
+                match savevault_monitor::watcher::SaveWatcherService::start(
+                    watcher_config,
+                    all_locations,
+                    file_access,
+                ) {
+                    Ok((_watcher, rx)) => {
+                        let _ = savevault_app::pipeline::run_pipeline(
+                            db_conn_bg.clone(),
+                            rx,
+                            config_bg.paths.backup_dir.clone(),
+                            config_bg.general.max_versions,
+                            pipeline_shutdown_rx,
+                            false,
+                        )
+                        .await;
                     }
-                } else {
-                    let _ = tokio::signal::ctrl_c().await;
+                    Err(e) => {
+                        tracing::warn!("Watcher não pôde ser iniciado: {}", e);
+                        let _ = tokio::signal::ctrl_c().await;
+                    }
                 }
 
                 let _ = shutdown_tx.send(true);
@@ -257,7 +275,7 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     println!("               checkpoint — Iniciando Interface Desktop                         ");
     println!("================================================================================");
 
-    savevault_app::ui::tauri_app::run_tauri_app(state)
+    savevault_app::ui::tauri_app::run_tauri_app(state, start_minimized)
 }
 
 async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
@@ -346,7 +364,7 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
         }
 
         [cmd, sub] if cmd == "cloud" && sub == "list" => {
-            handle_cloud_list(&config)?;
+            handle_cloud_list(&config).await?;
             return Ok(());
         }
 
@@ -507,6 +525,17 @@ async fn run_resident_daemon(
     // ------------------------------------------------------------------------
     // MODO RESIDENTE: Monitoramento Contínuo e Sincronização em Background
     // ------------------------------------------------------------------------
+    let _single_instance = match savevault_app::SingleInstanceGuard::acquire(
+        "Local\\SaveVault_SingleInstance_Mutex",
+    ) {
+        Some(guard) => guard,
+        None => {
+            tracing::info!("SaveVault já está em execução em segundo plano. Encerrando instância.");
+            println!("SaveVault já está em execução em segundo plano.");
+            return Ok(());
+        }
+    };
+
     let all_locations = locations_repo.list_all()?;
     if all_locations.is_empty() {
         tracing::warn!("Nenhum local de save encontrado no banco para monitorar.");
@@ -938,8 +967,17 @@ async fn handle_restore_command(
     }
 }
 
-fn handle_cloud_list(config: &Config) -> anyhow::Result<()> {
+async fn handle_cloud_list(config: &Config) -> anyhow::Result<()> {
     let db = Database::open(&config.paths.database_path)?;
+    let provider = savevault_sync::resolve_active_cloud_provider(
+        &config.cloud.provider,
+        &config.paths.backup_dir,
+    );
+    let _ = savevault_app::cloud_recovery::reconstruct_catalog_from_cloud(
+        &db.conn,
+        provider.as_ref(),
+    )
+    .await;
     let items =
         savevault_app::cloud_recovery::list_cloud_snapshots(&db.conn, &config.paths.backup_dir)?;
 
@@ -1586,7 +1624,7 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
     };
 
     let server_shutdown_rx = shutdown_tx.subscribe();
-    let (addr, server_handle) =
+    let (_addr, server_handle) =
         savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
 
     #[cfg(feature = "desktop")]
@@ -1603,7 +1641,7 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
 
         let state_clone = state.clone();
         std::thread::spawn(move || {
-            if let Err(e) = savevault_app::ui::tauri_app::run_tauri_app(state_clone) {
+            if let Err(e) = savevault_app::ui::tauri_app::run_tauri_app(state_clone, false) {
                 tracing::error!("Falha ao iniciar Tauri: {}", e);
             }
             std::process::exit(0);
@@ -1611,10 +1649,10 @@ async fn handle_ui_command(config: &Config, config_path: &Path) -> anyhow::Resul
     }
 
     #[cfg(not(feature = "desktop"))]
-    let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), addr.port());
+    let _tray = savevault_app::tray::setup_tray(shutdown_tx.clone(), _addr.port());
 
     #[cfg(not(feature = "desktop"))]
-    let ui_url = format!("http://{}", addr);
+    let ui_url = format!("http://{}", _addr);
     #[cfg(not(feature = "desktop"))]
     {
         println!("  Interface SaveVault ativa em: {}", ui_url);

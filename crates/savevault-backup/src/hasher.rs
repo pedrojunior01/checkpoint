@@ -351,4 +351,59 @@ mod tests {
             entries
         );
     }
+
+    #[tokio::test]
+    async fn snapshot_preserves_subdirectories_without_collision() {
+        let dir = tempdir().unwrap();
+        let backup_root = dir.path().join("backups");
+        let manager = crate::SnapshotManager::new(backup_root.clone(), 10);
+
+        let save_dir = dir.path().join("saves");
+        let slot1_dir = save_dir.join("slot1");
+        let slot2_dir = save_dir.join("slot2");
+        std::fs::create_dir_all(&slot1_dir).unwrap();
+        std::fs::create_dir_all(&slot2_dir).unwrap();
+
+        let save1 = slot1_dir.join("data.sav");
+        let save2 = slot2_dir.join("data.sav");
+        std::fs::write(&save1, "conteudo slot 1").unwrap();
+        std::fs::write(&save2, "conteudo slot 2").unwrap();
+
+        let fid1 = uuid::Uuid::new_v4();
+        let fid2 = uuid::Uuid::new_v4();
+
+        let rel1 = Path::new("slot1/data.sav");
+        let rel2 = Path::new("slot2/data.sav");
+
+        manager
+            .create_snapshot_with_relpath(fid1, "DarkSouls", &save1, Some(rel1), 1)
+            .await
+            .unwrap();
+
+        manager
+            .create_snapshot_with_relpath(fid2, "DarkSouls", &save2, Some(rel2), 1)
+            .await
+            .unwrap();
+
+        // Verificar que ambos coexistem sem sobrescrita
+        let snap1 = backup_root.join("DarkSouls").join("v1").join("slot1").join("data.sav");
+        let snap2 = backup_root.join("DarkSouls").join("v1").join("slot2").join("data.sav");
+
+        assert!(snap1.exists(), "Snapshot do slot 1 deve existir isolado");
+        assert!(snap2.exists(), "Snapshot do slot 2 deve existir isolado");
+
+        assert_eq!(std::fs::read_to_string(&snap1).unwrap(), "conteudo slot 1");
+        assert_eq!(std::fs::read_to_string(&snap2).unwrap(), "conteudo slot 2");
+
+        // Testar restauração com caminho relativo
+        let restore_dest1 = slot1_dir.join("data.sav");
+        std::fs::write(&restore_dest1, "corrompido 1").unwrap();
+
+        manager
+            .restore_snapshot_with_relpath(fid1, "DarkSouls", 1, &restore_dest1, Some(rel1))
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&restore_dest1).unwrap(), "conteudo slot 1");
+    }
 }

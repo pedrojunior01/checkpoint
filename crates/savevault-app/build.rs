@@ -21,7 +21,7 @@ fn main() {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(all(windows, not(feature = "desktop")))]
     {
         let mut res = winres::WindowsResource::new();
         res.set_icon("icons/icon.ico");

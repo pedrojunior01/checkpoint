@@ -48,7 +48,11 @@ async function invoke(command, args = {}) {
                     snapshot_id: args.snapshotId || args.snapshot_id,
                 }),
             });
-            return await res.json();
+            const data = await res.json();
+            if (!res.ok || data.success === false) {
+                throw new Error(data.error || "Falha na restauração do snapshot");
+            }
+            return data;
         }
         case "get_setup_status": {
             const res = await fetch("/api/setup/status");
@@ -934,12 +938,17 @@ function restoreSnapshot(id, gameName, version, fileName) {
         isDanger: true,
         onConfirm: async () => {
             try {
-                await invoke("restore_snapshot", { snapshotId: id, snapshot_id: id });
+                const res = await invoke("restore_snapshot", { snapshotId: id, snapshot_id: id });
+                if (res && res.success === false) {
+                    showToast(`Erro ao restaurar: ${res.error || "Falha na restauração"}`, "error");
+                    return;
+                }
                 showToast(`Save de "${gameName}" restaurado com sucesso! Safety backup criado.`, "success");
                 await loadAtividade();
                 await loadInicio();
             } catch (e) {
-                showToast(`Erro ao restaurar snapshot: ${e}`, "error");
+                const errMsg = e && e.message ? e.message : String(e);
+                showToast(`Erro ao restaurar snapshot: ${errMsg}`, "error");
             }
         }
     });

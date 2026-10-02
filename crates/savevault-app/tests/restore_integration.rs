@@ -470,3 +470,100 @@ async fn test_restore_attempts_cloud_when_physical_missing() {
         other => panic!("Esperava CloudRecoveryFailed, obteve: {:?}", other),
     }
 }
+
+#[tokio::test]
+async fn test_end_to_end_subdirectories_snapshot_and_restore() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+
+    let backup_dir = temp_root.path().join("backups");
+    let save_dir = temp_root.path().join("multi_slot_game");
+    let slot1_dir = save_dir.join("slot1");
+    let slot2_dir = save_dir.join("slot2");
+    std::fs::create_dir_all(&slot1_dir).unwrap();
+    std::fs::create_dir_all(&slot2_dir).unwrap();
+
+    let save1 = slot1_dir.join("save.dat");
+    let save2 = slot2_dir.join("save.dat");
+
+    std::fs::write(&save1, "conteudo_original_slot1").unwrap();
+    std::fs::write(&save2, "conteudo_original_slot2").unwrap();
+
+    let games_repo = GamesRepo::new(&db.conn);
+    let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+    let game = Game::new(
+        "Dark Souls MultiSlot",
+        Platform::Steam,
+        Some("654321".into()),
+        Confidence::High,
+    );
+    games_repo.insert(&game).unwrap();
+
+    let save_loc = SaveLocation::new(game.id, save_dir.clone(), SaveLocationType::Directory);
+    let saved_loc = loc_repo.upsert(&save_loc).unwrap();
+
+    // Snapshot File 1
+    let event1 = StableFileEvent {
+        save_location_id: saved_loc.id,
+        path: save1.clone(),
+        kind: StableFileEventKind::Created,
+        size_bytes: "conteudo_original_slot1".len() as u64,
+        observed_at: std::time::SystemTime::now(),
+    };
+    let (backup1, _) = handle_stable_event(&db.conn, &event1, &backup_dir, 10)
+        .await
+        .unwrap()
+        .expect("Deveria gerar backup slot 1");
+
+    // Snapshot File 2
+    let event2 = StableFileEvent {
+        save_location_id: saved_loc.id,
+        path: save2.clone(),
+        kind: StableFileEventKind::Created,
+        size_bytes: "conteudo_original_slot2".len() as u64,
+        observed_at: std::time::SystemTime::now(),
+    };
+    let (backup2, _) = handle_stable_event(&db.conn, &event2, &backup_dir, 10)
+        .await
+        .unwrap()
+        .expect("Deveria gerar backup slot 2");
+    assert_eq!(backup2.version, 1);
+
+    // Verificar que os arquivos no backup não se sobrescreveram
+    let safe_game = savevault_backup::snapshot::sanitize_name(&game.name);
+    let backup_slot1_file = backup_dir.join(&safe_game).join("v1").join("slot1").join("save.dat");
+    let backup_slot2_file = backup_dir.join(&safe_game).join("v1").join("slot2").join("save.dat");
+
+    assert!(backup_slot1_file.exists(), "Snapshot do slot 1 deve existir em sua subpasta");
+    assert!(backup_slot2_file.exists(), "Snapshot do slot 2 deve existir em sua subpasta");
+
+    assert_eq!(
+        std::fs::read_to_string(&backup_slot1_file).unwrap(),
+        "conteudo_original_slot1"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&backup_slot2_file).unwrap(),
+        "conteudo_original_slot2"
+    );
+
+    // Corromper slot 1
+    std::fs::write(&save1, "corrompido_slot1").unwrap();
+
+    // Restaurar slot 1
+    let report1 = restore_by_id(&db.conn, &backup_dir, backup1.id)
+        .await
+        .expect("Restauração do slot 1 deve ter sucesso");
+
+    assert_eq!(report1.dest_path, save1);
+    assert_eq!(
+        std::fs::read_to_string(&save1).unwrap(),
+        "conteudo_original_slot1"
+    );
+    // Verificar que slot 2 permanece intacto com seu conteúdo próprio
+    assert_eq!(
+        std::fs::read_to_string(&save2).unwrap(),
+        "conteudo_original_slot2"
+    );
+}

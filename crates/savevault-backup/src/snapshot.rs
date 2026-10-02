@@ -23,19 +23,24 @@ impl SnapshotManager {
     }
 
     /// Cria um snapshot do arquivo de save, retornando o Backup criado.
+    /// Preserva a estrutura relativa de diretórios caso `rel_path` seja fornecido.
     /// Nunca sobrescreve versões anteriores.
-    ///
-    /// Estrutura: `backup_root/file_id/v{version}/filename`
-    pub async fn create_snapshot(
+    pub async fn create_snapshot_with_relpath(
         &self,
         file_id: Uuid,
         game_name: &str,
         source_path: &Path,
+        rel_path: Option<&Path>,
         next_version: u32,
     ) -> Result<Backup> {
-        let filename = source_path
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("Caminho inválido: sem nome de arquivo"))?;
+        let relative = match rel_path {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from(
+                source_path
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Caminho inválido: sem nome de arquivo"))?,
+            ),
+        };
 
         let safe_game_name = sanitize_name(game_name);
 
@@ -45,20 +50,25 @@ impl SnapshotManager {
             .join(format!("v{}", next_version));
 
         let latest_dir = self.backup_root.join(&safe_game_name).join("latest");
-
         let daily_dir = self.backup_root.join(&safe_game_name).join("daily");
 
-        tokio::fs::create_dir_all(&version_dir).await?;
-        tokio::fs::create_dir_all(&latest_dir).await?;
-        tokio::fs::create_dir_all(&daily_dir).await?;
+        let dest = version_dir.join(&relative);
+        let dest_latest = latest_dir.join(&relative);
+        let dest_daily = daily_dir.join(&relative);
 
-        let dest = version_dir.join(filename);
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = dest_latest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = dest_daily.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
         tokio::fs::copy(source_path, &dest).await?;
-
-        let dest_latest = latest_dir.join(filename);
         tokio::fs::copy(source_path, &dest_latest).await?;
 
-        let dest_daily = daily_dir.join(filename);
         let mut update_daily = true;
         if let Ok(meta) = tokio::fs::metadata(&dest_daily).await {
             if let Ok(mod_time) = meta.modified() {
@@ -91,22 +101,35 @@ impl SnapshotManager {
         Ok(backup)
     }
 
-    /// Restaura um backup para o caminho de destino.
-    /// Segurança:
-    /// 1. Valida a existência da versão de origem ANTES de qualquer modificação no disco;
-    /// 2. Cria backup de segurança único (sem nunca sobrescrever backups anteriores);
-    /// 3. Realiza a restauração de forma atômica via arquivo temporário e rename;
-    /// 4. Preserva o destino original em caso de qualquer falha na cópia.
-    pub async fn restore_snapshot(
+    /// Cria um snapshot do arquivo de save com fallback para o nome base do arquivo.
+    pub async fn create_snapshot(
+        &self,
+        file_id: Uuid,
+        game_name: &str,
+        source_path: &Path,
+        next_version: u32,
+    ) -> Result<Backup> {
+        self.create_snapshot_with_relpath(file_id, game_name, source_path, None, next_version)
+            .await
+    }
+
+    /// Restaura um backup para o caminho de destino com suporte a caminho relativo.
+    pub async fn restore_snapshot_with_relpath(
         &self,
         file_id: Uuid,
         game_name: &str,
         version: u32,
         dest_path: &Path,
+        rel_path: Option<&Path>,
     ) -> Result<Option<PathBuf>> {
         let filename = dest_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho de destino inválido: sem nome de arquivo"))?;
+
+        let relative = match rel_path {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from(filename),
+        };
 
         let dest_parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
         if !dest_parent.exists() {
@@ -115,11 +138,13 @@ impl SnapshotManager {
 
         let safe_game_name = sanitize_name(game_name);
 
-        // Validação antecipada da versão de origem:
-        // 1. Versão explícita por pasta: backup_root/<safe_game_name>/v<version>/<filename>
-        // 2. Versão legada por UUID: backup_root/<file_id>/v<version>/<filename>
-        // 3. Fallback para latest/daily apenas se version == 1 (legado)
         let explicit_version = self
+            .backup_root
+            .join(&safe_game_name)
+            .join(format!("v{}", version))
+            .join(&relative);
+
+        let flat_version = self
             .backup_root
             .join(&safe_game_name)
             .join(format!("v{}", version))
@@ -129,9 +154,21 @@ impl SnapshotManager {
             .backup_root
             .join(file_id.to_string())
             .join(format!("v{}", version))
+            .join(&relative);
+
+        let legacy_flat = self
+            .backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version))
             .join(filename);
 
         let latest_source = self
+            .backup_root
+            .join(&safe_game_name)
+            .join("latest")
+            .join(&relative);
+
+        let flat_latest = self
             .backup_root
             .join(&safe_game_name)
             .join("latest")
@@ -141,16 +178,30 @@ impl SnapshotManager {
             .backup_root
             .join(&safe_game_name)
             .join("daily")
+            .join(&relative);
+
+        let flat_daily = self
+            .backup_root
+            .join(&safe_game_name)
+            .join("daily")
             .join(filename);
 
         let source = if explicit_version.exists() {
             explicit_version
+        } else if flat_version.exists() {
+            flat_version
         } else if legacy_version.exists() {
             legacy_version
+        } else if legacy_flat.exists() {
+            legacy_flat
         } else if version == 1 && daily_source.exists() {
             daily_source
+        } else if version == 1 && flat_daily.exists() {
+            flat_daily
         } else if version == 1 && latest_source.exists() {
             latest_source
+        } else if version == 1 && flat_latest.exists() {
+            flat_latest
         } else {
             explicit_version
         };
@@ -230,8 +281,81 @@ impl SnapshotManager {
         Ok(safety_path)
     }
 
-    /// Remove o diretório físico do snapshot versionado correspondente, se existir.
-    /// Ex.: `backup_root/<game_name>/v{version}` ou legado `backup_root/<file_id>/v{version}`
+    /// Restaura um backup para o caminho de destino (compatibilidade legada).
+    pub async fn restore_snapshot(
+        &self,
+        file_id: Uuid,
+        game_name: &str,
+        version: u32,
+        dest_path: &Path,
+    ) -> Result<Option<PathBuf>> {
+        self.restore_snapshot_with_relpath(file_id, game_name, version, dest_path, None)
+            .await
+    }
+
+    /// Remove o arquivo físico versionado correspondente à versão, preservando outros arquivos do mesmo jogo.
+    /// Remove diretórios pais caso fiquem vazios.
+    pub async fn remove_snapshot_version_file(
+        &self,
+        file_id: Uuid,
+        game_name: &str,
+        rel_path: &Path,
+        version: u32,
+    ) -> Result<()> {
+        let safe_game_name = sanitize_name(game_name);
+        let version_dir = self
+            .backup_root
+            .join(&safe_game_name)
+            .join(format!("v{}", version));
+
+        let filename = rel_path.file_name().unwrap_or(rel_path.as_os_str());
+        let targets = [
+            version_dir.join(rel_path),
+            version_dir.join(filename),
+        ];
+
+        for target in targets {
+            if target.exists() && target.is_file() {
+                let _ = tokio::fs::remove_file(&target).await;
+                debug!("Arquivo de snapshot físico removido: {}", target.display());
+                // Tenta remover diretórios pais até version_dir se ficarem vazios
+                let mut current = target.parent();
+                while let Some(parent) = current {
+                    if parent == self.backup_root || !parent.starts_with(&version_dir) {
+                        break;
+                    }
+                    if tokio::fs::remove_dir(parent).await.is_err() {
+                        break;
+                    }
+                    current = parent.parent();
+                }
+            }
+        }
+
+        let _ = tokio::fs::remove_dir(&version_dir).await;
+
+        let legacy_dir = self
+            .backup_root
+            .join(file_id.to_string())
+            .join(format!("v{}", version));
+
+        if legacy_dir.exists() {
+            let legacy_targets = [
+                legacy_dir.join(rel_path),
+                legacy_dir.join(filename),
+            ];
+            for lt in legacy_targets {
+                if lt.exists() && lt.is_file() {
+                    let _ = tokio::fs::remove_file(&lt).await;
+                }
+            }
+            let _ = tokio::fs::remove_dir(&legacy_dir).await;
+        }
+
+        Ok(())
+    }
+
+    /// Remove o diretório físico do snapshot versionado correspondente (compatibilidade legada).
     pub async fn remove_snapshot_version(
         &self,
         file_id: Uuid,
@@ -245,7 +369,7 @@ impl SnapshotManager {
             .join(format!("v{}", version));
 
         if version_dir.exists() {
-            tokio::fs::remove_dir_all(&version_dir).await?;
+            let _ = tokio::fs::remove_dir_all(&version_dir).await;
             debug!(
                 "Diretório de snapshot físico versionado removido: {}",
                 version_dir.display()
@@ -258,7 +382,7 @@ impl SnapshotManager {
             .join(format!("v{}", version));
 
         if legacy_dir.exists() {
-            tokio::fs::remove_dir_all(&legacy_dir).await?;
+            let _ = tokio::fs::remove_dir_all(&legacy_dir).await;
             debug!(
                 "Diretório de snapshot legado removido: {}",
                 legacy_dir.display()

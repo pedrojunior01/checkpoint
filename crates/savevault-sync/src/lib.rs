@@ -594,7 +594,73 @@ impl<P: CloudProvider> SyncEngine<P> {
 
         let drive_file_id = self.provider.upload(&local_path, &cloud_path).await?;
 
+        // Atualiza manifesto remoto para possibilitar Disaster Recovery em novos PCs (F-05)
+        let _ = self
+            .update_manifest(file_id, version, &cloud_path, &drive_file_id, conn)
+            .await;
+
         Ok((cloud_path, drive_file_id))
+    }
+
+    /// Atualiza o manifesto central salvo no provedor de nuvem com as informações deste snapshot.
+    async fn update_manifest(
+        &self,
+        file_id: Uuid,
+        version: u32,
+        cloud_path: &str,
+        drive_file_id: &str,
+        conn: &Connection,
+    ) -> Result<()> {
+        let meta: Option<(String, String, String, String, String)> = conn
+            .query_row(
+                "SELECT g.name, g.platform, sl.path, f.path, f.hash
+                 FROM files f
+                 JOIN save_locations sl ON f.save_location_id = sl.id
+                 JOIN games g ON sl.game_id = g.id
+                 WHERE f.id = ?1",
+                [file_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .ok();
+
+        if let Some((game_name, platform, loc_path, file_full_path, hash)) = meta {
+            let rel_file = std::path::Path::new(&file_full_path)
+                .strip_prefix(&loc_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| {
+                    std::path::Path::new(&file_full_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "save.dat".into())
+                });
+
+            let mut manifest = self.provider.get_manifest().await?.unwrap_or_default();
+            manifest.schema_version = 1;
+            manifest.updated_at = chrono::Utc::now().to_rfc3339();
+
+            let entry = savevault_cloud::CloudManifestEntry {
+                game_name,
+                platform,
+                save_location_path: loc_path,
+                relative_file_path: rel_file,
+                file_hash: hash,
+                version,
+                cloud_file_id: drive_file_id.to_string(),
+                cloud_path: cloud_path.to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+
+            manifest.entries.retain(|e| {
+                !(e.game_name == entry.game_name
+                    && e.version == entry.version
+                    && e.relative_file_path == entry.relative_file_path)
+            });
+            manifest.entries.push(entry);
+
+            let _ = self.provider.save_manifest(&manifest).await;
+        }
+
+        Ok(())
     }
 }
 
@@ -618,7 +684,52 @@ fn debug_or_warn(attempts: u32, backoff_ms: u64) {
 // API de alto nível (função de conveniência)
 // ---------------------------------------------------------------------------
 
-/// Processa a fila de sync usando a pasta local da nuvem ("local_folder").
+/// Resolve dinamicamente o provedor de nuvem ativo (Google Drive, OneDrive ou LocalFolder).
+pub fn resolve_active_cloud_provider(
+    provider_name: &str,
+    backup_root: &std::path::Path,
+) -> Box<dyn CloudProvider> {
+    match provider_name.to_lowercase().as_str() {
+        "google_drive" | "gdrive" => {
+            if let Some(gdrive) = savevault_cloud::GoogleDriveProvider::from_env() {
+                Box::new(gdrive)
+            } else {
+                tracing::warn!(
+                    "Credenciais do Google Drive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
+                );
+                resolve_local_cloud_provider(backup_root)
+            }
+        }
+        "onedrive" => {
+            if let Some(onedrive) = savevault_cloud::OneDriveProvider::from_env() {
+                Box::new(onedrive)
+            } else {
+                tracing::warn!(
+                    "Credenciais do OneDrive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
+                );
+                resolve_local_cloud_provider(backup_root)
+            }
+        }
+        _ => resolve_local_cloud_provider(backup_root),
+    }
+}
+
+fn resolve_local_cloud_provider(backup_root: &std::path::Path) -> Box<dyn CloudProvider> {
+    let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .or_else(|| {
+            savevault_cloud::detect_cloud_folders()
+                .into_iter()
+                .next()
+                .map(|d| d.savevault_folder)
+        })
+        .unwrap_or_else(|| backup_root.to_path_buf());
+
+    Box::new(savevault_cloud::LocalFolderProvider::new(sync_path))
+}
+
+/// Processa a fila de sync usando o provedor de nuvem ativo configurado.
 pub async fn process_queue_active_provider(
     conn: &Connection,
     backup_root: std::path::PathBuf,
@@ -627,25 +738,14 @@ pub async fn process_queue_active_provider(
     match provider_name.to_lowercase().as_str() {
         "none" | "disabled" | "offline" => Ok(0),
         _ => {
-            let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
-                .map(std::path::PathBuf::from)
-                .ok()
-                .or_else(|| {
-                    savevault_cloud::detect_cloud_folders()
-                        .into_iter()
-                        .next()
-                        .map(|d| d.savevault_folder)
-                })
-                .unwrap_or_else(|| backup_root.clone());
-
-            let provider = savevault_cloud::LocalFolderProvider::new(sync_path);
+            let provider = resolve_active_cloud_provider(provider_name, &backup_root);
             let engine = SyncEngine::new(provider, backup_root);
             engine.process_queue(conn).await
         }
     }
 }
 
-/// Processa a fila de sync sem reter o Mutex do banco durante a cópia dos snapshots para a pasta de nuvem.
+/// Processa a fila de sync sem reter o Mutex do banco durante a transferência para o provedor de nuvem.
 pub async fn process_queue_active_provider_unlocked(
     db: &std::sync::Arc<tokio::sync::Mutex<Connection>>,
     backup_root: std::path::PathBuf,
@@ -654,18 +754,7 @@ pub async fn process_queue_active_provider_unlocked(
     match provider_name.to_lowercase().as_str() {
         "none" | "disabled" | "offline" => Ok(0),
         _ => {
-            let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
-                .map(std::path::PathBuf::from)
-                .ok()
-                .or_else(|| {
-                    savevault_cloud::detect_cloud_folders()
-                        .into_iter()
-                        .next()
-                        .map(|d| d.savevault_folder)
-                })
-                .unwrap_or_else(|| backup_root.clone());
-
-            let provider = savevault_cloud::LocalFolderProvider::new(sync_path);
+            let provider = resolve_active_cloud_provider(provider_name, &backup_root);
             let engine = SyncEngine::new(provider, backup_root);
             engine.process_queue_unlocked(db).await
         }

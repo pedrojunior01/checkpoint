@@ -161,12 +161,36 @@ pub async fn handle_stable_event(
         None => return Ok(None),
     };
 
-    let game_name =
-        get_game_name(conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+    let (game_name, loc_path) = {
+        let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+        let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+        let loc = loc_repo.find_by_id(event.save_location_id)?;
+        let gname = if let Some(ref l) = loc {
+            if let Some(g) = games_repo.find_by_id(l.game_id)? {
+                g.name
+            } else {
+                "Desconhecido".to_string()
+            }
+        } else {
+            "Desconhecido".to_string()
+        };
+        let lpath = loc.map(|l| l.path);
+        (gname, lpath)
+    };
+
+    let rel_path = loc_path
+        .as_ref()
+        .map(|base| savevault_core::path::compute_relative_path(&event.path, base));
 
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &game_name, &event.path, next_version)
+        .create_snapshot_with_relpath(
+            file_id,
+            &game_name,
+            &event.path,
+            rel_path.as_deref(),
+            next_version,
+        )
         .await?;
 
     let (item, pruned_backups) =
@@ -174,7 +198,12 @@ pub async fn handle_stable_event(
 
     for pruned in pruned_backups {
         if let Err(e) = snapshot_manager
-            .remove_snapshot_version(file_id, &game_name, pruned.version)
+            .remove_snapshot_version_file(
+                file_id,
+                &game_name,
+                rel_path.as_deref().unwrap_or_else(|| Path::new("")),
+                pruned.version,
+            )
             .await
         {
             tracing::warn!(
@@ -222,22 +251,43 @@ pub async fn process_file(
         }
     };
 
-    let (file_id, next_version, game_name) = {
+    let (file_id, next_version, game_name, loc_path) = {
         let conn = db.lock().await;
         let pair = check_existing_and_next_version(&conn, &event.path, &hash)?;
         match pair {
             Some((fid, ver)) => {
-                let gname = get_game_name(&conn, event.save_location_id)
-                    .unwrap_or_else(|_| "Desconhecido".to_string());
-                (fid, ver, gname)
+                let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(&conn);
+                let games_repo = savevault_db::repositories::GamesRepo::new(&conn);
+                let loc = loc_repo.find_by_id(event.save_location_id)?;
+                let gname = if let Some(ref l) = loc {
+                    if let Some(g) = games_repo.find_by_id(l.game_id)? {
+                        g.name
+                    } else {
+                        "Desconhecido".to_string()
+                    }
+                } else {
+                    "Desconhecido".to_string()
+                };
+                let lpath = loc.map(|l| l.path);
+                (fid, ver, gname, lpath)
             }
             None => return Ok(None),
         }
     };
 
+    let rel_path = loc_path
+        .as_ref()
+        .map(|base| savevault_core::path::compute_relative_path(&event.path, base));
+
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &game_name, &event.path, next_version)
+        .create_snapshot_with_relpath(
+            file_id,
+            &game_name,
+            &event.path,
+            rel_path.as_deref(),
+            next_version,
+        )
         .await?;
 
     let (item, pruned_backups) = {
@@ -247,7 +297,12 @@ pub async fn process_file(
 
     for pruned in pruned_backups {
         if let Err(e) = snapshot_manager
-            .remove_snapshot_version(file_id, &game_name, pruned.version)
+            .remove_snapshot_version_file(
+                file_id,
+                &game_name,
+                rel_path.as_deref().unwrap_or_else(|| Path::new("")),
+                pruned.version,
+            )
             .await
         {
             tracing::warn!(
