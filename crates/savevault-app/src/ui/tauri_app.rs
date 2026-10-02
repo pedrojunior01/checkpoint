@@ -62,9 +62,7 @@ pub async fn trigger_reconcile(state: State<'_, Arc<DevUiState>>) -> Result<Stri
                 .build();
             match rt {
                 Ok(rt) => {
-                    let res = rt.block_on(async move {
-                        state_clone.trigger_reconcile().await
-                    });
+                    let res = rt.block_on(async move { state_clone.trigger_reconcile().await });
                     let _ = tx.send(res);
                 }
                 Err(e) => {
