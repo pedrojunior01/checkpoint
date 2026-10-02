@@ -127,6 +127,25 @@ async function invoke(command, args = {}) {
             });
             return await res.json();
         }
+        case "optimize_database": {
+            const res = await fetch("/api/maintenance/optimize", {
+                method: "POST",
+                headers: { "X-SaveVault-Request": "1" },
+            });
+            return await res.json();
+        }
+        case "export_backup_zip": {
+            const res = await fetch("/api/maintenance/export", {
+                method: "POST",
+                headers: { "X-SaveVault-Request": "1" },
+            });
+            return await res.json();
+        }
+        case "hide_window":
+        case "minimize_window":
+        case "toggle_maximize_window": {
+            return;
+        }
         default:
             throw new Error(`Comando não implementado: ${command}`);
     }
@@ -319,9 +338,32 @@ const gradients = [
 
 // ── Controles da janela ───────────────────────────────────────────────────────
 
-document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
-document.getElementById("titlebar-maximize")?.addEventListener("click", () => appWindow.toggleMaximize());
-document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
+document.getElementById("titlebar-minimize")?.addEventListener("click", () => {
+    if (hasTauri) {
+        invoke("minimize_window").catch(() => appWindow.minimize());
+    } else {
+        appWindow.minimize();
+    }
+});
+
+document.getElementById("titlebar-maximize")?.addEventListener("click", () => {
+    if (hasTauri) {
+        invoke("toggle_maximize_window").catch(() => appWindow.toggleMaximize());
+    } else {
+        appWindow.toggleMaximize();
+    }
+});
+
+document.getElementById("titlebar-close")?.addEventListener("click", async () => {
+    if (hasTauri) {
+        try {
+            await invoke("hide_window");
+            return;
+        } catch (_) {}
+    }
+    showToast("checkpoint continua rodando em segundo plano", "info");
+    appWindow.close();
+});
 
 // ── Navegação de abas ─────────────────────────────────────────────────────────
 
@@ -471,7 +513,13 @@ function renderJogosList(query = "") {
 
     if (!allJogosLocations || allJogosLocations.length === 0) {
         if (statsEl) statsEl.classList.add("hidden");
-        container.innerHTML = `<p class="text-sm text-slate-400">Nenhum jogo detectado. Execute um scan.</p>`;
+        container.innerHTML = `
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-8 text-center shadow-xs">
+                <div class="text-3xl mb-2">🎮</div>
+                <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">Nenhum jogo monitorado ainda</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Clique em "<strong>+ Adicionar Jogo</strong>" para cadastrar seu save manualmente ou aguarde o escaneamento.</p>
+            </div>
+        `;
         return;
     }
 
@@ -493,11 +541,11 @@ function renderJogosList(query = "") {
 
     if (filtered.length === 0) {
         container.innerHTML = `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-8 text-center shadow-xs">
                 <div class="text-3xl mb-2">🔍</div>
-                <p class="font-semibold text-slate-800 text-sm">Nenhum jogo encontrado</p>
-                <p class="text-xs text-slate-500 mt-1">Nenhum resultado corresponde à busca "<strong>${escapeHtml(query)}</strong>".</p>
-                <button onclick="clearJogosSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
+                <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">Nenhum jogo encontrado</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Nenhum resultado corresponde à busca "<strong>${escapeHtml(query)}</strong>".</p>
+                <button onclick="clearJogosSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-lg transition-colors cursor-pointer">
                     Limpar pesquisa
                 </button>
             </div>
@@ -508,17 +556,32 @@ function renderJogosList(query = "") {
     container.innerHTML = filtered.map((loc, i) => {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const grad = gradients[i % gradients.length];
+        const safePath = (loc.path || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
         return `
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-4 flex items-center gap-4 shadow-xs hover:border-slate-300 transition-colors">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                ${initials}
+        <div onclick="openGameDetails('${loc.id}')" class="bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-4 flex items-center justify-between gap-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors cursor-pointer group">
+            <div class="flex items-center gap-3.5 min-w-0">
+                <div class="w-11 h-11 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0 shadow-xs">
+                    ${initials}
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                        <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate">${escapeHtml(loc.game_name || "Jogo Desconhecido")}</p>
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 shrink-0">${escapeHtml(loc.platform || "PC")}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5 font-mono" title="${escapeHtml(loc.path || "")}">${escapeHtml(loc.path || "")}</p>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s) · Visto ${timeAgo(loc.last_seen_at)}</p>
+                </div>
             </div>
-            <div class="flex-1 min-w-0">
-                <p class="font-semibold text-slate-800">${escapeHtml(loc.game_name || "Jogo Desconhecido")}</p>
-                <p class="text-xs text-slate-500 truncate mt-0.5 font-mono">${escapeHtml(loc.path || "")}</p>
-                <p class="text-xs text-slate-400 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
+            <div class="flex items-center gap-2 shrink-0">
+                <button
+                    onclick="event.stopPropagation(); openFolder('${safePath}')"
+                    class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Abrir pasta no Windows Explorer"
+                >
+                    <span>📂</span> Abrir
+                </button>
+                <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">Ativo</span>
             </div>
-            <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Ativo</span>
         </div>`;
     }).join("");
 }
@@ -532,6 +595,147 @@ function clearJogosSearch() {
     renderJogosList("");
 }
 
+// ── Modal: Adicionar Jogo Manualmente ──────────────────────────────────────────
+
+function openAddGameModal() {
+    const nameInput = document.getElementById("add-game-name");
+    const pathInput = document.getElementById("add-game-path");
+    if (nameInput) nameInput.value = "";
+    if (pathInput) pathInput.value = "";
+    document.getElementById("add-game-modal")?.classList.remove("hidden");
+    if (nameInput) nameInput.focus();
+}
+
+function closeAddGameModal() {
+    document.getElementById("add-game-modal")?.classList.add("hidden");
+}
+
+async function submitAddGame() {
+    const nameInput = document.getElementById("add-game-name");
+    const pathInput = document.getElementById("add-game-path");
+    const name = nameInput ? nameInput.value.trim() : "";
+    const path = pathInput ? pathInput.value.trim() : "";
+
+    if (!name || !path) {
+        showToast("Por favor, preencha o nome do jogo e o caminho da pasta de save.", "warning");
+        return;
+    }
+
+    try {
+        await invoke("add_game", { name, path });
+        showToast(`Jogo "${name}" adicionado com sucesso!`, "success");
+        closeAddGameModal();
+        await loadJogos();
+        await loadInicio();
+    } catch (e) {
+        showToast(`Erro ao adicionar jogo: ${e}`, "error");
+    }
+}
+
+// ── Modal: Detalhes do Jogo ───────────────────────────────────────────────────
+
+let currentGameDetailsLoc = null;
+
+async function openGameDetails(locationId) {
+    const loc = allJogosLocations.find(l => String(l.id) === String(locationId));
+    if (!loc) return;
+    currentGameDetailsLoc = loc;
+
+    const modal = document.getElementById("game-details-modal");
+    if (!modal) return;
+
+    const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
+    const avatar = document.getElementById("game-details-avatar");
+    if (avatar) avatar.textContent = initials;
+
+    const titleEl = document.getElementById("game-details-title");
+    if (titleEl) titleEl.textContent = loc.game_name || "Jogo Desconhecido";
+
+    const subEl = document.getElementById("game-details-subtitle");
+    if (subEl) subEl.textContent = loc.path || "";
+
+    const platEl = document.getElementById("game-details-platform");
+    if (platEl) platEl.textContent = loc.platform || "PC / Manual";
+
+    const countEl = document.getElementById("game-details-files-count");
+    if (countEl) countEl.textContent = `${loc.files_count ?? 0} arquivo(s) monitorado(s)`;
+
+    const openFolderBtn = document.getElementById("game-details-btn-open-folder");
+    if (openFolderBtn) {
+        openFolderBtn.onclick = () => openFolder(loc.path);
+    }
+
+    const scanBtn = document.getElementById("game-details-btn-scan");
+    if (scanBtn) {
+        scanBtn.onclick = async () => {
+            try {
+                scanBtn.textContent = "Escaneando...";
+                await invoke("trigger_reconcile");
+                showToast("Verificação concluída!", "success");
+                await loadJogos();
+                await loadGameDetailsSnapshots(loc.game_name);
+            } catch (err) {
+                showToast(`Erro ao escanear: ${err}`, "error");
+            } finally {
+                scanBtn.innerHTML = `<span>🔍</span> Fazer Scan Agora`;
+            }
+        };
+    }
+
+    await loadGameDetailsSnapshots(loc.game_name);
+    modal.classList.remove("hidden");
+}
+
+function closeGameDetailsModal() {
+    document.getElementById("game-details-modal")?.classList.add("hidden");
+    currentGameDetailsLoc = null;
+}
+
+async function loadGameDetailsSnapshots(gameName) {
+    const listEl = document.getElementById("game-details-snapshots-list");
+    if (!listEl) return;
+    listEl.innerHTML = `<p class="text-xs text-slate-400">Carregando snapshots...</p>`;
+
+    try {
+        if (!allSnapshots || allSnapshots.length === 0) {
+            allSnapshots = await invoke("get_snapshots") || [];
+        }
+        const gameSnaps = allSnapshots.filter(s => (s.game_name || "").toLowerCase() === (gameName || "").toLowerCase());
+        if (gameSnaps.length === 0) {
+            listEl.innerHTML = `<p class="text-xs text-slate-400 py-2">Nenhum snapshot registrado ainda para este jogo.</p>`;
+            return;
+        }
+
+        listEl.innerHTML = gameSnaps.slice(0, 6).map(s => {
+            const versionLabel = `v${s.version || 1}`;
+            const sizeLabel = s.size_formatted || (s.size_bytes ? formatBytes(s.size_bytes) : "—");
+            const relTime = timeAgo(s.created_at);
+            const safeFilePath = (s.file_path || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+            return `
+                <div class="p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700 rounded-xl flex items-center justify-between text-xs">
+                    <div class="min-w-0 pr-2">
+                        <div class="flex items-center gap-1.5">
+                            <span class="font-bold text-slate-800 dark:text-slate-200">${escapeHtml(s.file_name || "save")}</span>
+                            <span class="px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-semibold text-[10px]">${versionLabel}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">${sizeLabel} · ${relTime}</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button onclick="openFolder('${safeFilePath}')" class="px-2 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-600 text-[11px] font-medium transition-colors cursor-pointer" title="Abrir pasta no Explorer">
+                            📂
+                        </button>
+                        <button onclick="restoreSnapshot('${s.id}', '${escapeHtml(s.game_name || "").replace(/'/g, "\\'")}', '${versionLabel}', '${escapeHtml(s.file_name || "").replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer">
+                            ↺ Restaurar
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch (e) {
+        listEl.innerHTML = `<p class="text-xs text-red-500">Erro: ${e}</p>`;
+    }
+}
+
 // ── Aba: Atividade ────────────────────────────────────────────────────────────
 
 let allSnapshots = [];
@@ -543,6 +747,9 @@ async function loadAtividade() {
     try {
         const snapshots = await invoke("get_snapshots");
         allSnapshots = snapshots || [];
+
+        populateAtividadeGameFilter();
+
         const searchInput = document.getElementById("atividade-search-input");
         const currentQuery = searchInput ? searchInput.value.trim() : "";
         renderAtividadeList(currentQuery);
@@ -551,10 +758,33 @@ async function loadAtividade() {
     }
 }
 
+function populateAtividadeGameFilter() {
+    const select = document.getElementById("atividade-game-filter");
+    if (!select) return;
+
+    const currentSelected = select.value;
+    const gameNames = [...new Set(allSnapshots.map(s => s.game_name).filter(Boolean))].sort();
+
+    select.innerHTML = `<option value="">🎮 Todos os Jogos (${allSnapshots.length})</option>` +
+        gameNames.map(name => {
+            const count = allSnapshots.filter(s => s.game_name === name).length;
+            const isSelected = name === currentSelected ? "selected" : "";
+            return `<option value="${escapeHtml(name)}" ${isSelected}>${escapeHtml(name)} (${count})</option>`;
+        }).join("");
+}
+
+function onAtividadeFilterChange() {
+    const searchInput = document.getElementById("atividade-search-input");
+    const query = searchInput ? searchInput.value.trim() : "";
+    renderAtividadeList(query);
+}
+
 function renderAtividadeList(query = "") {
     const container = document.getElementById("atividade-list");
     const statsEl = document.getElementById("atividade-search-stats");
     const clearBtn = document.getElementById("atividade-search-clear");
+    const gameFilterEl = document.getElementById("atividade-game-filter");
+    const selectedGame = gameFilterEl ? gameFilterEl.value.trim() : "";
     if (!container) return;
 
     const trimmedQuery = (query || "").trim().toLowerCase();
@@ -570,18 +800,25 @@ function renderAtividadeList(query = "") {
     if (!allSnapshots || allSnapshots.length === 0) {
         if (statsEl) statsEl.classList.add("hidden");
         container.innerHTML = `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-8 text-center shadow-xs">
                 <div class="text-3xl mb-2">📦</div>
-                <p class="font-semibold text-slate-800 text-sm">Nenhum snapshot capturado ainda</p>
-                <p class="text-xs text-slate-500 mt-1">Quando você jogar ou salvar o progresso, o SaveVault criará pontos de restauração aqui.</p>
+                <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">Nenhum snapshot capturado ainda</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Quando você jogar ou salvar o progresso, o SaveVault criará pontos de restauração aqui.</p>
             </div>
         `;
         return;
     }
 
     let filtered = allSnapshots;
+
+    // Filtro por jogo selecionado no dropdown
+    if (selectedGame) {
+        filtered = filtered.filter(s => (s.game_name || "") === selectedGame);
+    }
+
+    // Filtro por texto da busca
     if (trimmedQuery.length > 0) {
-        filtered = allSnapshots.filter(s => {
+        filtered = filtered.filter(s => {
             const game = (s.game_name || "").toLowerCase();
             const file = (s.file_name || "").toLowerCase();
             const path = (s.file_path || "").toLowerCase();
@@ -593,10 +830,14 @@ function renderAtividadeList(query = "") {
                 || version.includes(trimmedQuery)
                 || hash.includes(trimmedQuery);
         });
+    }
 
+    if (trimmedQuery.length > 0 || selectedGame) {
         if (statsEl) {
             statsEl.classList.remove("hidden");
-            statsEl.textContent = `Mostrando ${filtered.length} de ${allSnapshots.length} snapshot(s) encontrado(s) para "${query}"`;
+            const filterLabel = selectedGame ? ` em "${selectedGame}"` : "";
+            const searchLabel = trimmedQuery ? ` com "${query}"` : "";
+            statsEl.textContent = `Mostrando ${filtered.length} de ${allSnapshots.length} snapshot(s)${filterLabel}${searchLabel}`;
         }
     } else {
         if (statsEl) statsEl.classList.add("hidden");
@@ -604,12 +845,12 @@ function renderAtividadeList(query = "") {
 
     if (filtered.length === 0) {
         container.innerHTML = `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center shadow-xs">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-8 text-center shadow-xs">
                 <div class="text-3xl mb-2">🔍</div>
-                <p class="font-semibold text-slate-800 text-sm">Nenhum snapshot encontrado</p>
-                <p class="text-xs text-slate-500 mt-1">Nenhum resultado corresponde à busca "<strong>${escapeHtml(query)}</strong>".</p>
-                <button onclick="clearAtividadeSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
-                    Limpar pesquisa
+                <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">Nenhum snapshot encontrado</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Nenhum snapshot corresponde aos filtros aplicados.</p>
+                <button onclick="clearAtividadeSearch()" class="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-lg transition-colors cursor-pointer">
+                    Limpar filtros
                 </button>
             </div>
         `;
@@ -624,36 +865,44 @@ function renderAtividadeList(query = "") {
         const hashShort = s.short_hash || (s.hash ? s.hash.substring(0, 10) : "—");
         const formattedDate = formatHour(s.created_at);
         const relativeDate = timeAgo(s.created_at);
+        const safeFilePath = (s.file_path || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
         return `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-slate-300 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div class="flex items-start gap-3 min-w-0">
-                    <div class="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 font-bold text-xs shrink-0 mt-0.5">
+                    <div class="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 mt-0.5">
                         ${versionLabel}
                     </div>
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="font-bold text-slate-900 text-sm">${escapeHtml(gameTitle)}</span>
-                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                            <span class="font-bold text-slate-900 dark:text-slate-100 text-sm">${escapeHtml(gameTitle)}</span>
+                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300">
                                 ${versionLabel}
                             </span>
-                            <span class="text-xs font-mono font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md truncate max-w-xs" title="${escapeHtml(s.file_path || fileName)}">
+                            <span class="text-xs font-mono font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700/60 px-2 py-0.5 rounded-md truncate max-w-xs" title="${escapeHtml(s.file_path || fileName)}">
                                 📄 ${escapeHtml(fileName)}
                             </span>
                         </div>
-                        <div class="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
                             <span>📦 ${escapeHtml(sizeLabel)}</span>
                             <span>•</span>
                             <span title="${escapeHtml(s.created_at || "")}">🕒 ${escapeHtml(relativeDate)} (${escapeHtml(formattedDate)})</span>
                             <span>•</span>
-                            <span class="font-mono text-slate-400" title="Hash Blake3: ${escapeHtml(s.hash || "")}">#${escapeHtml(hashShort)}</span>
+                            <span class="font-mono text-slate-400 dark:text-slate-500" title="Hash Blake3: ${escapeHtml(s.hash || "")}">#${escapeHtml(hashShort)}</span>
                         </div>
                     </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
                     <button
+                        onclick="openFolder('${safeFilePath}')"
+                        class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Abrir pasta no Windows Explorer"
+                    >
+                        <span>📂</span> Abrir
+                    </button>
+                    <button
                         onclick="restoreSnapshot('${s.id}', '${escapeHtml(gameTitle).replace(/'/g, "\\'")}', '${versionLabel}', '${escapeHtml(fileName).replace(/'/g, "\\'")}')"
-                        class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer">
+                        class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer">
                         <span>↺</span> Restaurar Save
                     </button>
                 </div>
@@ -663,52 +912,131 @@ function renderAtividadeList(query = "") {
 
 function clearAtividadeSearch() {
     const input = document.getElementById("atividade-search-input");
-    if (input) {
-        input.value = "";
-        input.focus();
-    }
+    if (input) input.value = "";
+    const filterEl = document.getElementById("atividade-game-filter");
+    if (filterEl) filterEl.value = "";
     renderAtividadeList("");
 }
 
 function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "0 B";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-async function restoreSnapshot(id, gameName, version, fileName) {
-    const promptMsg = `Deseja restaurar o snapshot ${version} de "${gameName}"?\nArquivo: ${fileName}\n\nUm backup de segurança do seu save atual será criado automaticamente antes da restauração.`;
-    if (!confirm(promptMsg)) return;
-
-    try {
-        const result = await invoke("restore_snapshot", { snapshotId: id, snapshot_id: id });
-        alert(`Restauração concluída com sucesso!\n\nArquivo restaurado: ${result.restored_path || result.dest_path || "OK"}\nSafety Backup: ${result.safety_backup_path || "Criado com sucesso"}`);
-        loadAtividade();
-    } catch (e) {
-        alert(`Erro ao restaurar snapshot: ${e}`);
-    }
+function restoreSnapshot(id, gameName, version, fileName) {
+    showConfirmDialog({
+        title: "Restaurar Save",
+        message: `Deseja restaurar o snapshot ${version} de "${gameName}" (${fileName})?\n\nUm Safety Backup do save atual será criado automaticamente antes de restaurar o arquivo.`,
+        confirmText: "Restaurar Agora",
+        cancelText: "Cancelar",
+        isDanger: true,
+        onConfirm: async () => {
+            try {
+                await invoke("restore_snapshot", { snapshotId: id, snapshot_id: id });
+                showToast(`Save de "${gameName}" restaurado com sucesso! Safety backup criado.`, "success");
+                await loadAtividade();
+                await loadInicio();
+            } catch (e) {
+                showToast(`Erro ao restaurar snapshot: ${e}`, "error");
+            }
+        }
+    });
 }
 
 // ── Aba: Nuvem ────────────────────────────────────────────────────────────────
+
+let currentCloudConfig = null;
 
 async function loadNuvem() {
     const container = document.getElementById("nuvem-info");
     if (!container) return;
     try {
-        const data = await invoke("get_dashboard_status");
+        const [dashData, cloudConfig] = await Promise.all([
+            invoke("get_dashboard_status"),
+            invoke("get_cloud_config")
+        ]);
+        currentCloudConfig = cloudConfig;
+
+        const isEnabled = cloudConfig.enabled && cloudConfig.provider !== "none";
+        const providerNames = {
+            "onedrive": "Microsoft OneDrive",
+            "gdrive": "Google Drive",
+            "google_drive": "Google Drive",
+            "dropbox": "Dropbox",
+            "local_folder": "Pasta Local / Nuvem Personalizada",
+            "none": "Nuvem Desativada / Pausada",
+        };
+        const providerIcons = {
+            "onedrive": "☁️",
+            "gdrive": "📁",
+            "google_drive": "📁",
+            "dropbox": "📦",
+            "local_folder": "💾",
+            "none": "⏸️",
+        };
+
+        const providerKey = (cloudConfig.provider || "none").toLowerCase();
+        const displayProvider = providerNames[providerKey] || (cloudConfig.provider || "Pasta Local");
+        const displayIcon = providerIcons[providerKey] || "☁️";
+        const syncPath = cloudConfig.local_sync_path || "Nenhuma pasta configurada";
+        const safeSyncPath = syncPath.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
         container.innerHTML = `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500 text-xl">☁️</div>
-                    <div>
-                        <p class="font-semibold text-slate-800">Pasta Local da Nuvem</p>
-                        <p class="text-sm text-slate-500">${data.app_status || "Ativo"}</p>
+            <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-5 shadow-xs space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-xl ${isEnabled ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-500 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'} flex items-center justify-center text-2xl shrink-0">
+                            ${displayIcon}
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <p class="font-bold text-slate-800 dark:text-slate-100 text-base">${escapeHtml(displayProvider)}</p>
+                                <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${isEnabled ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'}">
+                                    ${isEnabled ? "Sincronização Ativa" : "Pausada"}
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                ${isEnabled ? "Os backups dos seus jogos são espelhados para o provedor de nuvem." : "A sincronização para nuvem está temporariamente em pausa."}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button
+                            onclick="toggleCloudSync()"
+                            class="px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${isEnabled ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}"
+                        >
+                            ${isEnabled ? "⏸️ Pausar Sincronização" : "▶️ Ativar Sincronização"}
+                        </button>
                     </div>
                 </div>
-                <div class="text-sm text-slate-600 space-y-1.5 pt-1 border-t border-slate-100">
-                    <p>📁 Provedor: <strong>Sincronização via Pasta Local (OneDrive / Drive / Dropbox)</strong></p>
-                    <p>📦 Itens na fila de sync: <strong>${data.sync_pending_count ?? 0}</strong></p>
-                    <p>🔄 Último sync: <strong>${formatHour(data.last_reconciliation_time)}</strong></p>
+
+                <div class="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3.5 border border-slate-200/80 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div class="min-w-0 flex-1">
+                        <span class="text-slate-400 font-semibold block text-[11px] uppercase tracking-wider mb-0.5">Pasta Sincronizada</span>
+                        <p class="font-mono text-slate-800 dark:text-slate-200 truncate" title="${escapeHtml(syncPath)}">${escapeHtml(syncPath)}</p>
+                    </div>
+                    ${cloudConfig.local_sync_path ? `
+                        <button
+                            onclick="openFolder('${safeSyncPath}')"
+                            class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                            <span>📂</span> Abrir no Windows Explorer
+                        </button>
+                    ` : ""}
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs text-slate-600 dark:text-slate-300">
+                    <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
+                        <p class="text-slate-400 text-[11px]">Itens na fila de sync</p>
+                        <p class="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5">${dashData.sync_pending_count ?? 0} pendente(s)</p>
+                    </div>
+                    <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
+                        <p class="text-slate-400 text-[11px]">Última verificação / sync</p>
+                        <p class="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5">${formatHour(dashData.last_reconciliation_time)}</p>
+                    </div>
                 </div>
             </div>`;
     } catch (e) {
@@ -716,7 +1044,151 @@ async function loadNuvem() {
     }
 }
 
-// ── Aba: Configurações ────────────────────────────────────────────────────────
+async function toggleCloudSync() {
+    if (!currentCloudConfig) return;
+    const newEnabled = !currentCloudConfig.enabled || currentCloudConfig.provider === "none";
+    const newProvider = newEnabled ? (currentCloudConfig.provider === "none" ? "local_folder" : currentCloudConfig.provider) : "none";
+
+    try {
+        await invoke("update_cloud_config", {
+            provider: newProvider,
+            localSyncPath: currentCloudConfig.local_sync_path,
+            enabled: newEnabled,
+        });
+        showToast(newEnabled ? "Sincronização em nuvem retomada!" : "Sincronização em nuvem pausada.", "info");
+        await loadNuvem();
+        await loadInicio();
+    } catch (e) {
+        showToast(`Erro ao alterar estado da nuvem: ${e}`, "error");
+    }
+}
+
+// ── Modal: Configurar Sincronização em Nuvem ──────────────────────────────────
+
+let wizardDetectedCloudFolders = [];
+
+async function openCloudConfigModal() {
+    const modal = document.getElementById("cloud-config-modal");
+    if (!modal) return;
+
+    const listEl = document.getElementById("cloud-modal-detected-list");
+    const customInput = document.getElementById("cloud-modal-custom-path");
+
+    if (listEl) {
+        listEl.innerHTML = `<p class="text-xs text-slate-400">Detectando pastas de nuvem...</p>`;
+    }
+
+    modal.classList.remove("hidden");
+
+    try {
+        const [detected, currentConfig] = await Promise.all([
+            invoke("get_cloud_folders"),
+            invoke("get_cloud_config")
+        ]);
+
+        wizardDetectedCloudFolders = detected || [];
+        currentCloudConfig = currentConfig;
+
+        if (customInput) {
+            customInput.value = currentConfig?.local_sync_path || "";
+        }
+
+        renderCloudModalDetectedList(currentConfig?.local_sync_path);
+    } catch (e) {
+        if (listEl) {
+            listEl.innerHTML = `<p class="text-xs text-red-500">Erro ao carregar pastas: ${e}</p>`;
+        }
+    }
+}
+
+function closeCloudConfigModal() {
+    document.getElementById("cloud-config-modal")?.classList.add("hidden");
+}
+
+function renderCloudModalDetectedList(currentPath = "") {
+    const listEl = document.getElementById("cloud-modal-detected-list");
+    if (!listEl) return;
+
+    if (!wizardDetectedCloudFolders || wizardDetectedCloudFolders.length === 0) {
+        listEl.innerHTML = `
+            <div class="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-800 dark:text-amber-300 text-xs">
+                Nenhum serviço de nuvem comum (Google Drive, OneDrive, Dropbox) foi detectado automaticamente nas pastas padrão. Você pode definir uma pasta personalizada abaixo.
+            </div>
+        `;
+        return;
+    }
+
+    listEl.innerHTML = wizardDetectedCloudFolders.map(df => {
+        const safeFolder = (df.savevault_folder || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        const isCurrent = currentPath && df.savevault_folder && currentPath.toLowerCase() === df.savevault_folder.toLowerCase();
+        const icon = (df.name || "").toLowerCase().includes("drive") ? "📁" : "☁️";
+
+        return `
+            <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/80 border ${isCurrent ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-slate-200 dark:border-slate-700'} rounded-xl text-xs">
+                <div class="flex items-center gap-2.5 min-w-0 mr-2">
+                    <span class="text-xl">${icon}</span>
+                    <div class="truncate">
+                        <div class="flex items-center gap-1.5">
+                            <span class="font-bold text-slate-800 dark:text-slate-100">${escapeHtml(df.name)}</span>
+                            ${isCurrent ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400">Ativo</span>' : ''}
+                        </div>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-0.5">${escapeHtml(df.savevault_folder)}</p>
+                    </div>
+                </div>
+                <button
+                    onclick="selectCloudModalFolder('${safeFolder}', '${escapeHtml(df.name).replace(/'/g, "\\'")}')"
+                    class="px-3 py-1.5 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold border border-slate-300 dark:border-slate-600 rounded-lg transition-colors shrink-0 cursor-pointer text-xs"
+                >
+                    Selecionar
+                </button>
+            </div>
+        `;
+    }).join("");
+}
+
+function selectCloudModalFolder(path, name) {
+    const customInput = document.getElementById("cloud-modal-custom-path");
+    if (customInput) {
+        customInput.value = path;
+    }
+    showToast(`Pasta de ${name} selecionada`, "info");
+}
+
+async function submitCloudConfig() {
+    const customInput = document.getElementById("cloud-modal-custom-path");
+    const path = customInput ? customInput.value.trim() : "";
+
+    if (!path) {
+        showToast("Por favor, selecione ou informe o caminho da pasta de sincronização.", "warning");
+        return;
+    }
+
+    let provider = "local_folder";
+    const pathLower = path.toLowerCase();
+    if (pathLower.includes("onedrive")) {
+        provider = "onedrive";
+    } else if (pathLower.includes("drive") || pathLower.includes("google")) {
+        provider = "gdrive";
+    } else if (pathLower.includes("dropbox")) {
+        provider = "dropbox";
+    }
+
+    try {
+        await invoke("update_cloud_config", {
+            provider,
+            localSyncPath: path,
+            enabled: true,
+        });
+        showToast("Configuração da nuvem salva com sucesso!", "success");
+        closeCloudConfigModal();
+        await loadNuvem();
+        await loadInicio();
+    } catch (e) {
+        showToast(`Erro ao salvar nuvem: ${e}`, "error");
+    }
+}
+
+// ── Aba: Configurações & Manutenção ───────────────────────────────────────────
 
 async function loadConfig() {
     const container = document.getElementById("config-info");
@@ -725,25 +1197,69 @@ async function loadConfig() {
         const data = await invoke("get_dashboard_status");
         container.innerHTML = `
             <div class="space-y-3">
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Banco de Dados</p>
-                    <p class="text-sm text-slate-700 font-mono break-all">${data.db_path || "—"}</p>
+                <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-4 shadow-xs">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Banco de Dados</p>
+                    <p class="text-sm text-slate-700 dark:text-slate-200 font-mono break-all">${data.db_path || "—"}</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Pasta de Backups</p>
-                    <p class="text-sm text-slate-700 font-mono break-all">${data.backup_root || "—"}</p>
+                <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-4 shadow-xs">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Pasta de Backups</p>
+                    <p class="text-sm text-slate-700 dark:text-slate-200 font-mono break-all">${data.backup_root || "—"}</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Intervalo de Reconciliação</p>
-                    <p class="text-sm text-slate-700">${data.reconciliation_interval_secs ?? 30}s</p>
+                <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-4 shadow-xs">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Intervalo de Reconciliação</p>
+                    <p class="text-sm text-slate-700 dark:text-slate-200">${data.reconciliation_interval_secs ?? 30}s</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Status do Watcher</p>
-                    <p class="text-sm text-slate-700">${data.watcher_status || "—"}</p>
+                <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-4 shadow-xs">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Status do Watcher</p>
+                    <p class="text-sm text-slate-700 dark:text-slate-200">${data.watcher_status || "—"}</p>
                 </div>
             </div>`;
     } catch (e) {
         container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
+    }
+}
+
+async function triggerOptimizeDatabase() {
+    const btn = document.getElementById("btn-optimize-db");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block mr-1">🔄</span> Otimizando...`;
+    }
+
+    try {
+        const res = await invoke("optimize_database");
+        showToast(`SQLite otimizado! ${res.purged_sync_items || 0} itens antigos limpos. Tamanho atual: ${res.db_size_formatted || "OK"}`, "success");
+        await loadConfig();
+    } catch (e) {
+        showToast(`Erro ao otimizar banco: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<span>⚡</span> Otimizar SQLite Agora`;
+        }
+    }
+}
+
+async function triggerExportZip() {
+    const btn = document.getElementById("btn-export-zip");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block mr-1">🔄</span> Compactando...`;
+    }
+
+    try {
+        const res = await invoke("export_backup_zip");
+        showToast(`Backup ZIP gerado com sucesso (${res.file_size_formatted || ""}): ${res.export_path}`, "success");
+        if (res.export_path) {
+            openFolder(res.export_path);
+        }
+    } catch (e) {
+        showToast(`Erro ao exportar backup: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<span>💾</span> Exportar para .ZIP`;
+        }
     }
 }
 
@@ -757,10 +1273,10 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
     }
     try {
         const result = await invoke("trigger_reconcile");
-        alert(`Reconciliação concluída: ${result}`);
+        showToast(`Sincronização concluída: ${result}`, "success");
         loadInicio();
     } catch (e) {
-        alert(`Erro: ${e}`);
+        showToast(`Erro na sincronização: ${e}`, "error");
     } finally {
         if (btn) {
             btn.textContent = "Sincronizar Agora";

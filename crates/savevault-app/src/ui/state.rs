@@ -194,6 +194,22 @@ pub struct DiscoveredGameView {
     pub save_path: String,
 }
 
+/// Resultado da otimização preventiva e limpeza do banco SQLite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationResult {
+    pub purged_sync_items: usize,
+    pub db_size_bytes: u64,
+    pub db_size_formatted: String,
+}
+
+/// Resultado da exportação do pacote de backup em arquivo .ZIP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub export_path: String,
+    pub file_size_bytes: u64,
+    pub file_size_formatted: String,
+}
+
 /// Estado compartilhado e thread-safe da DEV-UI.
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
@@ -1103,6 +1119,115 @@ impl DevUiState {
         .await;
 
         self.get_cloud_config().await
+    }
+
+    /// Executa manutenção preventiva no banco de dados SQLite (pruning de sync_queue antigas e VACUUM).
+    pub async fn optimize_database(&self) -> anyhow::Result<OptimizationResult> {
+        let mut purged = 0;
+        {
+            let db = self.db.lock().await;
+            let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+            let deleted = db.execute(
+                "DELETE FROM sync_queue WHERE status = 'synced' OR (attempts >= 5 AND created_at < ?1)",
+                rusqlite::params![cutoff.to_rfc3339()],
+            )?;
+            purged += deleted;
+            db.execute("VACUUM", [])?;
+        }
+
+        let config = self.get_config();
+        let db_path = &config.paths.database_path;
+        let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Otimização do banco concluída. {} itens antigos limpos. Tamanho atual: {}",
+                purged, size_formatted
+            ),
+            None,
+        )
+        .await;
+
+        Ok(OptimizationResult {
+            purged_sync_items: purged,
+            db_size_bytes: size,
+            db_size_formatted: size_formatted,
+        })
+    }
+
+    /// Cria um backup completo compactado (.ZIP) de todos os saves monitorados e snapshots.
+    pub async fn export_backup_zip(&self) -> anyhow::Result<ExportResult> {
+        let config = self.get_config();
+        let backup_dir = &config.paths.backup_dir;
+
+        if !backup_dir.exists() {
+            anyhow::bail!("O diretório de backups ainda não foi criado ou não contém dados.");
+        }
+
+        // Determina destino padrão (Downloads do usuário ou diretório corrente)
+        let downloads_dir = std::env::var("USERPROFILE")
+            .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+
+        if !downloads_dir.exists() {
+            let _ = std::fs::create_dir_all(&downloads_dir);
+        }
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let zip_file_name = format!("checkpoint_backup_{}.zip", timestamp);
+        let target_zip = downloads_dir.join(&zip_file_name);
+
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        backup_dir.display(),
+                        target_zip.display()
+                    ),
+                ])
+                .output()?;
+
+            if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Falha ao gerar arquivo ZIP: {}", err);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let output = std::process::Command::new("zip")
+                .args(["-r", target_zip.to_str().unwrap(), backup_dir.to_str().unwrap()])
+                .output()?;
+            if !output.status.success() {
+                anyhow::bail!("Falha ao compactar arquivo no Linux/macOS");
+            }
+        }
+
+        let size = std::fs::metadata(&target_zip).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Backup manual exportado com sucesso: {} ({})",
+                zip_file_name, size_formatted
+            ),
+            Some(target_zip.display().to_string()),
+        )
+        .await;
+
+        Ok(ExportResult {
+            export_path: target_zip.display().to_string(),
+            file_size_bytes: size,
+            file_size_formatted: size_formatted,
+        })
     }
 }
 

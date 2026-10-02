@@ -795,6 +795,31 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         }
 
         // -------------------------------------------------------------
+        // REST: Manutenção & Otimização do Banco de Dados
+        // -------------------------------------------------------------
+        ("POST", "/api/maintenance/optimize") => match state.optimize_database().await {
+            Ok(res) => {
+                let json = serde_json::to_string(&res)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+            }
+        },
+
+        ("POST", "/api/maintenance/export") => match state.export_backup_zip().await {
+            Ok(res) => {
+                let json = serde_json::to_string(&res)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(&mut stream, 500, "Internal Server Error", "application/json", &err_json).await?;
+            }
+        },
+
+        // -------------------------------------------------------------
         // 404 Não Encontrado
         // -------------------------------------------------------------
         _ => {

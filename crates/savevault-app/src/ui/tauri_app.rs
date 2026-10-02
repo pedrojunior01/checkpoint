@@ -155,6 +155,53 @@ pub async fn update_cloud_config(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn hide_window(
+    window: tauri::WebviewWindow,
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<(), String> {
+    let _ = window.hide();
+    let config = state.get_config();
+    if config.notifications.enabled {
+        #[cfg(windows)]
+        {
+            let _ = crate::notifications::send_toast(
+                "checkpoint em segundo plano",
+                "O aplicativo foi minimizado para os apps ocultos perto do relógio. Seus saves continuam protegidos.",
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn minimize_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn toggle_maximize_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_maximized().unwrap_or(false) {
+        window.unmaximize().map_err(|e| e.to_string())
+    } else {
+        window.maximize().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn optimize_database(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<crate::ui::state::OptimizationResult, String> {
+    state.optimize_database().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_backup_zip(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<crate::ui::state::ExportResult, String> {
+    state.export_backup_zip().await.map_err(|e| e.to_string())
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -179,15 +226,13 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             open_folder,
             get_cloud_config,
             update_cloud_config,
+            hide_window,
+            minimize_window,
+            toggle_maximize_window,
+            optimize_database,
+            export_backup_zip,
         ])
         .setup(|app| {
-            // Mostra janela e dá foco
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-            }
-
             // Configura System Tray
             let show_item = MenuItemBuilder::with_id("show", "Abrir checkpoint").build(app)?;
             let hide_item = MenuItemBuilder::with_id("hide", "Ocultar").build(app)?;
@@ -204,7 +249,24 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                 .item(&quit_item)
                 .build()?;
 
-            if let Some(ic) = app.default_window_icon().cloned() {
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .or_else(|| {
+                    tauri::image::Image::from_bytes(include_bytes!("../../icons/32x32.png")).ok()
+                });
+
+            // Mostra janela principal e garante que tenha o ícone
+            if let Some(win) = app.get_webview_window("main") {
+                if let Some(ref ic) = tray_icon {
+                    let _ = win.set_icon(ic.clone());
+                }
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+
+            if let Some(ic) = tray_icon {
                 TrayIconBuilder::new()
                     .icon(ic)
                     .tooltip("checkpoint — Proteção de Saves")
@@ -223,7 +285,6 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                             }
                         }
                         "reconcile" => {
-                            // Dispara reconciliação via canal Tauri async
                             let state = app.state::<Arc<DevUiState>>();
                             let state_clone = Arc::clone(&state);
                             tauri::async_runtime::spawn(async move {
@@ -236,7 +297,6 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                         _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
-                        // Duplo clique: toggle visibilidade
                         if let TrayIconEvent::Click { .. } = event {
                             let app = tray.app_handle();
                             if let Some(win) = app.get_webview_window("main") {
@@ -256,10 +316,22 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Fechar = ocultar para bandeja (processo permanece ativo)
+            // Fechar [X] = ocultar para a bandeja/apps ocultos (processo permanece ativo protegendo saves)
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                let app = window.app_handle();
+                let state = app.state::<Arc<DevUiState>>();
+                let config = state.get_config();
+                if config.notifications.enabled {
+                    #[cfg(windows)]
+                    {
+                        let _ = crate::notifications::send_toast(
+                            "checkpoint em segundo plano",
+                            "O aplicativo foi minimizado para os apps ocultos perto do relógio. Seus saves continuam protegidos.",
+                        );
+                    }
+                }
             }
         })
         .run(tauri::generate_context!())
