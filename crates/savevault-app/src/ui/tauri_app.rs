@@ -7,8 +7,8 @@ use tauri::{
 use uuid::Uuid;
 
 use crate::ui::state::{
-    DashboardSummary, DevUiState, LocationView, ReconciliationView, RestoreApiResponse,
-    SafetyBackupGroup, SnapshotView,
+    DashboardSummary, DevUiState, DiscoveredGameView, LocationView, ReconciliationView,
+    RestoreApiResponse, SafetyBackupGroup, SetupStatusView, SnapshotView,
 };
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -65,6 +65,61 @@ pub async fn restore_snapshot(
     Ok(state.trigger_restore(id, None).await)
 }
 
+#[tauri::command]
+pub async fn get_setup_status(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<SetupStatusView, String> {
+    state.get_setup_status().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn run_setup_discovery(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<Vec<DiscoveredGameView>, String> {
+    state.run_setup_discovery().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cloud_folders() -> Result<Vec<savevault_cloud::DetectedCloudFolder>, String> {
+    Ok(savevault_cloud::detect_cloud_folders())
+}
+
+#[tauri::command]
+pub async fn save_setup_cloud(
+    state: State<'_, Arc<DevUiState>>,
+    provider: Option<String>,
+    local_sync_path: Option<String>,
+) -> Result<SetupStatusView, String> {
+    let mut config = state.get_config();
+    if let Some(ref lsp) = local_sync_path {
+        let trimmed = lsp.trim();
+        if !trimmed.is_empty() {
+            let p = std::path::PathBuf::from(trimmed);
+            let _ = std::fs::create_dir_all(&p);
+            config.cloud.local_sync_path = Some(p);
+        }
+    }
+    if let Some(p) = provider {
+        config.cloud.provider = p;
+    }
+    let _ = state.save_config(&config);
+    state.get_setup_status().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn complete_setup(
+    state: State<'_, Arc<DevUiState>>,
+    provider: Option<String>,
+    autostart: Option<bool>,
+    notifications: Option<bool>,
+    local_sync_path: Option<String>,
+) -> Result<SetupStatusView, String> {
+    state
+        .complete_setup(provider, autostart, notifications, local_sync_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -80,6 +135,11 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_reconciliation_status,
             trigger_reconcile,
             restore_snapshot,
+            get_setup_status,
+            run_setup_discovery,
+            get_cloud_folders,
+            save_setup_cloud,
+            complete_setup,
         ])
         .setup(|app| {
             // Mostra janela e dá foco

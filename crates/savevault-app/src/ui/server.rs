@@ -423,37 +423,39 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         },
 
         // Disparo manual de reconciliação
-        ("POST", "/api/reconcile-now") | ("POST", "/api/reconcile") => match state.trigger_reconcile().await {
-            Ok(report) => {
-                let json = serde_json::json!({
-                    "success": true,
-                    "locations_scanned": report.locations_scanned,
-                    "files_seen": report.files_seen,
-                    "files_added": report.files_added,
-                    "files_changed": report.files_changed,
-                    "files_removed": report.files_removed,
-                    "errors": report.errors,
-                    "duration_ms": report.duration.as_millis(),
-                })
-                .to_string();
-                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+        ("POST", "/api/reconcile-now") | ("POST", "/api/reconcile") => {
+            match state.trigger_reconcile().await {
+                Ok(report) => {
+                    let json = serde_json::json!({
+                        "success": true,
+                        "locations_scanned": report.locations_scanned,
+                        "files_seen": report.files_seen,
+                        "files_added": report.files_added,
+                        "files_changed": report.files_changed,
+                        "files_removed": report.files_removed,
+                        "errors": report.errors,
+                        "duration_ms": report.duration.as_millis(),
+                    })
+                    .to_string();
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json = serde_json::json!({
+                        "success": false,
+                        "error": e.to_string()
+                    })
+                    .to_string();
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
             }
-            Err(e) => {
-                let err_json = serde_json::json!({
-                    "success": false,
-                    "error": e.to_string()
-                })
-                .to_string();
-                send_response(
-                    &mut stream,
-                    500,
-                    "Internal Server Error",
-                    "application/json",
-                    &err_json,
-                )
-                .await?;
-            }
-        },
+        }
 
         // -------------------------------------------------------------
         // REST: Restauração com Safety Backup

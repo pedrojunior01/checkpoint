@@ -50,6 +50,46 @@ async function invoke(command, args = {}) {
             });
             return await res.json();
         }
+        case "get_setup_status": {
+            const res = await fetch("/api/setup/status");
+            return await res.json();
+        }
+        case "run_setup_discovery": {
+            const res = await fetch("/api/setup/scan", {
+                method: "POST",
+                headers: { "X-SaveVault-Request": "1" },
+            });
+            const data = await res.json();
+            return data.games || [];
+        }
+        case "get_cloud_folders": {
+            const res = await fetch("/api/setup/cloud-folders");
+            return await res.json();
+        }
+        case "save_setup_cloud": {
+            const res = await fetch("/api/setup/login-cloud", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    provider: args.provider,
+                    local_sync_path: args.localSyncPath || args.local_sync_path,
+                }),
+            });
+            return await res.json();
+        }
+        case "complete_setup": {
+            const res = await fetch("/api/setup/complete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    provider: args.provider,
+                    autostart: args.autostart,
+                    notifications: args.notifications,
+                    local_sync_path: args.localSyncPath || args.local_sync_path,
+                }),
+            });
+            return await res.json();
+        }
         default:
             throw new Error(`Comando não implementado: ${command}`);
     }
@@ -375,11 +415,267 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
     }
 });
 
+// ── Assistente de Primeiro Acesso (Setup Wizard) ──────────────────────────────
+
+let currentWizardStep = 1;
+let wizardDiscoveredGames = [];
+
+async function checkInitialSetup() {
+    try {
+        const status = await invoke("get_setup_status");
+        if (status && !status.setup_completed) {
+            openSetupWizard();
+        }
+    } catch (e) {
+        console.warn("Não foi possível verificar status do setup inicial:", e);
+    }
+}
+
+async function openSetupWizard() {
+    currentWizardStep = 1;
+    const modal = document.getElementById("setup-wizard-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+    }
+    wizardGoToStep(1);
+    await loadWizardSetupStatus();
+}
+
+function closeSetupWizard() {
+    const modal = document.getElementById("setup-wizard-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+async function loadWizardSetupStatus() {
+    try {
+        const data = await invoke("get_setup_status");
+        const foldersContainer = document.getElementById("wizard-detected-folders");
+        const inputCloudPath = document.getElementById("wizard-input-cloud-path");
+
+        if (foldersContainer && data.detected_cloud_folders) {
+            if (data.detected_cloud_folders.length > 0) {
+                let html = "";
+                data.detected_cloud_folders.forEach(df => {
+                    const safeFolder = (df.savevault_folder || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                    const icon = (df.name || "").toLowerCase().includes("drive") ? "📁" : "☁️";
+                    html += `
+                        <div class="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200/90 rounded-xl text-xs">
+                            <div class="flex items-center gap-2 overflow-hidden mr-2">
+                                <span class="text-base">${icon}</span>
+                                <div class="truncate">
+                                    <p class="font-bold text-slate-800">${escapeHtml(df.name)}</p>
+                                    <p class="text-[11px] text-slate-500 font-mono truncate">${escapeHtml(df.savevault_folder)}</p>
+                                </div>
+                            </div>
+                            <button onclick="setWizardCloudPath('${safeFolder}')" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold border border-slate-300/80 rounded-md transition-colors shrink-0">
+                                Usar Esta
+                            </button>
+                        </div>
+                    `;
+                });
+                foldersContainer.innerHTML = html;
+                if (inputCloudPath && !inputCloudPath.value) {
+                    inputCloudPath.value = data.local_sync_path || data.detected_cloud_folders[0].savevault_folder;
+                }
+            } else {
+                foldersContainer.innerHTML = `
+                    <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px]">
+                        Nenhuma pasta de nuvem padrão (Google Drive Desktop, OneDrive ou Dropbox) foi detectada automaticamente. Você pode digitar o caminho da sua pasta no campo abaixo.
+                    </div>
+                `;
+            }
+        }
+
+        if (inputCloudPath && data.local_sync_path && !inputCloudPath.value) {
+            inputCloudPath.value = data.local_sync_path;
+        }
+
+        const optAutostart = document.getElementById("wizard-opt-autostart");
+        if (optAutostart && typeof data.autostart_enabled === "boolean") {
+            optAutostart.checked = data.autostart_enabled;
+        }
+
+        const optNotifications = document.getElementById("wizard-opt-notifications");
+        if (optNotifications && typeof data.notifications_enabled === "boolean") {
+            optNotifications.checked = data.notifications_enabled;
+        }
+    } catch (e) {
+        console.error("Erro ao carregar status do wizard:", e);
+    }
+}
+
+function setWizardCloudPath(path) {
+    const input = document.getElementById("wizard-input-cloud-path");
+    if (input) {
+        input.value = path;
+    }
+}
+
+async function runWizardDiscovery() {
+    const btn = document.getElementById("btn-wizard-scan");
+    const container = document.getElementById("wizard-games-container");
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block mr-1">🔄</span> Escaneando...`;
+    }
+
+    try {
+        const games = await invoke("run_setup_discovery");
+        wizardDiscoveredGames = games || [];
+
+        if (container) {
+            if (wizardDiscoveredGames.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-6 text-slate-400 text-xs">
+                        Nenhum save de jogo foi encontrado nas pastas padrão (Steam/GOG). Você poderá adicionar locais manualmente na aba "Saves" depois.
+                    </div>
+                `;
+            } else {
+                let html = "";
+                wizardDiscoveredGames.forEach(g => {
+                    html += `
+                        <div class="p-2.5 bg-white border border-slate-200/90 rounded-lg text-xs flex items-center justify-between">
+                            <div class="overflow-hidden mr-2">
+                                <span class="font-bold text-slate-800">🎮 ${escapeHtml(g.name)}</span>
+                                <span class="ml-1 text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">${escapeHtml(g.platform)}</span>
+                                <p class="text-[11px] text-slate-500 font-mono truncate mt-0.5">${escapeHtml(g.save_path)}</p>
+                            </div>
+                            <span class="text-emerald-600 font-semibold text-[11px] shrink-0">Pronto</span>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+        }
+    } catch (e) {
+        if (container) {
+            container.innerHTML = `<p class="text-xs text-red-500">Erro na detecção: ${e}</p>`;
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<span>🔍</span> Re-escanear`;
+        }
+    }
+}
+
+function wizardGoToStep(step) {
+    currentWizardStep = step;
+
+    const subtitles = [
+        "Passo 1 de 5: Boas-vindas",
+        "Passo 2 de 5: Pasta de Sincronização na Nuvem",
+        "Passo 3 de 5: Varredura de Jogos",
+        "Passo 4 de 5: Preferências do Sistema",
+        "Passo 5 de 5: Conclusão e Ativação"
+    ];
+
+    const subEl = document.getElementById("wizard-step-subtitle");
+    if (subEl) {
+        subEl.textContent = subtitles[step - 1] || "";
+    }
+
+    for (let i = 1; i <= 5; i++) {
+        const pill = document.getElementById(`pill-step-${i}`);
+        if (pill) {
+            if (i === step) {
+                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-slate-800 text-white font-semibold";
+            } else if (i < step) {
+                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold";
+            } else {
+                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500";
+            }
+        }
+
+        const pane = document.getElementById(`wizard-pane-${i}`);
+        if (pane) {
+            if (i === step) {
+                pane.classList.remove("hidden");
+            } else {
+                pane.classList.add("hidden");
+            }
+        }
+    }
+
+    const prevBtn = document.getElementById("btn-wizard-prev");
+    const nextBtn = document.getElementById("btn-wizard-next");
+
+    if (prevBtn) {
+        if (step === 1) {
+            prevBtn.classList.add("hidden");
+        } else {
+            prevBtn.classList.remove("hidden");
+        }
+    }
+
+    if (nextBtn) {
+        if (step === 5) {
+            nextBtn.innerHTML = `<span>Concluir e Proteger</span> 🚀`;
+            nextBtn.className = "px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5";
+        } else {
+            nextBtn.innerHTML = `<span>Avançar</span> →`;
+            nextBtn.className = "px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5";
+        }
+    }
+
+    if (step === 5) {
+        const cloudPath = document.getElementById("wizard-input-cloud-path")?.value?.trim() || "Pasta padrão local";
+        const sumCloud = document.getElementById("wizard-summary-cloud");
+        if (sumCloud) sumCloud.textContent = cloudPath;
+
+        const sumGames = document.getElementById("wizard-summary-games");
+        if (sumGames) sumGames.textContent = `${wizardDiscoveredGames.length} jogo(s) detectado(s)`;
+
+        const autostart = document.getElementById("wizard-opt-autostart")?.checked;
+        const sumAutostart = document.getElementById("wizard-summary-autostart");
+        if (sumAutostart) sumAutostart.textContent = autostart ? "Ativado" : "Desativado";
+
+        const notif = document.getElementById("wizard-opt-notifications")?.checked;
+        const sumNotif = document.getElementById("wizard-summary-notifications");
+        if (sumNotif) sumNotif.textContent = notif ? "Ativadas" : "Desativadas";
+    }
+}
+
+async function wizardNextStep() {
+    if (currentWizardStep < 4) {
+        wizardGoToStep(currentWizardStep + 1);
+    } else if (currentWizardStep === 4) {
+        const autostart = document.getElementById("wizard-opt-autostart")?.checked ?? false;
+        const notifications = document.getElementById("wizard-opt-notifications")?.checked ?? true;
+        const localSyncPath = document.getElementById("wizard-input-cloud-path")?.value?.trim() || null;
+
+        try {
+            await invoke("complete_setup", {
+                provider: "local_folder",
+                autostart,
+                notifications,
+                localSyncPath,
+            });
+        } catch (e) {
+            console.error("Erro ao registrar conclusão do setup:", e);
+        }
+        wizardGoToStep(5);
+    } else if (currentWizardStep === 5) {
+        closeSetupWizard();
+        loadInicio();
+    }
+}
+
+function wizardPrevStep() {
+    if (currentWizardStep > 1) {
+        wizardGoToStep(currentWizardStep - 1);
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
     showTab("nav-inicio");
     loadInicio();
+    checkInitialSetup();
     // Atualiza dashboard a cada 10s
     setInterval(loadInicio, 10000);
 });
