@@ -11,6 +11,28 @@ use crate::ui::state::{
     SafetyBackupGroup, SnapshotView,
 };
 
+// ── Utilitário de Limpeza de Memória (Working Set Trim) ───────────────────────
+
+/// Solicita ao Gerenciador de Memória do Windows o descarte imediato de
+/// páginas de memória ociosas do processo, devolvendo RAM para o sistema.
+#[cfg(windows)]
+pub fn trim_process_memory() {
+    extern "system" {
+        fn SetProcessWorkingSetSize(
+            h_process: *mut std::ffi::c_void,
+            min: usize,
+            max: usize,
+        ) -> i32;
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+    }
+    unsafe {
+        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn trim_process_memory() {}
+
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -72,6 +94,14 @@ pub async fn restore_snapshot(
 /// Executa a interface gráfica Tauri integrada ao processo residente.
 /// Deve ser chamada na thread principal do processo.
 pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
+    // Configura flags de otimização do Chromium / WebView2 antes da criação da janela
+    // Desativa módulos pesados desnecessários (tradutor, media router, extensões, etc.)
+    #[cfg(windows)]
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions --disable-extensions --disable-component-update --renderer-process-limit=1 --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio"
+    );
+
     tauri::Builder::default()
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -123,14 +153,15 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                         "hide" => {
                             if let Some(win) = app.get_webview_window("main") {
                                 let _ = win.hide();
+                                trim_process_memory();
                             }
                         }
                         "reconcile" => {
-                            // Dispara reconciliação via canal Tauri async
                             let state = app.state::<Arc<DevUiState>>();
                             let state_clone = Arc::clone(&state);
                             tauri::async_runtime::spawn(async move {
                                 let _ = state_clone.trigger_reconcile().await;
+                                trim_process_memory();
                             });
                         }
                         "quit" => {
@@ -139,12 +170,12 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                         _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
-                        // Duplo clique: toggle visibilidade
                         if let TrayIconEvent::Click { .. } = event {
                             let app = tray.app_handle();
                             if let Some(win) = app.get_webview_window("main") {
                                 if win.is_visible().unwrap_or(false) {
                                     let _ = win.hide();
+                                    trim_process_memory();
                                 } else {
                                     let _ = win.show();
                                     let _ = win.unminimize();
@@ -156,13 +187,23 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                     .build(app)?;
             }
 
+            // Realiza uma limpeza inicial de memória após carregar
+            trim_process_memory();
+
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Fechar = ocultar para bandeja (processo permanece ativo)
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                // Fechar = ocultar para bandeja e liberar memória
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    trim_process_memory();
+                }
+                tauri::WindowEvent::Focused(false) => {
+                    trim_process_memory();
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

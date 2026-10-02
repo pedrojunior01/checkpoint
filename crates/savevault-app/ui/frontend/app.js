@@ -24,26 +24,12 @@ function formatHour(isoString) {
     return `${prefix}, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-function platformBadge(platform) {
-    const icons = {
-        "Steam": "🎮",
-        "GOG": "🟣",
-        "Dolphin": "🐬",
-        "PCSX2": "💿",
-        "Epic": "⚡",
-    };
-    return icons[platform] || "🎲";
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
 }
-
-// Cores de gradiente para avatares dos jogos (cicla baseado no índice)
-const gradients = [
-    "from-emerald-400 to-teal-600",
-    "from-blue-400 to-indigo-600",
-    "from-purple-400 to-pink-600",
-    "from-orange-400 to-red-600",
-    "from-yellow-400 to-orange-500",
-    "from-cyan-400 to-blue-500",
-];
 
 // ── Controles da janela ───────────────────────────────────────────────────────
 
@@ -70,7 +56,7 @@ function showTab(navId) {
     // Remove estado ativo de todos os links
     Object.keys(tabs).forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.classList.remove("bg-slate-100", "text-slate-900", "font-semibold");
+        if (el) el.classList.remove("active");
     });
     // Mostra a aba selecionada
     const tabId = tabs[navId];
@@ -78,7 +64,7 @@ function showTab(navId) {
     if (tab) tab.classList.remove("hidden");
     // Ativa o link
     const nav = document.getElementById(navId);
-    if (nav) nav.classList.add("bg-slate-100", "text-slate-900", "font-semibold");
+    if (nav) nav.classList.add("active");
 }
 
 // Liga os cliques da sidebar
@@ -86,7 +72,6 @@ Object.keys(tabs).forEach(navId => {
     document.getElementById(navId)?.addEventListener("click", (e) => {
         e.preventDefault();
         showTab(navId);
-        // Carrega dados da aba ao trocar
         if (navId === "nav-jogos") loadJogos();
         if (navId === "nav-atividade") loadAtividade();
         if (navId === "nav-nuvem") loadNuvem();
@@ -116,14 +101,11 @@ async function loadInicio() {
         if (elTime) elTime.textContent = formatHour(data.last_reconciliation_time);
 
         // Status banner
-        const banner = document.getElementById("status-banner");
         const bannerText = document.getElementById("status-text");
         if (data.sync_pending_count > 0) {
-            banner?.classList.replace("bg-emerald-50", "bg-yellow-50");
             if (bannerText) bannerText.textContent = `${data.sync_pending_count} item(s) aguardando sincronização...`;
         } else {
-            banner?.classList.replace("bg-yellow-50", "bg-emerald-50");
-            if (bannerText) bannerText.textContent = "Tudo certo. Seus saves estão protegidos e sincronizados.";
+            if (bannerText) bannerText.textContent = "Seus saves estão protegidos e sincronizados.";
         }
     } catch (e) {
         console.error("Erro ao carregar dashboard:", e);
@@ -142,22 +124,22 @@ function renderJogosRecentes(locations) {
     const container = document.getElementById("jogos-recentes-list");
     if (!container) return;
     if (!locations || locations.length === 0) {
-        container.innerHTML = `<p class="text-sm text-slate-400 px-1">Nenhum jogo detectado ainda.</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:8px 0;">Nenhum jogo detectado ainda.</p>`;
         return;
     }
     container.innerHTML = locations.map((loc, i) => {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
-        const grad = gradients[i % gradients.length];
+        const gradClass = `grad-${i % 6}`;
         return `
-        <div class="flex items-center gap-3 py-2.5 px-1 border-b border-slate-100 last:border-0">
-            <div class="w-9 h-9 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+        <div class="game-item">
+            <div class="game-avatar ${gradClass}">
                 ${initials}
             </div>
-            <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-slate-800 truncate">${loc.game_name || "Jogo"}</p>
-                <p class="text-xs text-slate-400">${loc.files_count ?? 0} arquivo(s) · ${timeAgo(loc.last_seen_at)}</p>
+            <div class="game-info">
+                <p class="game-name">${loc.game_name || "Jogo"}</p>
+                <p class="game-subtext">${loc.files_count ?? 0} arquivo(s) · ${timeAgo(loc.last_seen_at)}</p>
             </div>
-            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Sincronizado</span>
+            <span class="badge-synced">Sincronizado</span>
         </div>`;
     }).join("");
 }
@@ -167,31 +149,31 @@ function renderJogosRecentes(locations) {
 async function loadJogos() {
     const container = document.getElementById("jogos-list");
     if (!container) return;
-    container.innerHTML = `<p class="text-sm text-slate-400">Carregando...</p>`;
+    container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Carregando...</p>`;
     try {
         const locs = await invoke("get_locations");
         if (!locs || locs.length === 0) {
-            container.innerHTML = `<p class="text-sm text-slate-400">Nenhum jogo detectado. Execute um scan.</p>`;
+            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Nenhum jogo detectado. Execute um scan.</p>`;
             return;
         }
         container.innerHTML = locs.map((loc, i) => {
             const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
-            const grad = gradients[i % gradients.length];
+            const gradClass = `grad-${i % 6}`;
             return `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-4 flex items-center gap-4 shadow-xs">
-                <div class="w-12 h-12 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+            <div class="content-card" style="display:flex;align-items:center;gap:14px;margin-bottom:10px;padding:14px;">
+                <div class="game-avatar ${gradClass}" style="width:44px;height:44px;font-size:14px;">
                     ${initials}
                 </div>
-                <div class="flex-1 min-w-0">
-                    <p class="font-semibold text-slate-800">${loc.game_name || "Jogo Desconhecido"}</p>
-                    <p class="text-xs text-slate-500 truncate mt-0.5">${loc.path || ""}</p>
-                    <p class="text-xs text-slate-400 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
+                <div class="game-info">
+                    <p class="game-name" style="font-size:14px;">${loc.game_name || "Jogo Desconhecido"}</p>
+                    <p class="game-subtext" style="font-family:ui-monospace, monospace;color:#64748b;">${loc.path || ""}</p>
+                    <p class="game-subtext">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
                 </div>
-                <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Ativo</span>
+                <span class="badge-synced">Ativo</span>
             </div>`;
         }).join("");
     } catch (e) {
-        container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
     }
 }
 
@@ -200,36 +182,30 @@ async function loadJogos() {
 async function loadAtividade() {
     const container = document.getElementById("atividade-list");
     if (!container) return;
-    container.innerHTML = `<p class="text-sm text-slate-400">Carregando histórico...</p>`;
+    container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Carregando histórico...</p>`;
     try {
         const snapshots = await invoke("get_snapshots");
         if (!snapshots || snapshots.length === 0) {
-            container.innerHTML = `<p class="text-sm text-slate-400">Nenhum snapshot encontrado ainda.</p>`;
+            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Nenhum snapshot encontrado ainda.</p>`;
             return;
         }
         container.innerHTML = snapshots.map(s => `
-            <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs flex items-start gap-3">
-                <div class="w-2 h-2 rounded-full bg-emerald-400 mt-2 flex-shrink-0"></div>
-                <div class="flex-1 min-w-0">
-                    <p class="font-medium text-slate-800 text-sm">${s.game_name || "Arquivo de Save"}</p>
-                    <p class="text-xs text-slate-500 truncate mt-0.5 font-mono">${(s.blake3_hash || "").substring(0, 16)}…</p>
-                    <p class="text-xs text-slate-400 mt-1">${s.file_size_bytes ? formatBytes(s.file_size_bytes) : ""} · ${timeAgo(s.captured_at)}</p>
+            <div class="activity-item">
+                <div class="dot-indicator"></div>
+                <div class="game-info">
+                    <p class="game-name">${s.game_name || "Arquivo de Save"}</p>
+                    <p class="game-subtext" style="font-family:ui-monospace, monospace;">${(s.blake3_hash || "").substring(0, 16)}…</p>
+                    <p class="game-subtext">${s.file_size_bytes ? formatBytes(s.file_size_bytes) : ""} · ${timeAgo(s.captured_at)}</p>
                 </div>
                 <button
                     onclick="restoreSnapshot('${s.snapshot_id}', '${(s.game_name || "").replace(/'/g, "")}')"
-                    class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors flex-shrink-0">
+                    class="btn-restore">
                     Restaurar
                 </button>
             </div>`).join("");
     } catch (e) {
-        container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
     }
-}
-
-function formatBytes(bytes) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 async function restoreSnapshot(id, gameName) {
@@ -251,21 +227,21 @@ async function loadNuvem() {
     try {
         const data = await invoke("get_dashboard_status");
         container.innerHTML = `
-            <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500 text-xl">☁️</div>
+            <div class="content-card" style="display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:40px;height:40px;border-radius:10px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:20px;">☁️</div>
                     <div>
-                        <p class="font-semibold text-slate-800">Google Drive</p>
-                        <p class="text-sm text-slate-500">${data.app_status || "Verificando..."}</p>
+                        <p style="font-size:14px;font-weight:600;color:#0f172a;">Google Drive</p>
+                        <p style="font-size:12px;color:#64748b;">${data.app_status || "Verificando..."}</p>
                     </div>
                 </div>
-                <div class="text-sm text-slate-600 space-y-1 pt-1 border-t border-slate-100">
+                <div style="font-size:13px;color:#334155;border-top:1px solid #f1f5f9;padding-top:10px;line-height:1.6;">
                     <p>📦 Itens na fila de sync: <strong>${data.sync_pending_count ?? 0}</strong></p>
                     <p>🔄 Último sync: <strong>${formatHour(data.last_reconciliation_time)}</strong></p>
                 </div>
             </div>`;
     } catch (e) {
-        container.innerHTML = `<p class="text-sm text-red-500">Erro ao carregar status da nuvem: ${e}</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro ao carregar status da nuvem: ${e}</p>`;
     }
 }
 
@@ -277,26 +253,26 @@ async function loadConfig() {
     try {
         const data = await invoke("get_dashboard_status");
         container.innerHTML = `
-            <div class="space-y-3">
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Banco de Dados</p>
-                    <p class="text-sm text-slate-700 font-mono break-all">${data.db_path || "—"}</p>
+            <div>
+                <div class="config-card">
+                    <p class="config-label">Banco de Dados</p>
+                    <p class="config-value">${data.db_path || "—"}</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Pasta de Backups</p>
-                    <p class="text-sm text-slate-700 font-mono break-all">${data.backup_root || "—"}</p>
+                <div class="config-card">
+                    <p class="config-label">Pasta de Backups</p>
+                    <p class="config-value">${data.backup_root || "—"}</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Intervalo de Reconciliação</p>
-                    <p class="text-sm text-slate-700">${data.reconciliation_interval_secs ?? 30}s</p>
+                <div class="config-card">
+                    <p class="config-label">Intervalo de Reconciliação</p>
+                    <p class="config-value" style="font-family:inherit;">${data.reconciliation_interval_secs ?? 30} segundos</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs">
-                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Status do Watcher</p>
-                    <p class="text-sm text-slate-700">${data.watcher_status || "—"}</p>
+                <div class="config-card">
+                    <p class="config-label">Status do Watcher</p>
+                    <p class="config-value" style="font-family:inherit;">${data.watcher_status || "—"}</p>
                 </div>
             </div>`;
     } catch (e) {
-        container.innerHTML = `<p class="text-sm text-red-500">Erro: ${e}</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
     }
 }
 

@@ -126,8 +126,9 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(4)
                 .enable_all()
-                .thread_stack_size(8 * 1024 * 1024)
                 .build()
                 .expect("Falha ao criar runtime tokio");
             rt.block_on(async move {
@@ -783,11 +784,11 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     };
 
     let server_shutdown_rx = shutdown_tx.subscribe();
-    let (addr, server_handle) =
+    let (_addr, server_handle) =
         savevault_app::start_dev_ui_server(state.clone(), 4040, server_shutdown_rx).await?;
 
     #[cfg(not(feature = "desktop"))]
-    let ui_url = format!("http://{}", addr);
+    let ui_url = format!("http://{}", _addr);
 
     #[cfg(feature = "desktop")]
     {
