@@ -98,7 +98,7 @@ impl SteamDetector {
 }
 
 /// Localiza a pasta raiz do Steam no Windows.
-fn find_steam_root() -> Option<PathBuf> {
+pub fn find_steam_root() -> Option<PathBuf> {
     let default = PathBuf::from("C:\\Program Files (x86)\\Steam");
     if default.exists() {
         return Some(default);

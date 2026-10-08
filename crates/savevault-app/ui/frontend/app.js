@@ -1,5 +1,5 @@
 const hasTauri = typeof window !== "undefined" && !!(window.__TAURI__ && window.__TAURI__.core);
-const appWindow = (typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.window)
+const appWindow = (typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.window && typeof window.__TAURI__.window.getCurrentWindow === "function")
     ? window.__TAURI__.window.getCurrentWindow()
     : {
         minimize: () => {},
@@ -58,10 +58,16 @@ async function invoke(command, args = {}) {
             const res = await fetch("/api/setup/status");
             return await res.json();
         }
+        case "get_available_libraries": {
+            const res = await fetch("/api/setup/libraries");
+            return await res.json();
+        }
         case "run_setup_discovery": {
+            const selected = args.selectedLibraries || args.selected_libraries;
             const res = await fetch("/api/setup/scan", {
                 method: "POST",
-                headers: { "X-SaveVault-Request": "1" },
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({ selected_libraries: selected }),
             });
             const data = await res.json();
             return data.games || [];
@@ -80,6 +86,30 @@ async function invoke(command, args = {}) {
                 }),
             });
             return await res.json();
+        }
+        case "complete_onboarding": {
+            const payload = args.req || args;
+            const res = await fetch("/api/setup/onboarding", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok || data.success === false) {
+                throw new Error(data.error || "Falha ao registrar onboarding");
+            }
+            return data;
+        }
+        case "skip_onboarding": {
+            const res = await fetch("/api/setup/skip", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || "Falha ao registrar conclusão do onboarding");
+            }
+            return data;
         }
         case "complete_setup": {
             const res = await fetch("/api/setup/complete", {
@@ -115,6 +145,14 @@ async function invoke(command, args = {}) {
             });
             return await res.json();
         }
+        case "pick_folder": {
+            const res = await fetch("/api/setup/pick-folder", {
+                method: "POST",
+                headers: { "X-SaveVault-Request": "1" },
+            });
+            const data = await res.json();
+            return data.path || null;
+        }
         case "get_cloud_config": {
             const res = await fetch("/api/cloud/config");
             return await res.json();
@@ -145,6 +183,49 @@ async function invoke(command, args = {}) {
             });
             return await res.json();
         }
+        case "get_pending_remappings": {
+            const res = await fetch("/api/remapping/pending");
+            return await res.json();
+        }
+        case "validate_remapping_path": {
+            const res = await fetch("/api/remapping/validate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    candidate_path: args.candidatePath || args.candidate_path,
+                }),
+            });
+            return await res.json();
+        }
+        case "apply_remapping": {
+            const res = await fetch("/api/remapping/apply", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    location_id: args.locationId || args.location_id,
+                    new_path: args.newPath || args.new_path,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.success === false) {
+                throw new Error(data.error || "Falha ao aplicar remapeamento");
+            }
+            return data;
+        }
+        case "reset_remapping": {
+            const res = await fetch("/api/remapping/reset", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-SaveVault-Request": "1" },
+                body: JSON.stringify({
+                    location_id: args.locationId || args.location_id,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.success === false) {
+                throw new Error(data.error || "Falha ao resetar remapeamento");
+            }
+            return data;
+        }
         case "hide_window":
         case "minimize_window":
         case "toggle_maximize_window": {
@@ -165,6 +246,108 @@ function escapeHtml(str) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+function isSafeHttpsUrl(url) {
+    if (!url || typeof url !== "string") return false;
+    if (url.length === 0 || url.length > 256) return false;
+    // Rejeita qualquer espaço em branco ou caractere de controle
+    if (/\s|[\x00-\x1F\x7F]/.test(url)) return false;
+    if (!url.toLowerCase().startsWith("https://")) return false;
+    const allowed = [
+        "https://shared.cloudflare.steamstatic.com/",
+        "https://cdn.cloudflare.steamstatic.com/",
+        "https://steamcdn-a.akamaihd.net/",
+    ];
+    const match = allowed.find(domain => url.slice(0, domain.length).toLowerCase() === domain);
+    if (!match) return false;
+    const path = url.slice(match.length);
+    if (
+        !path ||
+        path.includes("@") ||
+        path.includes("?") ||
+        path.includes("#") ||
+        path.includes(":") ||
+        path.includes("..") ||
+        path.includes("//")
+    ) {
+        return false;
+    }
+    if (!/^[a-zA-Z0-9/_.-]+$/.test(path)) {
+        return false;
+    }
+    const lower = path.toLowerCase();
+    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png");
+}
+
+function getGamepadSvg(sizeClass = "w-4 h-4") {
+    return `<svg class="${sizeClass} opacity-80 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="4"></rect><line x1="6" y1="12" x2="10" y2="12"></line><line x1="8" y1="10" x2="8" y2="14"></line><line x1="15" y1="11" x2="15.01" y2="11"></line><line x1="18" y1="13" x2="18.01" y2="13"></line></svg>`;
+}
+
+function getGameInitials(name) {
+    if (!name || typeof name !== "string") return "?";
+    const trimmed = name.trim();
+    if (!trimmed) return "?";
+    const chars = Array.from(trimmed);
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+        const first = Array.from(words[0])[0] || "";
+        const second = Array.from(words[1])[0] || "";
+        return (first + second).toUpperCase();
+    }
+    return chars.slice(0, 2).join("").toUpperCase();
+}
+
+function handleCoverError(img) {
+    if (!img || !img.parentElement) return;
+    const parent = img.parentElement;
+    const gameName = img.getAttribute("data-game-name") || "?";
+    const grad = img.getAttribute("data-grad") || "from-slate-700 to-slate-900";
+    const size = img.getAttribute("data-size") || "md";
+    const initials = getGameInitials(gameName);
+    let svgSize = "w-4 h-4";
+    if (size === "sm") svgSize = "w-3 h-3";
+    else if (size === "lg") svgSize = "w-5 h-5";
+
+    img.remove();
+    parent.className = `${parent.className.replace(/bg-slate-\d+(\/\d+)?/g, "")} bg-gradient-to-br ${grad} text-white font-bold text-xs gap-1.5 px-1`;
+    parent.innerHTML = `<span>${escapeHtml(initials)}</span>${getGamepadSvg(svgSize)}`;
+}
+
+function renderCoverHtml(coverUrl, gameName, grad, size = "md") {
+    const initials = getGameInitials(gameName);
+    const hasCover = coverUrl && isSafeHttpsUrl(coverUrl);
+
+    let containerClass = "w-24 h-12 sm:w-28 sm:h-14 rounded-xl overflow-hidden shrink-0 shadow-xs relative border flex items-center justify-center";
+    let svgSize = "w-4 h-4";
+
+    if (size === "sm") {
+        containerClass = "w-14 h-8 rounded-lg overflow-hidden shrink-0 shadow-xs relative border flex items-center justify-center";
+        svgSize = "w-3 h-3";
+    } else if (size === "lg") {
+        containerClass = "w-24 h-12 sm:w-28 sm:h-14 rounded-xl overflow-hidden shrink-0 shadow-xs relative border flex items-center justify-center";
+        svgSize = "w-4 h-4";
+    }
+
+    if (hasCover) {
+        return `<div class="${containerClass} bg-slate-100 dark:bg-slate-800/80 border-slate-200/80 dark:border-slate-700/80">
+            <img
+                src="${escapeHtml(coverUrl)}"
+                alt="Capa de ${escapeHtml(gameName || 'Jogo')}"
+                data-game-name="${escapeHtml(gameName || '?')}"
+                data-grad="${escapeHtml(grad || 'from-slate-700 to-slate-900')}"
+                data-size="${escapeHtml(size || 'md')}"
+                loading="lazy"
+                class="w-full h-full object-cover transition-opacity duration-200"
+                onerror="handleCoverError(this)"
+            />
+        </div>`;
+    }
+
+    return `<div class="${containerClass} bg-gradient-to-br ${grad} border-slate-200/40 dark:border-slate-700/40 text-white font-bold text-xs gap-1.5 px-1">
+        <span>${escapeHtml(initials)}</span>
+        ${getGamepadSvg(svgSize)}
+    </div>`;
 }
 
 // ── Toasts & Notificações Modernas ───────────────────────────────────────────
@@ -454,6 +637,191 @@ async function loadInicio() {
     } catch (e) {
         console.error("Erro ao carregar jogos recentes:", e);
     }
+
+    // AUD-03: Verifica se há locais necessitando de remapeamento
+    await checkPendingRemappings();
+}
+
+// ── Remapeamento de Saves Multiplataforma (AUD-03) ──────────────────────────
+
+async function checkPendingRemappings() {
+    try {
+        const pending = await invoke("get_pending_remappings");
+        const banner = document.getElementById("remapping-alert-banner");
+        const text = document.getElementById("remapping-alert-text");
+        if (pending && pending.length > 0) {
+            if (banner) banner.classList.remove("hidden");
+            if (text) {
+                text.textContent = `${pending.length} local(is) de save recuperado(s) precisam de definição de pasta nesta máquina.`;
+            }
+        } else {
+            if (banner) banner.classList.add("hidden");
+        }
+    } catch (e) {
+        console.error("Erro ao verificar remapeamentos pendentes:", e);
+    }
+}
+
+async function openRemappingModal() {
+    const modal = document.getElementById("remapping-modal");
+    const list = document.getElementById("remapping-items-list");
+    if (!modal || !list) return;
+
+    list.innerHTML = `<p class="text-xs text-slate-400">Carregando locais pendentes...</p>`;
+    modal.classList.remove("hidden");
+
+    try {
+        const pending = await invoke("get_pending_remappings");
+        if (!pending || pending.length === 0) {
+            list.innerHTML = `
+                <div class="text-center py-8">
+                    <span class="text-3xl">✓</span>
+                    <p class="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mt-2">Nenhum remapeamento pendente!</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Todos os locais de save estão sincronizados e configurados corretamente.</p>
+                </div>
+            `;
+            const banner = document.getElementById("remapping-alert-banner");
+            if (banner) banner.classList.add("hidden");
+            return;
+        }
+
+        list.innerHTML = pending.map(item => {
+            const initialCandidate = item.suggested_candidate || "";
+            return `
+                <div class="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl p-4 space-y-3" id="remap-card-${item.location_id}">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-base">🎮</span>
+                            <span class="text-xs font-bold text-slate-800 dark:text-slate-100">${escapeHtml(item.game_name)}</span>
+                            <span class="text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">${escapeHtml(item.location_type)}</span>
+                        </div>
+                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${item.status === 'NeedsUserMapping' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'}">
+                            ${escapeHtml(item.status)}
+                        </span>
+                    </div>
+
+                    <div class="space-y-1 text-xs font-mono">
+                        <div>
+                            <span class="text-slate-400 font-sans text-[11px]">Local original:</span>
+                            <p class="text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200/80 dark:border-slate-800 break-all select-all">
+                                ${escapeHtml(item.original_path)}
+                            </p>
+                        </div>
+                        <p class="text-[11px] text-amber-600 dark:text-amber-400 font-sans mt-0.5">
+                            ⚠️ ${escapeHtml(item.reason)}
+                        </p>
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <label class="block text-[11px] font-bold text-slate-700 dark:text-slate-300">Novo destino nesta máquina:</label>
+                        <div class="flex gap-2">
+                            <input
+                                type="text"
+                                id="remap-input-${item.location_id}"
+                                value="${escapeHtml(initialCandidate)}"
+                                placeholder="Ex: C:\\Users\\... ou /home/..."
+                                class="flex-1 px-3 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-slate-800 dark:text-slate-100 placeholder-slate-400"
+                            />
+                            <button
+                                onclick="validateRemappingCandidate('${item.location_id}')"
+                                class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors shrink-0 cursor-pointer"
+                            >
+                                Validar
+                            </button>
+                            <button
+                                onclick="submitRemappingCandidate('${item.location_id}')"
+                                class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors shrink-0 cursor-pointer"
+                            >
+                                Salvar Mapeamento
+                            </button>
+                        </div>
+                        <div id="remap-feedback-${item.location_id}" class="text-[11px] font-medium hidden"></div>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch (e) {
+        list.innerHTML = `<p class="text-xs text-red-500">Erro ao listar pendências: ${escapeHtml(e.message || e)}</p>`;
+    }
+}
+
+function closeRemappingModal() {
+    const modal = document.getElementById("remapping-modal");
+    if (modal) modal.classList.add("hidden");
+    checkPendingRemappings();
+    loadInicio();
+}
+
+async function validateRemappingCandidate(locId) {
+    const input = document.getElementById(`remap-input-${locId}`);
+    const feedback = document.getElementById(`remap-feedback-${locId}`);
+    if (!input || !feedback) return;
+
+    const candidate = input.value.trim();
+    if (!candidate) {
+        feedback.textContent = "Por favor, digite um caminho de destino.";
+        feedback.className = "text-[11px] font-medium text-red-500";
+        feedback.classList.remove("hidden");
+        return;
+    }
+
+    try {
+        const res = await invoke("validate_remapping_path", { candidatePath: candidate });
+        if (!res.is_valid) {
+            feedback.textContent = `❌ ${res.error_message || "Caminho inválido para este sistema"}`;
+            feedback.className = "text-[11px] font-medium text-red-500";
+            feedback.classList.remove("hidden");
+        } else {
+            let msg = "✓ Caminho válido e seguro.";
+            if (res.has_conflict) {
+                msg += ` ⚠️ Atenção: pasta já existe e contém ${res.existing_files_count} arquivo(s).`;
+                feedback.className = "text-[11px] font-medium text-amber-600 dark:text-amber-400";
+            } else if (!res.exists_on_disk) {
+                msg += " A pasta será criada automaticamente durante a restauração.";
+                feedback.className = "text-[11px] font-medium text-blue-600 dark:text-blue-400";
+            } else {
+                feedback.className = "text-[11px] font-medium text-emerald-600 dark:text-emerald-400";
+            }
+            feedback.textContent = msg;
+            feedback.classList.remove("hidden");
+        }
+    } catch (e) {
+        feedback.textContent = `Erro ao validar: ${e.message || e}`;
+        feedback.className = "text-[11px] font-medium text-red-500";
+        feedback.classList.remove("hidden");
+    }
+}
+
+async function submitRemappingCandidate(locId) {
+    const input = document.getElementById(`remap-input-${locId}`);
+    const feedback = document.getElementById(`remap-feedback-${locId}`);
+    const card = document.getElementById(`remap-card-${locId}`);
+    if (!input || !feedback) return;
+
+    const newPath = input.value.trim();
+    if (!newPath) {
+        feedback.textContent = "Por favor, digite um caminho de destino válido.";
+        feedback.className = "text-[11px] font-medium text-red-500";
+        feedback.classList.remove("hidden");
+        return;
+    }
+
+    try {
+        await invoke("apply_remapping", { locationId: locId, newPath: newPath });
+        feedback.textContent = "✓ Local remapeado! Os próximos restores deste jogo utilizarão este diretório.";
+        feedback.className = "text-[11px] font-medium text-emerald-600 dark:text-emerald-400";
+        feedback.classList.remove("hidden");
+        showToast("Mapeamento salvo com sucesso!", "success");
+
+        setTimeout(() => {
+            if (card) card.remove();
+            checkPendingRemappings();
+        }, 1200);
+    } catch (e) {
+        feedback.textContent = `❌ Falha ao aplicar: ${e.message || e}`;
+        feedback.className = "text-[11px] font-medium text-red-500";
+        feedback.classList.remove("hidden");
+    }
 }
 
 function renderJogosRecentes(locations) {
@@ -464,18 +832,17 @@ function renderJogosRecentes(locations) {
         return;
     }
     container.innerHTML = locations.map((loc, i) => {
-        const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const grad = gradients[i % gradients.length];
+        const coverEl = renderCoverHtml(loc.cover_url, loc.game_name, grad, "sm");
+
         return `
-        <div class="flex items-center gap-3 py-2.5 px-1 border-b border-slate-100 last:border-0">
-            <div class="w-9 h-9 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                ${initials}
-            </div>
+        <div class="flex items-center gap-3 py-2.5 px-1 border-b border-slate-100 dark:border-slate-800/80 last:border-0">
+            ${coverEl}
             <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-slate-800 truncate">${loc.game_name || "Jogo"}</p>
-                <p class="text-xs text-slate-400">${loc.files_count ?? 0} arquivo(s) · ${timeAgo(loc.last_seen_at)}</p>
+                <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">${escapeHtml(loc.game_name || "Jogo")}</p>
+                <p class="text-xs text-slate-400">${loc.files_count ?? 0} saves · ${timeAgo(loc.last_seen_at)}</p>
             </div>
-            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0">Sincronizado</span>
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 flex-shrink-0">Sincronizado ✓</span>
         </div>`;
     }).join("");
 }
@@ -558,22 +925,28 @@ function renderJogosList(query = "") {
     }
 
     container.innerHTML = filtered.map((loc, i) => {
-        const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const grad = gradients[i % gradients.length];
         const safePath = (loc.path || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        const coverHtml = renderCoverHtml(loc.cover_url, loc.game_name, grad, "md");
+
         return `
-        <div onclick="openGameDetails('${loc.id}')" class="bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-4 flex items-center justify-between gap-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-colors cursor-pointer group">
+        <div onclick="openGameDetails('${loc.id}')" class="bg-white dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-3.5 sm:p-4 flex items-center justify-between gap-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-sm transition-all cursor-pointer group">
             <div class="flex items-center gap-3.5 min-w-0">
-                <div class="w-11 h-11 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold flex-shrink-0 shadow-xs">
-                    ${initials}
-                </div>
+                ${coverHtml}
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2">
-                        <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate">${escapeHtml(loc.game_name || "Jogo Desconhecido")}</p>
+                        <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">${escapeHtml(loc.game_name || "Jogo Desconhecido")}</p>
                         <span class="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 shrink-0">${escapeHtml(loc.platform || "PC")}</span>
                     </div>
                     <p class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5 font-mono" title="${escapeHtml(loc.path || "")}">${escapeHtml(loc.path || "")}</p>
-                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">${loc.files_count ?? 0} arquivo(s) monitorado(s) · Visto ${timeAgo(loc.last_seen_at)}</p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="text-xs text-slate-400 dark:text-slate-500">${loc.files_count ?? 0} saves</span>
+                        <span class="text-slate-300 dark:text-slate-600">•</span>
+                        <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <span>Sincronizado</span>
+                            <span class="text-[11px]">✓</span>
+                        </span>
+                    </div>
                 </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -584,7 +957,6 @@ function renderJogosList(query = "") {
                 >
                     <span>📂</span> Abrir
                 </button>
-                <span class="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">Ativo</span>
             </div>
         </div>`;
     }).join("");
@@ -650,7 +1022,12 @@ async function openGameDetails(locationId) {
 
     const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
     const avatar = document.getElementById("game-details-avatar");
-    if (avatar) avatar.textContent = initials;
+    if (avatar) {
+        avatar.outerHTML = renderCoverHtml(loc.cover_url, loc.game_name, "from-slate-700 to-slate-900", "lg").replace(
+            'class="',
+            'id="game-details-avatar" class="'
+        );
+    }
 
     const titleEl = document.getElementById("game-details-title");
     if (titleEl) titleEl.textContent = loc.game_name || "Jogo Desconhecido";
@@ -1294,16 +1671,26 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
     }
 });
 
-// ── Assistente de Primeiro Acesso (Setup Wizard) ──────────────────────────────
+// ── Onboarding & Setup Modernizado (Apple/macOS Style) ────────────────────────
 
-let currentWizardStep = 1;
-let wizardDiscoveredGames = [];
+let currentOnboardingStep = 1;
+let onboardingAvailableLibraries = [];
+let onboardingSelectedLibraries = new Set(["steam", "gog", "emulators", "generic"]);
+let onboardingStorageMode = "automatic"; // "automatic" | "custom" | "onedrive" | etc.
+let onboardingStoragePath = "";
+let onboardingInterfaceMode = "basic"; // "basic" | "advanced" | "ultra_light"
+let onboardingDetectedCloudFolders = [];
 
 async function checkInitialSetup() {
     try {
         const status = await invoke("get_setup_status");
-        if (status && !status.setup_completed) {
-            openSetupWizard();
+        if (status) {
+            if (status.interface_mode) {
+                applyInterfaceMode(status.interface_mode);
+            }
+            if (!status.setup_completed) {
+                openSetupWizard();
+            }
         }
     } catch (e) {
         console.warn("Não foi possível verificar status do setup inicial:", e);
@@ -1311,13 +1698,14 @@ async function checkInitialSetup() {
 }
 
 async function openSetupWizard() {
-    currentWizardStep = 1;
+    currentOnboardingStep = 1;
     const modal = document.getElementById("setup-wizard-modal");
     if (modal) {
         modal.classList.remove("hidden");
     }
-    wizardGoToStep(1);
-    await loadWizardSetupStatus();
+    dismissOnboardingError();
+    onboardingGoToStep(1);
+    await loadOnboardingData();
 }
 
 function closeSetupWizard() {
@@ -1325,162 +1713,465 @@ function closeSetupWizard() {
     if (modal) {
         modal.classList.add("hidden");
     }
+    dismissOnboardingError();
 }
 
-async function loadWizardSetupStatus() {
-    try {
-        const data = await invoke("get_setup_status");
-        const foldersContainer = document.getElementById("wizard-detected-folders");
-        const inputCloudPath = document.getElementById("wizard-input-cloud-path");
+function dismissOnboardingError() {
+    const banner = document.getElementById("onboarding-error-banner");
+    if (banner) {
+        banner.classList.add("hidden");
+    }
+}
 
-        if (foldersContainer && data.detected_cloud_folders) {
-            if (data.detected_cloud_folders.length > 0) {
-                let html = "";
-                data.detected_cloud_folders.forEach(df => {
-                    const safeFolder = (df.savevault_folder || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-                    const icon = (df.name || "").toLowerCase().includes("drive") ? "📁" : "☁️";
-                    html += `
-                        <div class="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200/90 rounded-xl text-xs">
-                            <div class="flex items-center gap-2 overflow-hidden mr-2">
-                                <span class="text-base">${icon}</span>
-                                <div class="truncate">
-                                    <p class="font-bold text-slate-800">${escapeHtml(df.name)}</p>
-                                    <p class="text-[11px] text-slate-500 font-mono truncate">${escapeHtml(df.savevault_folder)}</p>
-                                </div>
+function showOnboardingError(message) {
+    const banner = document.getElementById("onboarding-error-banner");
+    const msgEl = document.getElementById("onboarding-error-message");
+    if (banner && msgEl) {
+        msgEl.textContent = message;
+        banner.classList.remove("hidden");
+    }
+}
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function loadOnboardingData() {
+    // 1. Inicia exibindo o estado "Procurando..." de forma imediata e assíncrona
+    if (onboardingAvailableLibraries.length === 0) {
+        onboardingAvailableLibraries = [
+            { id: "steam", name: "Steam", category: "commercial", detecting: true, detected: false, description: "Jogos e saves instalados via Steam" },
+            { id: "gog", name: "GOG Galaxy", category: "commercial", detecting: true, detected: false, description: "Jogos instalados pelo GOG Galaxy ou DRM-free" },
+            { id: "emulators", name: "Emuladores", category: "emulators", detecting: true, detected: false, description: "Procure saves de emuladores instalados ou configurados posteriormente." },
+            { id: "generic", name: "Jogos genéricos", category: "generic", detecting: false, detected: true, description: "Para jogos que não pertencem a uma biblioteca conhecida." },
+        ];
+        renderOnboardingLibraries();
+    }
+
+    // 2. Busca bibliotecas de forma assíncrona sem travar a interface
+    invoke("get_available_libraries")
+        .then(libs => {
+            if (Array.isArray(libs) && libs.length > 0) {
+                onboardingAvailableLibraries = libs.map(l => ({ ...l, detecting: false }));
+            } else {
+                onboardingAvailableLibraries = onboardingAvailableLibraries.map(l => ({ ...l, detecting: false }));
+            }
+            renderOnboardingLibraries();
+        })
+        .catch(e => {
+            console.warn("Erro ao buscar bibliotecas para onboarding:", e);
+            onboardingAvailableLibraries = onboardingAvailableLibraries.map(l => ({ ...l, detecting: false }));
+            renderOnboardingLibraries();
+        });
+
+    // 3. Carrega pastas de sincronização de nuvem e autostart existente
+    try {
+        const status = await invoke("get_setup_status");
+        if (status) {
+            if (Array.isArray(status.detected_cloud_folders)) {
+                onboardingDetectedCloudFolders = status.detected_cloud_folders;
+                renderOnboardingCloudFolders();
+            }
+            if (typeof status.autostart_enabled === "boolean") {
+                const toggle = document.getElementById("onboarding-toggle-autostart");
+                if (toggle) {
+                    toggle.checked = status.autostart_enabled;
+                    onboardingAutostartToggleChanged();
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Erro ao carregar status inicial de nuvem:", e);
+    }
+}
+
+function renderOnboardingLibraries() {
+    const storeContainer = document.getElementById("onboarding-libraries-store-container");
+    const otherContainer = document.getElementById("onboarding-libraries-other-container");
+
+    if (storeContainer) {
+        const commercial = onboardingAvailableLibraries.filter(l => l.category === "commercial");
+        if (commercial.length === 0) {
+            storeContainer.innerHTML = `<p class="text-xs text-slate-400 py-2">Nenhuma biblioteca comercial encontrada.</p>`;
+        } else {
+            let html = "";
+            commercial.forEach(lib => {
+                const isSelected = onboardingSelectedLibraries.has(lib.id);
+                const borderClass = isSelected
+                    ? "border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20"
+                    : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40";
+                const checkClass = isSelected
+                    ? "border-emerald-500 bg-emerald-500 text-white font-bold text-xs"
+                    : "border-slate-300 dark:border-slate-600";
+                const checkContent = isSelected ? "✓" : "";
+
+                let statusBadge = "";
+                if (lib.detecting) {
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 bg-amber-100/70 dark:bg-amber-900/40 px-2 py-0.5 rounded-full">
+                         <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> Procurando…
+                       </span>`;
+                } else if (lib.detected) {
+                    const text = lib.id === "steam" ? "Biblioteca Steam encontrada" : "Biblioteca GOG encontrada";
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100/70 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full">
+                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> ${text}
+                       </span>`;
+                } else {
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
+                         Nenhuma instalação encontrada
+                       </span>`;
+                }
+
+                const pathDisplay = (lib.detected && lib.path)
+                    ? `<p class="text-[11px] text-slate-400 font-mono truncate mt-0.5">${escapeHtml(lib.path)}</p>`
+                    : "";
+
+                html += `
+                    <div onclick="toggleOnboardingLibrary('${lib.id}')"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOnboardingLibrary('${lib.id}');}"
+                         id="lib-card-${lib.id}"
+                         tabindex="0"
+                         role="checkbox"
+                         aria-checked="${isSelected}"
+                         class="onboarding-card p-4 rounded-2xl border-2 ${borderClass} cursor-pointer flex items-center justify-between gap-3 transition-all focus:outline-none">
+                        <div class="flex items-center gap-3.5 min-w-0">
+                            <div class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-lg shrink-0">
+                                🎮
                             </div>
-                            <button onclick="setWizardCloudPath('${safeFolder}')" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold border border-slate-300/80 rounded-md transition-colors shrink-0">
-                                Usar Esta
-                            </button>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">${escapeHtml(lib.name)}</h4>
+                                    ${statusBadge}
+                                </div>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${escapeHtml(lib.description || "")}</p>
+                                ${pathDisplay}
+                            </div>
                         </div>
-                    `;
-                });
-                foldersContainer.innerHTML = html;
-                if (inputCloudPath && !inputCloudPath.value) {
-                    inputCloudPath.value = data.local_sync_path || data.detected_cloud_folders[0].savevault_folder;
+                        <div id="lib-check-${lib.id}" class="w-6 h-6 rounded-full border-2 ${checkClass} flex items-center justify-center shrink-0">
+                            ${checkContent}
+                        </div>
+                    </div>
+                `;
+            });
+            storeContainer.innerHTML = html;
+        }
+    }
+
+    if (otherContainer) {
+        const others = onboardingAvailableLibraries.filter(l => l.category !== "commercial");
+        let html = "";
+        others.forEach(lib => {
+            const isSelected = onboardingSelectedLibraries.has(lib.id);
+            const borderClass = isSelected
+                ? "border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20"
+                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40";
+            const checkClass = isSelected
+                ? "border-emerald-500 bg-emerald-500 text-white font-bold text-xs"
+                : "border-slate-300 dark:border-slate-600";
+            const checkContent = isSelected ? "✓" : "";
+            const icon = lib.id === "emulators" ? "🕹️" : "📦";
+
+            let statusBadge = "";
+            let description = lib.description || "";
+            if (lib.id === "emulators") {
+                description = "Procure saves de emuladores instalados ou configurados posteriormente.";
+                if (lib.detecting) {
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 bg-amber-100/70 dark:bg-amber-900/40 px-2 py-0.5 rounded-full">
+                         <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> Procurando…
+                       </span>`;
+                } else if (lib.detected) {
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100/70 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full">
+                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Emuladores detectados
+                       </span>`;
+                } else {
+                    statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
+                         Disponível para configuração manual
+                       </span>`;
                 }
             } else {
-                foldersContainer.innerHTML = `
-                    <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px]">
-                        Nenhuma pasta de nuvem padrão (Google Drive Desktop, OneDrive ou Dropbox) foi detectada automaticamente. Você pode digitar o caminho da sua pasta no campo abaixo.
-                    </div>
-                `;
+                description = "Para jogos que não pertencem a uma biblioteca conhecida.";
+                statusBadge = `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100/70 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full">
+                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Disponível para varredura
+                   </span>`;
             }
-        }
 
-        if (inputCloudPath && data.local_sync_path && !inputCloudPath.value) {
-            inputCloudPath.value = data.local_sync_path;
-        }
+            const pathDisplay = (lib.detected && lib.path)
+                ? `<p class="text-[11px] text-slate-400 font-mono truncate mt-0.5">${escapeHtml(lib.path)}</p>`
+                : "";
 
-        const optAutostart = document.getElementById("wizard-opt-autostart");
-        if (optAutostart && typeof data.autostart_enabled === "boolean") {
-            optAutostart.checked = data.autostart_enabled;
-        }
-
-        const optNotifications = document.getElementById("wizard-opt-notifications");
-        if (optNotifications && typeof data.notifications_enabled === "boolean") {
-            optNotifications.checked = data.notifications_enabled;
-        }
-    } catch (e) {
-        console.error("Erro ao carregar status do wizard:", e);
-    }
-}
-
-function setWizardCloudPath(path) {
-    const input = document.getElementById("wizard-input-cloud-path");
-    if (input) {
-        input.value = path;
-    }
-}
-
-async function runWizardDiscovery() {
-    const btn = document.getElementById("btn-wizard-scan");
-    const container = document.getElementById("wizard-games-container");
-
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `<span class="animate-spin inline-block mr-1">🔄</span> Escaneando...`;
-    }
-
-    try {
-        const games = await invoke("run_setup_discovery");
-        wizardDiscoveredGames = games || [];
-
-        if (container) {
-            if (wizardDiscoveredGames.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center py-6 text-slate-400 text-xs">
-                        Nenhum save de jogo foi encontrado nas pastas padrão (Steam/GOG). Você poderá adicionar locais manualmente na aba "Saves" depois.
-                    </div>
-                `;
-            } else {
-                let html = "";
-                wizardDiscoveredGames.forEach(g => {
-                    html += `
-                        <div class="p-2.5 bg-white border border-slate-200/90 rounded-lg text-xs flex items-center justify-between">
-                            <div class="overflow-hidden mr-2">
-                                <span class="font-bold text-slate-800">🎮 ${escapeHtml(g.name)}</span>
-                                <span class="ml-1 text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">${escapeHtml(g.platform)}</span>
-                                <p class="text-[11px] text-slate-500 font-mono truncate mt-0.5">${escapeHtml(g.save_path)}</p>
-                            </div>
-                            <span class="text-emerald-600 font-semibold text-[11px] shrink-0">Pronto</span>
+            html += `
+                <div onclick="toggleOnboardingLibrary('${lib.id}')"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOnboardingLibrary('${lib.id}');}"
+                     id="lib-card-${lib.id}"
+                     tabindex="0"
+                     role="checkbox"
+                     aria-checked="${isSelected}"
+                     class="onboarding-card p-4 rounded-2xl border-2 ${borderClass} cursor-pointer flex items-center justify-between gap-3 transition-all focus:outline-none">
+                    <div class="flex items-center gap-3.5 min-w-0">
+                        <div class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-lg shrink-0">
+                            ${icon}
                         </div>
-                    `;
-                });
-                container.innerHTML = html;
-            }
-        }
-    } catch (e) {
-        if (container) {
-            container.innerHTML = `<p class="text-xs text-red-500">Erro na detecção: ${e}</p>`;
-        }
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = `<span>🔍</span> Re-escanear`;
-        }
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                                <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">${escapeHtml(lib.name)}</h4>
+                                ${statusBadge}
+                            </div>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${escapeHtml(description)}</p>
+                            ${pathDisplay}
+                        </div>
+                    </div>
+                    <div id="lib-check-${lib.id}" class="w-6 h-6 rounded-full border-2 ${checkClass} flex items-center justify-center shrink-0">
+                        ${checkContent}
+                    </div>
+                </div>
+            `;
+        });
+        otherContainer.innerHTML = html;
     }
 }
 
-function wizardGoToStep(step) {
-    currentWizardStep = step;
+function toggleOnboardingLibrary(libId) {
+    if (onboardingSelectedLibraries.has(libId)) {
+        onboardingSelectedLibraries.delete(libId);
+    } else {
+        onboardingSelectedLibraries.add(libId);
+    }
+    renderOnboardingLibraries();
+}
 
-    const subtitles = [
-        "Passo 1 de 5: Boas-vindas",
-        "Passo 2 de 5: Pasta de Sincronização na Nuvem",
-        "Passo 3 de 5: Varredura de Jogos",
-        "Passo 4 de 5: Preferências do Sistema",
-        "Passo 5 de 5: Conclusão e Ativação"
-    ];
+function renderOnboardingCloudFolders() {
+    const container = document.getElementById("onboarding-cloud-folders-list");
+    if (!container) return;
 
-    const subEl = document.getElementById("wizard-step-subtitle");
-    if (subEl) {
-        subEl.textContent = subtitles[step - 1] || "";
+    if (onboardingDetectedCloudFolders.length === 0) {
+        container.innerHTML = "";
+        return;
     }
 
-    for (let i = 1; i <= 5; i++) {
-        const pill = document.getElementById(`pill-step-${i}`);
-        if (pill) {
-            if (i === step) {
-                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-slate-800 text-white font-semibold";
-            } else if (i < step) {
-                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold";
-            } else {
-                pill.className = "wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500";
+    let html = "";
+    onboardingDetectedCloudFolders.forEach(df => {
+        const isOneDrive = (df.name || "").toLowerCase().includes("onedrive");
+        const isGoogleDrive = (df.name || "").toLowerCase().includes("google drive");
+        const icon = isOneDrive ? "☁️" : (isGoogleDrive ? "🔷" : "📁");
+        const providerKey = isOneDrive ? "onedrive" : (isGoogleDrive ? "google_drive" : "custom");
+        const isSelected = onboardingStorageMode === providerKey && onboardingStoragePath === df.savevault_folder;
+
+        const borderClass = isSelected
+            ? "border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20"
+            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40";
+        const radioClass = isSelected
+            ? "border-emerald-500 bg-emerald-500 text-white font-bold text-xs"
+            : "border-slate-300 dark:border-slate-600";
+        const radioContent = isSelected ? "✓" : "";
+
+        const safeFolder = (df.savevault_folder || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        const titleText = isOneDrive ? "OneDrive encontrado" : (isGoogleDrive ? "Google Drive encontrado" : `${escapeHtml(df.name)} encontrado`);
+        const actionBadge = "Usar esta pasta";
+
+        html += `
+            <div onclick="selectOnboardingStorageMode('${providerKey}', '${safeFolder}')"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectOnboardingStorageMode('${providerKey}', '${safeFolder}');}"
+                 tabindex="0"
+                 role="radio"
+                 aria-checked="${isSelected}"
+                 class="onboarding-card p-4 rounded-2xl border-2 ${borderClass} cursor-pointer flex items-start gap-3.5 transition-all focus:outline-none">
+                <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center text-lg shrink-0">
+                    ${icon}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between">
+                        <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">${titleText}</h4>
+                        <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300">${actionBadge}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-1" title="${escapeHtml(df.savevault_folder)}">
+                        ${escapeHtml(df.savevault_folder)}
+                    </p>
+                </div>
+                <div class="w-5 h-5 rounded-full border-2 ${radioClass} flex items-center justify-center shrink-0 mt-0.5">
+                    ${radioContent}
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function selectOnboardingStorageMode(mode, path = "") {
+    onboardingStorageMode = mode;
+    onboardingStoragePath = path;
+
+    // Cartão Automático
+    const cardAuto = document.getElementById("storage-card-automatic");
+    const radioAuto = document.getElementById("storage-radio-automatic");
+    if (cardAuto && radioAuto) {
+        if (mode === "automatic") {
+            cardAuto.className = "onboarding-card p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 cursor-pointer flex items-start gap-3.5 transition-all focus:outline-none";
+            cardAuto.setAttribute("aria-checked", "true");
+            radioAuto.className = "w-5 h-5 rounded-full border-2 border-emerald-500 bg-emerald-500 text-white flex items-center justify-center text-xs shrink-0 mt-0.5";
+            radioAuto.textContent = "✓";
+        } else {
+            cardAuto.className = "onboarding-card p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer flex items-start gap-3.5 transition-all focus:outline-none";
+            cardAuto.setAttribute("aria-checked", "false");
+            radioAuto.className = "w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5";
+            radioAuto.textContent = "";
+        }
+    }
+
+    // Cartão Customizado
+    const cardCustom = document.getElementById("storage-card-custom");
+    const radioCustom = document.getElementById("storage-radio-custom");
+    const customInputBox = document.getElementById("storage-custom-input-box");
+    if (cardCustom && radioCustom) {
+        if (mode === "custom") {
+            cardCustom.className = "onboarding-card p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 cursor-pointer transition-all focus:outline-none";
+            cardCustom.setAttribute("aria-checked", "true");
+            radioCustom.className = "w-5 h-5 rounded-full border-2 border-emerald-500 bg-emerald-500 text-white flex items-center justify-center text-xs shrink-0 mt-0.5";
+            radioCustom.textContent = "✓";
+            if (customInputBox) {
+                customInputBox.classList.remove("hidden");
+                document.getElementById("onboarding-custom-storage-input")?.focus();
+            }
+        } else {
+            cardCustom.className = "onboarding-card p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer transition-all focus:outline-none";
+            cardCustom.setAttribute("aria-checked", "false");
+            radioCustom.className = "w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5";
+            radioCustom.textContent = "";
+            if (customInputBox) {
+                customInputBox.classList.add("hidden");
             }
         }
+    }
 
-        const pane = document.getElementById(`wizard-pane-${i}`);
+    // Re-render nuvens para atualizar seleção se aplicável
+    renderOnboardingCloudFolders();
+}
+
+async function browseCustomStorageFolder(event) {
+    if (event) event.stopPropagation();
+    try {
+        dismissOnboardingError();
+        let selectedPath = null;
+        if (hasTauri && window.__TAURI__?.dialog?.open) {
+            selectedPath = await window.__TAURI__.dialog.open({
+                directory: true,
+                multiple: false,
+                title: "Selecione a pasta para os backups do SaveVault",
+            });
+        } else {
+            selectedPath = await invoke("pick_folder");
+        }
+
+        if (selectedPath) {
+            const inputEl = document.getElementById("onboarding-custom-storage-input");
+            if (inputEl) {
+                inputEl.value = selectedPath;
+            }
+            selectOnboardingStorageMode("custom", selectedPath);
+        }
+    } catch (err) {
+        console.warn("Diálogo de pasta cancelado ou não suportado:", err);
+    }
+}
+
+function selectOnboardingInterfaceMode(mode) {
+    onboardingInterfaceMode = mode;
+
+    const modes = ["basic", "advanced", "ultra_light"];
+    modes.forEach(m => {
+        const card = document.getElementById(`mode-card-${m}`);
+        const radio = document.getElementById(`mode-radio-${m}`);
+        if (!card || !radio) return;
+
+        if (m === mode) {
+            let activeColor = "emerald";
+            if (m === "advanced") activeColor = "blue";
+            if (m === "ultra_light") activeColor = "purple";
+
+            card.className = `onboarding-card p-4.5 rounded-2xl border-2 border-${activeColor}-500 bg-${activeColor}-50/20 dark:bg-${activeColor}-950/20 cursor-pointer flex items-start gap-4 transition-all focus:outline-none`;
+            card.setAttribute("aria-checked", "true");
+            radio.className = `w-5 h-5 rounded-full border-2 border-${activeColor}-500 bg-${activeColor}-500 text-white flex items-center justify-center text-xs shrink-0 mt-0.5`;
+            radio.textContent = "✓";
+        } else {
+            card.className = "onboarding-card p-4.5 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer flex items-start gap-4 transition-all focus:outline-none";
+            card.setAttribute("aria-checked", "false");
+            radio.className = "w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5";
+            radio.textContent = "";
+        }
+    });
+}
+
+function onboardingAutostartToggleChanged() {
+    const toggle = document.getElementById("onboarding-toggle-autostart");
+    const label = document.getElementById("onboarding-autostart-label");
+    if (toggle && label) {
+        label.textContent = toggle.checked
+            ? "Sim, iniciar com o computador"
+            : "Não iniciar automaticamente";
+    }
+}
+
+function onboardingGoToStep(step) {
+    const isBack = step < currentOnboardingStep;
+    currentOnboardingStep = step;
+
+    // Subtítulo do indicador
+    const stepTitles = [
+        "Etapa 1 de 6 · Boas-vindas",
+        "Etapa 2 de 6 · Bibliotecas",
+        "Etapa 3 de 6 · Armazenamento",
+        "Etapa 4 de 6 · Inicialização",
+        "Etapa 5 de 6 · Modo de interface",
+        "Etapa 6 de 6 · Revisão e conclusão"
+    ];
+    const indEl = document.getElementById("onboarding-step-indicator");
+    if (indEl) {
+        indEl.textContent = stepTitles[step - 1] || `Etapa ${step} de 6`;
+    }
+
+    // Atualiza Dots e Linhas
+    for (let i = 1; i <= 6; i++) {
+        const dot = document.getElementById(`step-dot-${i}`);
+        if (dot) {
+            if (i === step) {
+                dot.className = "w-3 h-3 rounded-full bg-slate-900 dark:bg-emerald-500 ring-4 ring-emerald-500/20 transition-all duration-300";
+            } else if (i < step) {
+                dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 text-white flex items-center justify-center transition-all duration-300";
+            } else {
+                dot.className = "w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300";
+            }
+        }
+        if (i < 6) {
+            const line = document.getElementById(`step-line-${i}`);
+            if (line) {
+                if (i < step) {
+                    line.className = "w-6 h-0.5 bg-emerald-500 transition-all duration-300";
+                } else {
+                    line.className = "w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300";
+                }
+            }
+        }
+    }
+
+    // Alterna visibilidade dos Panes com transição suave de slide e fade
+    for (let i = 1; i <= 6; i++) {
+        const pane = document.getElementById(`onboarding-pane-${i}`);
         if (pane) {
             if (i === step) {
                 pane.classList.remove("hidden");
+                pane.classList.remove("onboarding-pane", "pane-back");
+                void pane.offsetWidth; // Trigger reflow para reiniciar a animação
+                pane.classList.add("onboarding-pane");
+                if (isBack) {
+                    pane.classList.add("pane-back");
+                }
             } else {
                 pane.classList.add("hidden");
+                pane.classList.remove("onboarding-pane", "pane-back");
             }
         }
     }
 
-    const prevBtn = document.getElementById("btn-wizard-prev");
-    const nextBtn = document.getElementById("btn-wizard-next");
+    // Botões de navegação
+    const prevBtn = document.getElementById("btn-onboarding-prev");
+    const nextBtn = document.getElementById("btn-onboarding-next");
+    const footer = document.getElementById("onboarding-footer");
 
     if (prevBtn) {
         if (step === 1) {
@@ -1490,62 +2181,320 @@ function wizardGoToStep(step) {
         }
     }
 
-    if (nextBtn) {
-        if (step === 5) {
-            nextBtn.innerHTML = `<span>Concluir e Proteger</span> 🚀`;
-            nextBtn.className = "px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5";
+    if (footer) {
+        if (step === 6) {
+            footer.classList.add("hidden");
         } else {
-            nextBtn.innerHTML = `<span>Avançar</span> →`;
-            nextBtn.className = "px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5";
+            footer.classList.remove("hidden");
         }
     }
 
-    if (step === 5) {
-        const cloudPath = document.getElementById("wizard-input-cloud-path")?.value?.trim() || "Pasta padrão local";
-        const sumCloud = document.getElementById("wizard-summary-cloud");
-        if (sumCloud) sumCloud.textContent = cloudPath;
+    if (nextBtn) {
+        const labelEl = document.getElementById("btn-onboarding-next-label");
+        if (step === 5) {
+            if (labelEl) labelEl.textContent = "Revisar escolhas";
+        } else {
+            if (labelEl) labelEl.textContent = "Continuar";
+        }
+    }
 
-        const sumGames = document.getElementById("wizard-summary-games");
-        if (sumGames) sumGames.textContent = `${wizardDiscoveredGames.length} jogo(s) detectado(s)`;
-
-        const autostart = document.getElementById("wizard-opt-autostart")?.checked;
-        const sumAutostart = document.getElementById("wizard-summary-autostart");
-        if (sumAutostart) sumAutostart.textContent = autostart ? "Ativado" : "Desativado";
-
-        const notif = document.getElementById("wizard-opt-notifications")?.checked;
-        const sumNotif = document.getElementById("wizard-summary-notifications");
-        if (sumNotif) sumNotif.textContent = notif ? "Ativadas" : "Desativadas";
+    // Resumo final no passo 6
+    if (step === 6) {
+        prepareOnboardingSummary();
     }
 }
 
-async function wizardNextStep() {
-    if (currentWizardStep < 4) {
-        wizardGoToStep(currentWizardStep + 1);
-    } else if (currentWizardStep === 4) {
-        const autostart = document.getElementById("wizard-opt-autostart")?.checked ?? false;
-        const notifications = document.getElementById("wizard-opt-notifications")?.checked ?? true;
-        const localSyncPath = document.getElementById("wizard-input-cloud-path")?.value?.trim() || null;
+function onboardingNextStep() {
+    dismissOnboardingError();
 
-        try {
-            await invoke("complete_setup", {
-                provider: "local_folder",
-                autostart,
-                notifications,
-                localSyncPath,
-            });
-        } catch (e) {
-            console.error("Erro ao registrar conclusão do setup:", e);
+    // Validações antes de avançar
+    if (currentOnboardingStep === 3 && onboardingStorageMode === "custom") {
+        const customPath = document.getElementById("onboarding-custom-storage-input")?.value?.trim();
+        if (!customPath) {
+            showOnboardingError("Por favor, digite o caminho da pasta desejada ou selecione 'Automático'.");
+            return;
         }
-        wizardGoToStep(5);
-    } else if (currentWizardStep === 5) {
+    }
+
+    if (currentOnboardingStep < 6) {
+        onboardingGoToStep(currentOnboardingStep + 1);
+    }
+}
+
+function onboardingPrevStep() {
+    dismissOnboardingError();
+    if (currentOnboardingStep > 1) {
+        onboardingGoToStep(currentOnboardingStep - 1);
+    }
+}
+
+function prepareOnboardingSummary() {
+    // 1. Bibliotecas
+    const libsSummary = document.getElementById("finish-summary-libs");
+    if (libsSummary) {
+        const names = [];
+        if (onboardingSelectedLibraries.has("steam")) names.push("Steam");
+        if (onboardingSelectedLibraries.has("gog")) names.push("GOG");
+        if (onboardingSelectedLibraries.has("emulators")) names.push("Emuladores");
+        if (onboardingSelectedLibraries.has("generic")) names.push("Genéricos");
+        libsSummary.textContent = names.length > 0 ? names.join(", ") : "Nenhuma selecionada";
+    }
+
+    // 2. Armazenamento
+    const storageSummary = document.getElementById("finish-summary-storage");
+    if (storageSummary) {
+        if (onboardingStorageMode === "automatic") {
+            storageSummary.textContent = "Automático";
+        } else if (onboardingStorageMode === "custom") {
+            const customVal = document.getElementById("onboarding-custom-storage-input")?.value?.trim();
+            storageSummary.textContent = customVal || "Pasta personalizada";
+        } else if (onboardingStorageMode === "onedrive") {
+            storageSummary.textContent = "OneDrive";
+        } else {
+            storageSummary.textContent = `${onboardingStorageMode.toUpperCase()}`;
+        }
+    }
+
+    // 3. Inicialização
+    const startupSummary = document.getElementById("finish-summary-startup");
+    if (startupSummary) {
+        const autostart = document.getElementById("onboarding-toggle-autostart")?.checked ?? true;
+        startupSummary.textContent = autostart ? "Sim, com o computador" : "Não iniciar automaticamente";
+    }
+
+    // 4. Modo de Interface
+    const modeSummary = document.getElementById("finish-summary-mode");
+    if (modeSummary) {
+        if (onboardingInterfaceMode === "basic") modeSummary.textContent = "Simples";
+        else if (onboardingInterfaceMode === "advanced") modeSummary.textContent = "Avançado";
+        else if (onboardingInterfaceMode === "ultra_light") modeSummary.textContent = "Ultra leve";
+    }
+
+    // Banner UltraLight
+    const bannerUltraLight = document.getElementById("onboarding-ultralight-banner");
+    if (bannerUltraLight) {
+        if (onboardingInterfaceMode === "ultra_light") {
+            bannerUltraLight.classList.remove("hidden");
+        } else {
+            bannerUltraLight.classList.add("hidden");
+        }
+    }
+
+    // Garante que containers de resumo e animação estejam no estado inicial
+    const summaryBox = document.getElementById("onboarding-summary-container");
+    const prepBox = document.getElementById("onboarding-prep-container");
+    if (summaryBox) summaryBox.classList.remove("hidden");
+    if (prepBox) prepBox.classList.add("hidden");
+
+    const finishTitle = document.getElementById("onboarding-finish-title");
+    const finishStatus = document.getElementById("onboarding-finish-status-text");
+    if (finishTitle) finishTitle.textContent = "Está tudo pronto.";
+    if (finishStatus) finishStatus.textContent = "Confira o resumo das suas escolhas antes de concluir.";
+
+    const finishBtn = document.getElementById("btn-onboarding-finish");
+    const prevBtn = document.getElementById("btn-onboarding-finish-prev");
+    if (finishBtn) {
+        finishBtn.disabled = false;
+        finishBtn.innerHTML = `Concluir configuração`;
+    }
+    if (prevBtn) {
+        prevBtn.disabled = false;
+    }
+}
+
+async function skipOnboarding() {
+    try {
+        await invoke("skip_onboarding");
         closeSetupWizard();
+        const status = await invoke("get_setup_status");
+        if (status && status.interface_mode) {
+            applyInterfaceMode(status.interface_mode);
+        } else {
+            applyInterfaceMode("basic");
+        }
         loadInicio();
+        showToast("Configurações anteriores mantidas com sucesso!", "success");
+    } catch (e) {
+        console.warn("Erro ao registrar conclusão do onboarding:", e);
+        closeSetupWizard();
     }
 }
 
-function wizardPrevStep() {
-    if (currentWizardStep > 1) {
-        wizardGoToStep(currentWizardStep - 1);
+function formatHumanFriendlyError(err) {
+    const raw = String(err?.message || err || "");
+    if (raw.includes("Caminho não pode conter traversal") || raw.includes("..")) {
+        return "O caminho informado contém caracteres inválidos ('..'). Escolha um diretório padrão.";
+    }
+    if (raw.includes("diretório raiz do disco") || raw.includes("raiz")) {
+        return "Não é seguro utilizar a raiz do disco (ex: C:\\). Escolha uma subpasta dedicada aos seus saves.";
+    }
+    if (raw.includes("sistema operacional") || raw.includes("Windows") || raw.includes("Program Files")) {
+        return "Essa pasta é protegida pelo sistema operacional. Por favor, selecione outra pasta para seus backups.";
+    }
+    if (raw.includes("permissão") || raw.includes("PermissionDenied") || raw.includes("AccessDenied")) {
+        return "Não foi possível acessar a pasta selecionada. Verifique se o SaveVault possui permissão de leitura e gravação.";
+    }
+    if (raw.includes("autostart") || raw.includes("Registro")) {
+        return "Não foi possível registrar a inicialização automática no sistema. Suas demais escolhas foram salvas.";
+    }
+    return `Não foi possível salvar sua configuração: ${raw}. Por favor, revise as opções e tente novamente.`;
+}
+
+async function finishOnboarding() {
+    const finishBtn = document.getElementById("btn-onboarding-finish");
+    const prevBtn = document.getElementById("btn-onboarding-finish-prev");
+    dismissOnboardingError();
+
+    let resolvedPath = null;
+    if (onboardingStorageMode === "custom") {
+        resolvedPath = document.getElementById("onboarding-custom-storage-input")?.value?.trim() || null;
+        if (!resolvedPath) {
+            showOnboardingError("Por favor, digite o caminho da pasta para guardar seus saves.");
+            return;
+        }
+    } else if (onboardingStorageMode !== "automatic") {
+        resolvedPath = onboardingStoragePath || null;
+    }
+
+    const autostart = document.getElementById("onboarding-toggle-autostart")?.checked ?? true;
+
+    const reqPayload = {
+        selected_libraries: Array.from(onboardingSelectedLibraries),
+        detect_emulators: onboardingSelectedLibraries.has("emulators"),
+        detect_generic_games: onboardingSelectedLibraries.has("generic"),
+        storage_mode: onboardingStorageMode,
+        storage_path: resolvedPath,
+        startup_enabled: autostart,
+        interface_mode: onboardingInterfaceMode,
+    };
+
+    if (finishBtn) {
+        finishBtn.disabled = true;
+        finishBtn.innerHTML = `<span class="animate-spin inline-block mr-1">🔄</span> Preparando...`;
+    }
+    if (prevBtn) prevBtn.disabled = true;
+
+    // Alterna para tela de animação de preparação
+    const summaryBox = document.getElementById("onboarding-summary-container");
+    const prepBox = document.getElementById("onboarding-prep-container");
+    const statusText = document.getElementById("onboarding-finish-status-text");
+
+    if (summaryBox) summaryBox.classList.add("hidden");
+    if (prepBox) prepBox.classList.remove("hidden");
+    if (statusText) statusText.textContent = "Preparando o SaveVault…";
+
+    // Reseta estado dos checks da animação
+    for (let i = 1; i <= 4; i++) {
+        const item = document.getElementById(`prep-item-${i}`);
+        const check = document.getElementById(`prep-check-${i}`);
+        if (item) item.className = "flex items-center gap-2.5 text-slate-400 dark:text-slate-500 transition-all duration-200";
+        if (check) check.className = "w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] text-transparent transition-all duration-200";
+    }
+
+    const markCheck = (id) => {
+        const item = document.getElementById(`prep-item-${id}`);
+        const check = document.getElementById(`prep-check-${id}`);
+        if (item) item.className = "flex items-center gap-2.5 text-slate-900 dark:text-slate-100 font-medium transition-all duration-200";
+        if (check) check.className = "w-5 h-5 rounded-full bg-emerald-500 border border-emerald-500 text-white font-bold flex items-center justify-center text-[10px] onboarding-pulse-check transition-all duration-200";
+    };
+
+    const isReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    try {
+        // Passo 1: Preferências salvas
+        markCheck(1);
+        if (!isReducedMotion) await sleep(60);
+
+        // Passo 2: Bibliotecas configuradas
+        markCheck(2);
+
+        // Envia requisição atômica ao backend (validação de paths no backend, persistência TOML, autostart)
+        await invoke("complete_onboarding", { req: reqPayload });
+
+        // Passo 3: Armazenamento preparado
+        markCheck(3);
+        if (!isReducedMotion) await sleep(60);
+
+        // Passo 4: SaveVault pronto
+        markCheck(4);
+        if (statusText) statusText.textContent = "SaveVault pronto!";
+        if (!isReducedMotion) await sleep(120);
+
+        // Fecha modal do onboarding
+        closeSetupWizard();
+
+        // Aplica modo de interface
+        applyInterfaceMode(onboardingInterfaceMode);
+
+        // Feedback imediato
+        showToast("SaveVault preparado com sucesso! Bem-vindo.", "success");
+        loadInicio();
+
+        // Dispara discovery assíncrono em background sem travar interface
+        invoke("run_setup_discovery", { selectedLibraries: reqPayload.selected_libraries })
+            .then(games => {
+                if (Array.isArray(games) && games.length > 0) {
+                    showToast(`${games.length} jogo(s) detectado(s) e prontos para proteção!`, "info");
+                    loadInicio();
+                    renderJogosList();
+                }
+            })
+            .catch(err => {
+                console.warn("Detecção inicial em background finalizada com aviso:", err);
+            });
+
+    } catch (e) {
+        console.error("Falha ao concluir onboarding:", e);
+        if (summaryBox) summaryBox.classList.remove("hidden");
+        if (prepBox) prepBox.classList.add("hidden");
+        if (statusText) statusText.textContent = "Confira o resumo das suas escolhas antes de concluir.";
+        showOnboardingError(formatHumanFriendlyError(e));
+
+        if (finishBtn) {
+            finishBtn.disabled = false;
+            finishBtn.innerHTML = `Tentar novamente`;
+        }
+        if (prevBtn) prevBtn.disabled = false;
+    }
+}
+
+function applyInterfaceMode(mode) {
+    const safeMode = mode || "basic";
+
+    // 1. Atualiza badge de modo no dashboard se presente
+    const modeBadge = document.getElementById("app-mode-badge");
+    if (modeBadge) {
+        modeBadge.classList.remove("hidden");
+        if (safeMode === "basic") {
+            modeBadge.textContent = "Modo: Simples";
+            modeBadge.className = "inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800";
+        } else if (safeMode === "advanced") {
+            modeBadge.textContent = "Modo: Avançado";
+            modeBadge.className = "inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800";
+        } else if (safeMode === "ultra_light") {
+            modeBadge.textContent = "Modo: Ultra Leve";
+            modeBadge.className = "inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800";
+        }
+    }
+
+    // 2. Adapta visibilidade de opções muito técnicas na aba de Configurações
+    const maintenanceCards = document.querySelectorAll(".maintenance-technical-only");
+    maintenanceCards.forEach(card => {
+        if (safeMode === "basic") {
+            card.classList.add("hidden");
+        } else {
+            card.classList.remove("hidden");
+        }
+    });
+
+    // 3. Exibe aviso no dashboard se em Modo Ultra Leve
+    const ultraLightNotice = document.getElementById("dashboard-ultralight-notice");
+    if (ultraLightNotice) {
+        if (safeMode === "ultra_light") {
+            ultraLightNotice.classList.remove("hidden");
+        } else {
+            ultraLightNotice.classList.add("hidden");
+        }
     }
 }
 
@@ -1568,6 +2517,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById("jogos-search-clear")?.addEventListener("click", () => {
         clearJogosSearch();
+    });
+
+    // Acessibilidade por teclado para cards interativos (Enter e Espaço)
+    document.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && e.target && e.target.classList && e.target.classList.contains("onboarding-card")) {
+            e.preventDefault();
+            e.target.click();
+        }
     });
 
     // Atualiza dashboard a cada 10s

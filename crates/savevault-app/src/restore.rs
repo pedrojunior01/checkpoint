@@ -33,6 +33,11 @@ pub enum RestoreError {
     #[error("Local de save (ID '{0}') associado ao arquivo não foi encontrado")]
     SaveLocationNotFound(Uuid),
 
+    #[error(
+        "Local de save (ID '{0}', caminho '{1}') requer remapeamento antes da restauração: {2}"
+    )]
+    SaveLocationNeedsMapping(Uuid, PathBuf, String),
+
     #[error("Arquivo físico do snapshot não encontrado em '{0}'")]
     PhysicalSnapshotMissing(PathBuf),
 
@@ -176,20 +181,55 @@ pub fn validate_destination_security(
         )));
     }
 
-    // Bloquear pastas de sistema protegidas do Windows a menos que o SaveLocation esteja expressamente lá
-    if lower_dest.starts_with(r"c:\windows")
-        || lower_dest.starts_with(r"c:\program files")
-        || lower_dest.starts_with(r"c:\program files (x86)")
+    // Bloquear pastas de sistema protegidas do sistema operacional a menos que o SaveLocation esteja expressamente lá
+    if savevault_core::path::is_system_protected_path(dest_path)
+        && !savevault_core::path::is_system_protected_path(&save_location.path)
     {
-        let loc_str = norm_loc.to_string_lossy().to_lowercase();
-        if !loc_str.starts_with(r"c:\windows")
-            && !loc_str.starts_with(r"c:\program files")
-            && !loc_str.starts_with(r"c:\program files (x86)")
-        {
+        return Err(RestoreError::PathSecurityViolation(format!(
+            "Destino aponta para diretório de sistema protegido: '{}'",
+            dest_path.display()
+        )));
+    }
+
+    // Se o arquivo de destino já existe no disco, verificar se é um symlink não autorizado
+    if let Ok(meta) = std::fs::symlink_metadata(dest_path) {
+        if meta.file_type().is_symlink() {
             return Err(RestoreError::PathSecurityViolation(format!(
-                "Destino aponta para diretório de sistema protegido: '{}'",
+                "Caminho de destino é um symlink não autorizado: '{}'",
                 dest_path.display()
             )));
+        }
+    }
+
+    // Se o diretório pai do destino existe fisicamente, garantir que não é um link para diretório protegido ou fora do SaveLocation
+    if let Some(dest_parent) = dest_path.parent() {
+        if dest_parent.exists() {
+            if let Ok(canon_parent) = std::fs::canonicalize(dest_parent) {
+                if savevault_core::path::is_system_protected_path(&canon_parent)
+                    && !savevault_core::path::is_system_protected_path(&save_location.path)
+                {
+                    return Err(RestoreError::PathSecurityViolation(format!(
+                        "Destino físico resolvido aponta para diretório de sistema protegido: '{}'",
+                        canon_parent.display()
+                    )));
+                }
+
+                if save_location.path.exists()
+                    && matches!(
+                        save_location.location_type,
+                        SaveLocationType::Directory | SaveLocationType::Glob
+                    )
+                {
+                    if let Ok(canon_loc) = std::fs::canonicalize(&save_location.path) {
+                        if !canon_parent.starts_with(&canon_loc) && canon_parent != canon_loc {
+                            return Err(RestoreError::PathSecurityViolation(format!(
+                                "Caminho de destino '{}' escapa fisicamente do SaveLocation autorizado via links ou junções",
+                                dest_path.display()
+                            )));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -452,6 +492,21 @@ pub async fn execute_restore_filesystem(
     metadata: &RestoreMetadata,
     request: &RestoreRequest,
 ) -> Result<RestoreReport, RestoreError> {
+    // 0. AUD-03: Verificar se o SaveLocation necessita de remapeamento
+    if metadata.save_location.needs_remapping() {
+        return Err(RestoreError::SaveLocationNeedsMapping(
+            metadata.save_location.id,
+            metadata.save_location.path.clone(),
+            metadata
+                .save_location
+                .resolution_reason
+                .clone()
+                .unwrap_or_else(|| {
+                    "Localização de save precisa ser remapeada antes de restaurar".to_string()
+                }),
+        ));
+    }
+
     let dest_path = &metadata.file_entry.path;
 
     // 4. Validação de segurança contra path traversal
@@ -684,28 +739,25 @@ pub async fn download_snapshot_from_cloud(
         false
     };
 
+    let try_local = async {
+        let backup_root = target_path.parent().unwrap_or(target_path);
+        let provider = savevault_sync::resolve_active_cloud_provider("local_folder", backup_root);
+        match provider.download(drive_file_id, target_path).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!("Download via LocalFolder falhou: {}", e);
+                false
+            }
+        }
+    };
+
     let success = match target_provider.as_str() {
-        "onedrive" => {
-            if try_onedrive.await {
-                true
-            } else {
-                try_google.await
-            }
-        }
+        "onedrive" => try_onedrive.await || try_google.await || try_local.await,
         "google_drive" | "google" | "drive" => {
-            if try_google.await {
-                true
-            } else {
-                try_onedrive.await
-            }
+            try_google.await || try_onedrive.await || try_local.await
         }
-        _ => {
-            if try_google.await {
-                true
-            } else {
-                try_onedrive.await
-            }
-        }
+        "local_folder" | "local" => try_local.await || try_google.await || try_onedrive.await,
+        _ => try_google.await || try_onedrive.await || try_local.await,
     };
 
     if success {

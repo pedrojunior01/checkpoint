@@ -113,6 +113,7 @@ pub fn setup_tray(
 
         // Rótulo de título / versão
         let _ = tray.add_label(&title);
+        let _ = tray.add_label("✓ Status: Protegido");
 
         // Ação: Abrir Janela do SaveVault (Desktop Integrada)
         let web_url = format!("http://127.0.0.1:{}", ui_port);
@@ -121,13 +122,31 @@ pub fn setup_tray(
             let _ = crate::desktop::open_desktop_window(&url_clone);
         });
 
+        // Ação: Ver Jogos
+        let url_games = format!("http://127.0.0.1:{}#jogos", ui_port);
+        let _ = tray.add_menu_item("🎮 Ver Jogos", move || {
+            let _ = crate::desktop::open_desktop_window(&url_games);
+        });
+
+        // Ação: Sincronizar / Verificar
+        let url_sync = format!("http://127.0.0.1:{}#sync", ui_port);
+        let _ = tray.add_menu_item("🔄 Sincronizar / Verificar", move || {
+            let _ = crate::desktop::open_desktop_window(&url_sync);
+        });
+
+        // Ação: Configurações
+        let url_config = format!("http://127.0.0.1:{}#config", ui_port);
+        let _ = tray.add_menu_item("⚙️ Configurações", move || {
+            let _ = crate::desktop::open_desktop_window(&url_config);
+        });
+
         // Ação: Alternar Console (Exibir/Ocultar)
         let _ = tray.add_menu_item("💻 Exibir / Ocultar Console", move || {
             toggle_console_window();
         });
 
         // Ação: Alternar Início Automático com o Windows
-        let _ = tray.add_menu_item("⚙️ Iniciar com o Windows (Alternar)", move || {
+        let _ = tray.add_menu_item("🔄 Iniciar com o Windows (Alternar)", move || {
             match savevault_core::autostart::status() {
                 Ok(status) => {
                     if status.enabled {

@@ -26,7 +26,7 @@ use tracing::{info, warn};
 
 use crate::google_drive::validate_drive_file_id;
 use crate::onedrive_auth::OneDriveAuthService;
-use crate::CloudProvider;
+use crate::{CloudCatalogManifest, CloudError, CloudProvider, CloudResult, RemoteFileInfo};
 
 /// URL base padrão da Microsoft Graph API v1.0.
 pub const ONEDRIVE_API_BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -122,18 +122,23 @@ impl OneDriveProvider {
         &self,
         remote_file_id: &str,
         subpath: Option<&str>,
-    ) -> Result<reqwest::Url> {
+    ) -> Result<reqwest::Url, CloudError> {
         validate_drive_file_id(remote_file_id)?;
 
-        let mut url = reqwest::Url::parse(&self.api_base)
-            .map_err(|e| anyhow!("Base URL da API inválida '{}': {}", self.api_base, e))?;
+        let mut url = reqwest::Url::parse(&self.api_base).map_err(|e| {
+            CloudError::Other(anyhow!(
+                "Base URL da API inválida '{}': {}",
+                self.api_base,
+                e
+            ))
+        })?;
 
         {
             let mut segments = url.path_segments_mut().map_err(|_| {
-                anyhow!(
+                CloudError::Other(anyhow!(
                     "Não é possível manipular segmentos de caminho na URL base: {}",
                     self.api_base
-                )
+                ))
             })?;
             segments
                 .pop_if_empty()
@@ -150,7 +155,7 @@ impl OneDriveProvider {
     }
 
     /// Faz uma requisição GET autenticada retornando o JSON de resposta.
-    async fn get_json(&self, url: &str, token: &str) -> Result<serde_json::Value> {
+    async fn get_json(&self, url: &str, token: &str) -> Result<serde_json::Value, CloudError> {
         let res = self
             .client
             .get(url)
@@ -165,11 +170,19 @@ impl OneDriveProvider {
 
         if !status.is_success() {
             let error_msg = extract_graph_error(&body, &text);
-            return Err(anyhow!(
-                "Microsoft Graph API GET erro {}: {}",
-                status,
-                error_msg
-            ));
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(CloudError::Authentication(format!(
+                    "HTTP {}: {}",
+                    status, error_msg
+                )));
+            }
+            if status.as_u16() == 404 {
+                return Err(CloudError::FileNotFound(format!("HTTP 404: {}", error_msg)));
+            }
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!("Microsoft Graph API GET erro {}: {}", status, error_msg),
+            });
         }
 
         Ok(body)
@@ -190,12 +203,17 @@ impl CloudProvider for OneDriveProvider {
     ///
     /// `cloud_path` deve ter o formato: `<game_uuid>/<file_uuid>/<filename>`
     /// Retorna o `id` opaco do item gerado pelo OneDrive.
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> Result<String> {
-        let token = self.auth.get_fresh_access_token().await?;
+    async fn upload(&self, local_path: &Path, cloud_path: &str) -> CloudResult<String> {
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
 
         let clean_path = cloud_path.trim_start_matches('/');
         if clean_path.is_empty() || clean_path.contains("..") {
-            return Err(anyhow!("cloud_path inválido: '{}'", cloud_path));
+            return Err(CloudError::Other(anyhow!(
+                "cloud_path inválido: '{}'",
+                cloud_path
+            )));
         }
 
         // Idempotência: verifica se o arquivo já existe no approot com o mesmo caminho
@@ -215,13 +233,7 @@ impl CloudProvider for OneDriveProvider {
             }
         }
 
-        let file_bytes = tokio::fs::read(local_path).await.map_err(|e| {
-            anyhow!(
-                "Falha ao ler arquivo local '{}': {}",
-                local_path.display(),
-                e
-            )
-        })?;
+        let file_bytes = tokio::fs::read(local_path).await.map_err(CloudError::Io)?;
 
         // Microsoft Graph API upload direto no approot com criação automática de pastas
         let upload_url = format!(
@@ -245,24 +257,35 @@ impl CloudProvider for OneDriveProvider {
             let body_val: serde_json::Value =
                 serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
             let error_msg = extract_graph_error(&body_val, &text);
-            return Err(anyhow!(
-                "Falha no upload de '{}' para o OneDrive: HTTP {}: {}",
-                clean_path,
-                status,
-                error_msg
-            ));
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(CloudError::Authentication(format!(
+                    "HTTP {}: {}",
+                    status, error_msg
+                )));
+            }
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Falha no upload de '{}' para o OneDrive: HTTP {}: {}",
+                    clean_path, status, error_msg
+                ),
+            });
         }
 
-        let item: OneDriveItemResponse = serde_json::from_str(&text).map_err(|e| {
-            anyhow!(
-                "Resposta de upload inválida do OneDrive: {}. Body: {}",
-                e,
-                text
-            )
-        })?;
+        let item: OneDriveItemResponse =
+            serde_json::from_str(&text).map_err(|e| CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Resposta de upload inválida do OneDrive: {}. Body: {}",
+                    e, text
+                ),
+            })?;
 
         if item.id.trim().is_empty() {
-            return Err(anyhow!("OneDrive retornou resposta de upload sem 'id'"));
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: "OneDrive retornou resposta de upload sem 'id'".to_string(),
+            });
         }
 
         info!(
@@ -276,9 +299,13 @@ impl CloudProvider for OneDriveProvider {
     }
 
     /// Faz o download de um arquivo do OneDrive para o disco local de forma atômica.
-    async fn download(&self, remote_file_id: &str, local_path: &Path) -> Result<()> {
+    async fn download(&self, remote_file_id: &str, local_path: &Path) -> CloudResult<()> {
+        validate_drive_file_id(remote_file_id)?;
+
         let url = self.build_item_url(remote_file_id, Some("content"))?;
-        let token = self.auth.get_fresh_access_token().await?;
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
 
         let res = self
             .client
@@ -288,14 +315,28 @@ impl CloudProvider for OneDriveProvider {
             .await?;
 
         let status = res.status();
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Authentication(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+        if status.as_u16() == 404 {
+            return Err(CloudError::FileNotFound(format!(
+                "Item remoto ID '{}' não encontrado no OneDrive (HTTP 404)",
+                remote_file_id
+            )));
+        }
         if !status.is_success() {
             let text = res.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "Falha ao baixar arquivo do OneDrive (id: {}): HTTP {} - {}",
-                remote_file_id,
-                status,
-                text
-            ));
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Falha ao baixar arquivo do OneDrive (id: {}): HTTP {} - {}",
+                    remote_file_id, status, text
+                ),
+            });
         }
 
         let bytes = res.bytes().await?;
@@ -305,7 +346,6 @@ impl CloudProvider for OneDriveProvider {
             tokio::fs::create_dir_all(parent_dir).await?;
         }
 
-        // Escrita atômica via arquivo temporário de staging no mesmo diretório
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -314,18 +354,12 @@ impl CloudProvider for OneDriveProvider {
 
         if let Err(e) = tokio::fs::write(&temp_file, &bytes).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!(
-                "Falha ao gravar arquivo temporário de download: {}",
-                e
-            ));
+            return Err(CloudError::Io(e));
         }
 
         if let Err(e) = tokio::fs::rename(&temp_file, local_path).await {
             let _ = tokio::fs::remove_file(&temp_file).await;
-            return Err(anyhow!(
-                "Falha ao mover arquivo baixado para destino final: {}",
-                e
-            ));
+            return Err(CloudError::Io(e));
         }
 
         info!(
@@ -338,9 +372,13 @@ impl CloudProvider for OneDriveProvider {
     }
 
     /// Remove um arquivo do OneDrive pelo seu ID remoto.
-    async fn delete(&self, remote_file_id: &str) -> Result<()> {
+    async fn delete(&self, remote_file_id: &str) -> CloudResult<()> {
+        validate_drive_file_id(remote_file_id)?;
+
         let url = self.build_item_url(remote_file_id, None)?;
-        let token = self.auth.get_fresh_access_token().await?;
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
 
         let res = self
             .client
@@ -350,8 +388,14 @@ impl CloudProvider for OneDriveProvider {
             .await?;
 
         let status = res.status();
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Authentication(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
 
-        // 204 No Content = sucesso; 404 Not Found = tolerado (já não existe)
         if status.is_success() || status.as_u16() == 404 {
             if status.as_u16() == 404 {
                 warn!(
@@ -365,12 +409,231 @@ impl CloudProvider for OneDriveProvider {
         }
 
         let text = res.text().await.unwrap_or_default();
-        Err(anyhow!(
-            "Falha ao deletar arquivo OneDrive/{}: HTTP {} - {}",
-            remote_file_id,
-            status,
-            text
-        ))
+        Err(CloudError::Api {
+            status: Some(status.as_u16()),
+            message: format!(
+                "Falha ao deletar arquivo OneDrive/{}: HTTP {} - {}",
+                remote_file_id, status, text
+            ),
+        })
+    }
+
+    /// Localiza um arquivo remoto pelo caminho/nome dentro do approot do OneDrive.
+    async fn find_file_by_name(
+        &self,
+        filename: &str,
+        folder: Option<&str>,
+    ) -> CloudResult<Option<RemoteFileInfo>> {
+        if !self.is_authenticated() {
+            return Err(CloudError::Unauthenticated);
+        }
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
+
+        let path = match folder {
+            Some(f) if !f.trim().is_empty() => format!("{}/{}", f.trim_matches('/'), filename),
+            _ => filename.to_string(),
+        };
+
+        let url = format!("{}/me/drive/special/approot:/{}:", self.api_base, path);
+        let res = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        let status = res.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Authentication(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!("HTTP {}: {}", status, text),
+            });
+        }
+
+        let item: OneDriveItemResponse = res.json().await?;
+        Ok(Some(RemoteFileInfo {
+            id: item.id,
+            name: item.name.unwrap_or_else(|| filename.to_string()),
+            size_bytes: item.size,
+        }))
+    }
+
+    /// Baixa um arquivo remoto pelo seu caminho relativo dentro do approot do OneDrive.
+    async fn download_by_path(&self, remote_path: &str, local_path: &Path) -> CloudResult<()> {
+        if !self.is_authenticated() {
+            return Err(CloudError::Unauthenticated);
+        }
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
+
+        let clean_path = remote_path.trim_start_matches('/');
+        let url = format!(
+            "{}/me/drive/special/approot:/{}:/content",
+            self.api_base, clean_path
+        );
+
+        let res = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        let status = res.status();
+        if status.as_u16() == 404 {
+            if clean_path.contains("manifest") {
+                return Err(CloudError::ManifestNotFound);
+            }
+            return Err(CloudError::FileNotFound(clean_path.to_string()));
+        }
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Authentication(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!("HTTP {}: {}", status, text),
+            });
+        }
+
+        let bytes = res.bytes().await?;
+        let parent_dir = local_path.parent().unwrap_or_else(|| Path::new("."));
+        if !parent_dir.exists() {
+            tokio::fs::create_dir_all(parent_dir).await?;
+        }
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_file = parent_dir.join(format!(".savevault_onedrive_dl_tmp_{:x}", nanos));
+
+        if let Err(e) = tokio::fs::write(&temp_file, &bytes).await {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(CloudError::Io(e));
+        }
+
+        if let Err(e) = tokio::fs::rename(&temp_file, local_path).await {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(CloudError::Io(e));
+        }
+
+        Ok(())
+    }
+
+    /// Carrega e faz parse do manifesto remoto `savevault_manifest.json` do OneDrive.
+    async fn get_manifest(&self) -> CloudResult<Option<CloudCatalogManifest>> {
+        if !self.is_authenticated() {
+            return Err(CloudError::Unauthenticated);
+        }
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
+
+        let url = format!(
+            "{}/me/drive/special/approot:/savevault_manifest.json:/content",
+            self.api_base
+        );
+        let res = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        let status = res.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Authentication(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!("HTTP {}: {}", status, text),
+            });
+        }
+
+        let content = res.text().await?;
+        let manifest: CloudCatalogManifest = serde_json::from_str(&content).map_err(|e| {
+            CloudError::InvalidManifest(format!("JSON inválido no manifesto do OneDrive: {}", e))
+        })?;
+        Ok(Some(manifest))
+    }
+
+    /// Salva ou atualiza o manifesto remoto `savevault_manifest.json` no OneDrive.
+    async fn save_manifest(&self, manifest: &CloudCatalogManifest) -> CloudResult<()> {
+        if !self.is_authenticated() {
+            return Err(CloudError::Unauthenticated);
+        }
+        let token = self.auth.get_fresh_access_token().await.map_err(|e| {
+            CloudError::Authentication(format!("Falha ao renovar token do OneDrive: {}", e))
+        })?;
+
+        let json_bytes = serde_json::to_string_pretty(manifest)
+            .map_err(|e| CloudError::InvalidManifest(e.to_string()))?
+            .into_bytes();
+
+        let upload_url = format!(
+            "{}/me/drive/special/approot:/savevault_manifest.json:/content",
+            self.api_base
+        );
+        let res = self
+            .client
+            .put(&upload_url)
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/json; charset=UTF-8",
+            )
+            .body(json_bytes)
+            .send()
+            .await?;
+
+        let status = res.status();
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(CloudError::Authentication(format!(
+                    "HTTP {}: {}",
+                    status, text
+                )));
+            }
+            return Err(CloudError::Api {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Falha ao salvar manifesto no OneDrive: HTTP {}: {}",
+                    status, text
+                ),
+            });
+        }
+        info!("Manifesto salvo com sucesso no OneDrive (approot)");
+        Ok(())
     }
 }
 

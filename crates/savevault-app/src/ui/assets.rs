@@ -3,3 +3,4 @@
 
 pub const INDEX_HTML: &str = include_str!("../../ui/frontend/index.html");
 pub const APP_JS: &str = include_str!("../../ui/frontend/app.js");
+pub const TAILWIND_CSS: &str = include_str!("../../ui/frontend/tailwind.css");

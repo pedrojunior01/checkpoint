@@ -996,10 +996,7 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
         elapsed
     );
     let err = res.unwrap_err();
-    let is_timeout = err
-        .downcast_ref::<reqwest::Error>()
-        .map(|e| e.is_timeout())
-        .unwrap_or(false)
+    let is_timeout = matches!(err, savevault_cloud::CloudError::Network(_))
         || format!("{:#}", err).to_lowercase().contains("time");
     assert!(is_timeout, "Erro deve indicar timeout HTTP: {:#}", err);
 }
@@ -1124,5 +1121,161 @@ async fn test_opt_02_access_token_caching_eliminates_redundant_token_refreshes()
         refresh_calls.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "O endpoint de token deve ser chamado apenas UMA vez para múltiplos acessos dentro da validade"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_drive_rejects_manifest_filename_as_file_id() {
+    let auth = AuthService::with_fixed_token("fixed_token_123".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        "http://127.0.0.1:9".to_string(),
+        "http://127.0.0.1:9".to_string(),
+    );
+
+    let tmp = NamedTempFile::new().unwrap();
+    let res = provider
+        .download("savevault_manifest.json", tmp.path())
+        .await;
+
+    assert!(
+        matches!(res, Err(savevault_cloud::CloudError::InvalidRemoteId(_))),
+        "download() com nome de arquivo '.json' deve ser rejeitado estritamente como InvalidRemoteId, obtido: {:?}",
+        res
+    );
+}
+
+#[tokio::test]
+async fn test_contract_drive_manifest_lifecycle_and_in_place_update() {
+    let manifest_content = Arc::new(std::sync::Mutex::new(None::<String>));
+    let manifest_content_clone = manifest_content.clone();
+    let patch_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let patch_clone = patch_called.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, req| {
+        // 1. Busca da pasta raiz "SaveVault"
+        if method == "GET" && path.contains("SaveVault") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[{"id":"root_folder_savevault","name":"SaveVault"}]}"#.to_string(),
+            }
+        }
+        // 2. Busca do manifesto pelo nome
+        else if method == "GET" && path.contains("savevault_manifest.json") {
+            let cur = manifest_content_clone.lock().unwrap().clone();
+            if cur.is_some() {
+                MockResponse {
+                    status: 200,
+                    status_text: "OK",
+                    content_type: "application/json",
+                    body: r#"{"files":[{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json","size":"256"}]}"#.to_string(),
+                }
+            } else {
+                MockResponse {
+                    status: 200,
+                    status_text: "OK",
+                    content_type: "application/json",
+                    body: r#"{"files":[]}"#.to_string(),
+                }
+            }
+        }
+        // 3. Upload inicial (POST multipart)
+        else if method == "POST" && path.contains("uploadType=multipart") {
+            *manifest_content_clone.lock().unwrap() = Some(req.to_string());
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json"}"#.to_string(),
+            }
+        }
+        // 4. Download pelo real File ID (GET /files/gdrive_manifest_id_001?alt=media)
+        else if method == "GET" && path.contains("/files/gdrive_manifest_id_001") {
+            let manifest_json = serde_json::json!({
+                "schema_version": 1,
+                "updated_at": "2026-10-02T12:00:00Z",
+                "entries": [
+                    {
+                        "game_name": "Elden Ring",
+                        "platform": "steam",
+                        "save_location_path": "C:\\Saves",
+                        "relative_file_path": "ER0000.sl2",
+                        "file_hash": "hash123",
+                        "version": 1,
+                        "cloud_file_id": "drive_snap_001",
+                        "cloud_path": "loc/file/v1_ER0000.sl2",
+                        "created_at": "2026-10-02T12:00:00Z"
+                    }
+                ]
+            });
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: manifest_json.to_string(),
+            }
+        }
+        // 5. Atualização in-place (PATCH)
+        else if method == "PATCH" && path.contains("/files/gdrive_manifest_id_001") {
+            patch_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json"}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: format!("Not Found: {} {}", method, path),
+            }
+        }
+    })
+    .await;
+
+    let auth = AuthService::with_fixed_token("fixed_token_123".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        server.base_url.clone(),
+        server.base_url.clone(),
+    );
+
+    // 1. Antes de salvar, manifesto não existe
+    let initial = provider.get_manifest().await.unwrap();
+    assert_eq!(initial, None);
+
+    // 2. Salva manifesto inicial
+    let mut manifest = savevault_cloud::CloudCatalogManifest {
+        schema_version: 1,
+        updated_at: "2026-10-02T12:00:00Z".to_string(),
+        entries: vec![],
+    };
+    provider
+        .save_manifest(&manifest)
+        .await
+        .expect("save_manifest deve criar no Drive");
+
+    // 3. Busca manifesto e faz download via real File ID
+    let downloaded = provider
+        .get_manifest()
+        .await
+        .unwrap()
+        .expect("Manifest deve ser encontrado");
+    assert_eq!(downloaded.entries.len(), 1);
+    assert_eq!(downloaded.entries[0].game_name, "Elden Ring");
+
+    // 4. Salva novamente para validar atualização in-place via PATCH
+    manifest.schema_version = 2;
+    provider
+        .save_manifest(&manifest)
+        .await
+        .expect("save_manifest deve atualizar in-place");
+    assert!(
+        patch_called.load(std::sync::atomic::Ordering::SeqCst),
+        "Atualização deve ser feita via PATCH in-place"
     );
 }

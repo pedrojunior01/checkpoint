@@ -68,6 +68,18 @@ pub enum ConflictPolicy {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterfaceMode {
+    /// Modo Simples: dashboard, jogos detectados, status e ações essenciais.
+    #[default]
+    Basic,
+    /// Modo Avançado: snapshots por jogo, retenção, exclusões, regras avançadas.
+    Advanced,
+    /// Modo Ultra Leve: execução em background residente com controles na bandeja.
+    UltraLight,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
     /// Número máximo de versões mantidas por save.
@@ -91,6 +103,21 @@ pub struct GeneralConfig {
     /// Se o assistente de primeiro acesso (setup wizard) foi concluído.
     #[serde(default)]
     pub setup_completed: bool,
+    /// Modo de interface configurado para a aplicação.
+    #[serde(default)]
+    pub interface_mode: InterfaceMode,
+    /// Bibliotecas/plataformas selecionadas pelo usuário para monitoramento.
+    #[serde(default = "default_selected_libraries")]
+    pub selected_libraries: Vec<String>,
+}
+
+fn default_selected_libraries() -> Vec<String> {
+    vec![
+        "steam".into(),
+        "gog".into(),
+        "emulators".into(),
+        "generic".into(),
+    ]
 }
 
 fn default_device_name() -> String {
@@ -133,6 +160,8 @@ impl Default for Config {
                 device_name: default_device_name(),
                 conflict_policy: ConflictPolicy::KeepBoth,
                 setup_completed: false,
+                interface_mode: InterfaceMode::Basic,
+                selected_libraries: default_selected_libraries(),
             },
             cloud: CloudConfig {
                 provider: "local_folder".into(),

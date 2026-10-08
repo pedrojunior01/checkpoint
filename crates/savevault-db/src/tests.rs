@@ -2,14 +2,15 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::repositories::{
-        BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
+        BackupsRepo, FilesRepo, GameMetadataRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
     };
     use crate::Database;
     use chrono::Utc;
     use rusqlite::params;
     use savevault_core::models::{
-        Backup, Confidence, FileEntry, Game, Platform, SaveLocation, SaveLocationType,
-        SyncOperation, SyncQueueItem, SyncStatus,
+        Backup, Confidence, FileEntry, Game, GameMetadata, MappingSource, MappingStatus,
+        MetadataSource, Platform, SaveLocation, SaveLocationType, SyncOperation, SyncQueueItem,
+        SyncStatus,
     };
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -155,6 +156,97 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // GameMetadataRepo & Migration 010
+    // ------------------------------------------------------------------
+    #[test]
+    fn game_metadata_upsert_and_find() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let meta_repo = GameMetadataRepo::new(&db.conn);
+
+        let game = Game::new(
+            "Cyberpunk 2077",
+            Platform::Steam,
+            Some("1091500".into()),
+            Confidence::High,
+        );
+        games_repo.insert(&game).unwrap();
+
+        // Insere metadados com Steam CDN URL
+        let cover_url = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg";
+        let meta = GameMetadata::new(
+            game.id,
+            Some("1091500".into()),
+            Some(cover_url.into()),
+            MetadataSource::Steam,
+        );
+        meta_repo.upsert(&meta).unwrap();
+
+        // Busca por game_id
+        let found = meta_repo
+            .find_by_game_id(game.id)
+            .unwrap()
+            .expect("metadata deve existir");
+        assert_eq!(found.game_id, game.id);
+        assert_eq!(found.steam_app_id.as_deref(), Some("1091500"));
+        assert_eq!(found.cover_url.as_deref(), Some(cover_url));
+        assert_eq!(found.source, MetadataSource::Steam);
+
+        // Busca por steam_app_id
+        let found_by_app = meta_repo
+            .find_by_steam_app_id("1091500")
+            .unwrap()
+            .expect("deve achar por app_id");
+        assert_eq!(found_by_app.game_id, game.id);
+
+        // Atualização idempotente via upsert (ON CONFLICT)
+        let updated_cover = "https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/header.jpg";
+        let updated_meta = GameMetadata::new(
+            game.id,
+            Some("1091500".into()),
+            Some(updated_cover.into()),
+            MetadataSource::Manual,
+        );
+        meta_repo.upsert(&updated_meta).unwrap();
+
+        let refetched = meta_repo.find_by_game_id(game.id).unwrap().unwrap();
+        assert_eq!(refetched.cover_url.as_deref(), Some(updated_cover));
+        assert_eq!(refetched.source, MetadataSource::Manual);
+
+        // Deleção do jogo dispara CASCADE na tabela game_metadata
+        games_repo.delete(game.id).unwrap();
+        assert!(meta_repo.find_by_game_id(game.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn game_metadata_none_source_and_missing() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let meta_repo = GameMetadataRepo::new(&db.conn);
+
+        let game = Game::new(
+            "Custom Indie Game",
+            Platform::Generic,
+            None,
+            Confidence::Low,
+        );
+        games_repo.insert(&game).unwrap();
+
+        // Registra resultado negativo em cache para evitar queries redundantes
+        let empty_meta = GameMetadata::empty(game.id);
+        meta_repo.upsert(&empty_meta).unwrap();
+
+        let found = meta_repo.find_by_game_id(game.id).unwrap().unwrap();
+        assert!(found.steam_app_id.is_none());
+        assert!(found.cover_url.is_none());
+        assert_eq!(found.source, MetadataSource::None);
+
+        // ID inexistente retorna None
+        let missing = meta_repo.find_by_game_id(Uuid::new_v4()).unwrap();
+        assert!(missing.is_none());
+    }
+
+    // ------------------------------------------------------------------
     // SaveLocationsRepo
     // ------------------------------------------------------------------
     #[test]
@@ -172,6 +264,7 @@ mod tests {
             game_id,
             path: PathBuf::from(r"C:\Users\pedro\AppData\Local\Celeste\Saves"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -195,6 +288,7 @@ mod tests {
             game_id,
             path: PathBuf::from(r"C:\Saves\CascadeTest"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -375,6 +469,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Games\GogGame\Save"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         let res1 = loc_repo.upsert(&loc1).unwrap();
         assert_eq!(res1.id, original_id);
@@ -388,6 +483,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"c:\games\goggame\save\"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
 
         // O upsert deve reconhecer a mesma identidade lógica e PRESERVAR o UUID do banco
@@ -614,6 +710,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Saves"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -652,6 +749,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Saves2"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -701,6 +799,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\S1"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -750,6 +849,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\P1"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -802,6 +902,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\PruneA"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -872,6 +973,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\PruneB"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -966,6 +1068,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\PruneC"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1042,6 +1145,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\PruneD"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1108,6 +1212,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\ClearMeta"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1158,6 +1263,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\ST"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1205,6 +1311,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\FB"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1261,6 +1368,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Q1"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1317,6 +1425,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\DQ"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
@@ -1560,5 +1669,206 @@ mod tests {
         assert!(retrieved_gog.is_some());
         assert_eq!(retrieved_steam.unwrap().name, "Game on Steam");
         assert_eq!(retrieved_gog.unwrap().name, "Different Game on GOG");
+    }
+
+    #[test]
+    fn test_migration_009_remapping_fields_and_persistence() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("RemapGame", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"),
+            SaveLocationType::Directory,
+        )
+        .with_mapping(
+            PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"),
+            MappingStatus::NeedsUserMapping,
+            MappingSource::Original,
+            Some("Original path not found on this machine".into()),
+        );
+
+        loc_repo.insert(&loc).unwrap();
+
+        let fetched = loc_repo.find_by_id(loc.id).unwrap().unwrap();
+        assert_eq!(fetched.mapping_status, MappingStatus::NeedsUserMapping);
+        assert_eq!(fetched.mapping_source, MappingSource::Original);
+        assert_eq!(
+            fetched.original_path,
+            Some(PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"))
+        );
+        assert_eq!(
+            fetched.resolution_reason.as_deref(),
+            Some("Original path not found on this machine")
+        );
+    }
+
+    #[test]
+    fn test_save_locations_update_mapping_and_cascade_to_files() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+
+        let game = Game::new("RemapCascade", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let old_dir = PathBuf::from(r"C:\Users\Alice\Saved Games\RemapCascade");
+        let loc = SaveLocation::new(game.id, old_dir.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                old_dir.clone(),
+                MappingStatus::NeedsUserMapping,
+                MappingSource::Original,
+                Some("Missing path".into()),
+            );
+        loc_repo.insert(&loc).unwrap();
+
+        let file_old_path = old_dir.join(r"slot1\save.dat");
+        let file_entry = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: file_old_path.clone(),
+            hash: "blake3_hash_123".into(),
+            size_bytes: 4096,
+            modified_at: Utc::now(),
+        };
+        files_repo.upsert(&file_entry).unwrap();
+
+        // Agora o usuário escolhe a pasta na Máquina B: C:\Users\Bob\Saved Games\RemapCascade
+        let new_dir = PathBuf::from(r"C:\Users\Bob\Saved Games\RemapCascade");
+        let updated_loc = loc_repo
+            .update_mapping(
+                loc.id,
+                &new_dir,
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(updated_loc.path, new_dir);
+        assert_eq!(updated_loc.mapping_status, MappingStatus::UserMapped);
+        assert_eq!(updated_loc.mapping_source, MappingSource::User);
+        assert_eq!(updated_loc.original_path, Some(old_dir));
+
+        // Verifica que o arquivo associado também foi atualizado para apontar para o novo caminho
+        let updated_file = files_repo.find_by_id(file_entry.id).unwrap().unwrap();
+        let expected_file_path = new_dir.join(r"slot1\save.dat");
+        assert_eq!(updated_file.path, expected_file_path);
+    }
+
+    #[test]
+    fn test_save_locations_list_pending_remappings() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("PendingList", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        // 1 location resolvida
+        let loc_ok = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Valid\Path"),
+            SaveLocationType::Directory,
+        );
+        loc_repo.insert(&loc_ok).unwrap();
+
+        // 1 location pendente
+        let loc_pending = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Missing\Path"),
+            SaveLocationType::Directory,
+        )
+        .with_mapping(
+            PathBuf::from(r"C:\Missing\Path"),
+            MappingStatus::NeedsUserMapping,
+            MappingSource::Original,
+            Some("Not found".into()),
+        );
+        loc_repo.insert(&loc_pending).unwrap();
+
+        let pending = loc_repo.list_pending_remappings().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, loc_pending.id);
+        assert_eq!(pending[0].mapping_status, MappingStatus::NeedsUserMapping);
+    }
+
+    #[test]
+    fn test_save_locations_upsert_preserves_user_mapped() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new(
+            "PreserveUserMapped",
+            Platform::Steam,
+            None,
+            Confidence::High,
+        );
+        games_repo.insert(&game).unwrap();
+
+        let user_path = PathBuf::from(r"D:\MyCustomSaves\Game");
+        let loc = SaveLocation::new(game.id, user_path.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                PathBuf::from(r"C:\Users\Alice\Saved Games\Game"),
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            );
+        loc_repo.insert(&loc).unwrap();
+
+        // Uma nova descoberta tenta dar upsert com status 'resolved' e source 'original'
+        let incoming = SaveLocation::new(game.id, user_path.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                PathBuf::from(r"C:\Users\Alice\Saved Games\Game"),
+                MappingStatus::Resolved,
+                MappingSource::Original,
+                None,
+            );
+        let after_upsert = loc_repo.upsert(&incoming).unwrap();
+
+        // O status deve permanecer UserMapped!
+        assert_eq!(after_upsert.mapping_status, MappingStatus::UserMapped);
+        assert_eq!(after_upsert.mapping_source, MappingSource::User);
+    }
+
+    #[test]
+    fn test_save_locations_reset_mapping() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("ResetTest", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let orig_path = PathBuf::from(r"C:\NonExistent\Alice\Saves");
+        let loc = SaveLocation::new(game.id, orig_path.clone(), SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        // Usuário mapeia para outro caminho
+        let new_path = PathBuf::from(r"D:\Temp\Saves");
+        loc_repo
+            .update_mapping(
+                loc.id,
+                &new_path,
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            )
+            .unwrap();
+
+        let mapped = loc_repo.find_by_id(loc.id).unwrap().unwrap();
+        assert_eq!(mapped.path, new_path);
+
+        // Usuário reseta o mapeamento
+        let reset = loc_repo.reset_mapping(loc.id).unwrap();
+        assert_eq!(reset.path, orig_path);
+        // Como orig_path não existe no disco deste teste, volta para needs_user_mapping
+        assert_eq!(reset.mapping_status, MappingStatus::NeedsUserMapping);
     }
 }

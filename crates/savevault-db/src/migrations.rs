@@ -48,6 +48,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("006_files_and_backups_unique", MIGRATION_006),
     ("007_games_platform_id_composite", MIGRATION_007),
     ("008_cleanup_savevault_phantom_backups", MIGRATION_008),
+    ("009_save_location_remapping", MIGRATION_009),
+    ("010_game_metadata", MIGRATION_010),
 ];
 
 const MIGRATION_001: &str = "
@@ -235,4 +237,27 @@ WHERE path LIKE '%SaveVault%backups%'
 DELETE FROM files WHERE save_location_id NOT IN (SELECT id FROM save_locations);
 DELETE FROM backups WHERE file_id NOT IN (SELECT id FROM files);
 DELETE FROM sync_queue WHERE backup_id NOT IN (SELECT id FROM backups);
+";
+
+const MIGRATION_009: &str = "
+-- Adiciona suporte a remapeamento multiplataforma de save_locations (AUD-03)
+ALTER TABLE save_locations ADD COLUMN original_path TEXT;
+ALTER TABLE save_locations ADD COLUMN mapping_status TEXT NOT NULL DEFAULT 'resolved';
+ALTER TABLE save_locations ADD COLUMN mapping_source TEXT NOT NULL DEFAULT 'original';
+ALTER TABLE save_locations ADD COLUMN resolution_reason TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_save_locations_mapping_status ON save_locations(mapping_status);
+";
+
+const MIGRATION_010: &str = "
+-- Metadados visuais, identificadores externos e cache de capas de jogos
+CREATE TABLE IF NOT EXISTS game_metadata (
+    game_id         TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+    steam_app_id    TEXT,
+    cover_url       TEXT,
+    source          TEXT NOT NULL DEFAULT 'none',
+    updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_game_metadata_steam_app_id ON game_metadata(steam_app_id);
 ";

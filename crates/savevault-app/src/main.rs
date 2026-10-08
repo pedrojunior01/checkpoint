@@ -120,6 +120,7 @@ fn main() -> anyhow::Result<()> {
                     || a == "--tray"
                     || a == "--minimized"
                     || a == "--silent"
+                    || a == "--show"
             });
         if should_run_ui {
             return run_desktop_main(args);
@@ -163,9 +164,10 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
         }
     };
 
-    let start_minimized = args
+    let explicit_minimized = args
         .iter()
         .any(|a| a == "--tray" || a == "--minimized" || a == "--silent");
+    let explicit_show = args.iter().any(|a| a == "--show");
 
     dotenvy::dotenv().ok();
 
@@ -185,30 +187,61 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
     let config = Config::load(&config_path).unwrap_or_default();
     let _ = config.save(&config_path);
 
+    let start_minimized = explicit_minimized
+        || (config.general.setup_completed
+            && config.general.interface_mode == savevault_core::config::InterfaceMode::UltraLight
+            && !explicit_show);
+
     let db = savevault_db::Database::open(&config.paths.database_path)?;
     let locations_repo = savevault_db::repositories::SaveLocationsRepo::new(&db.conn);
     let all_locations = locations_repo.list_all().unwrap_or_default();
     let db_conn = Arc::new(tokio::sync::Mutex::new(db.conn));
 
-    let reconciler = Arc::new(savevault_app::Reconciler::new(
-        db_conn.clone(),
-        config.paths.backup_dir.clone(),
-        config.general.max_versions,
-    ));
+    // Inicializa SyncWorker para o Desktop se houver provedor configurado
+    let sync_worker = if config.cloud.provider.to_lowercase() != "none" {
+        let worker_config = savevault_app::SyncWorkerConfig {
+            provider: config.cloud.provider.clone(),
+            local_sync_path: config.cloud.local_sync_path.clone(),
+            reconciliation_interval: std::time::Duration::from_secs(60),
+            base_backoff_ms: 2000,
+            max_attempts: 5,
+        };
+        Some(Arc::new(savevault_app::SyncWorker::new(
+            db_conn.clone(),
+            config.paths.backup_dir.clone(),
+            worker_config,
+        )))
+    } else {
+        None
+    };
 
-    let state = Arc::new(savevault_app::DevUiState::new(
-        db_conn.clone(),
-        config.paths.database_path.clone(),
-        config.paths.backup_dir.clone(),
-        Some(reconciler.clone()),
-        std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
-    ));
+    let reconciler = Arc::new(
+        savevault_app::Reconciler::new(
+            db_conn.clone(),
+            config.paths.backup_dir.clone(),
+            config.general.max_versions,
+        )
+        .with_sync_worker(sync_worker.clone()),
+    );
 
-    // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, servidor HTTP)
+    let state = Arc::new(
+        savevault_app::DevUiState::new(
+            db_conn.clone(),
+            config.paths.database_path.clone(),
+            config.paths.backup_dir.clone(),
+            Some(reconciler.clone()),
+            std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
+        )
+        .with_config_path(config_path.clone())
+        .with_sync_worker(sync_worker.clone()),
+    );
+
+    // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, sync worker, servidor HTTP)
     let state_bg = state.clone();
     let config_bg = config.clone();
     let db_conn_bg = db_conn.clone();
     let reconciler_bg = reconciler.clone();
+    let sync_worker_bg = sync_worker.clone();
     std::thread::Builder::new()
         .name("savevault-backend".into())
         .stack_size(16 * 1024 * 1024)
@@ -225,6 +258,7 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
                 let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
                 let recon_shutdown_rx = shutdown_tx.subscribe();
                 let server_shutdown_rx = shutdown_tx.subscribe();
+                let sync_shutdown_rx = shutdown_tx.subscribe();
 
                 // Reconciler
                 let _recon_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
@@ -238,7 +272,17 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
                     savevault_app::start_dev_ui_server(state_bg.clone(), 4040, server_shutdown_rx)
                         .await;
 
-                // Watcher + Pipeline (F-03: sempre inicia watcher e cloud sync worker mesmo com banco vazio)
+                // Sync Worker Loop em background (processamento contínuo da sync_queue)
+                if let Some(ref worker) = sync_worker_bg {
+                    let worker_clone = worker.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = worker_clone.start(sync_shutdown_rx).await {
+                            tracing::warn!("SyncWorker em segundo plano encerrou com erro: {}", e);
+                        }
+                    });
+                }
+
+                // Watcher + Pipeline (F-03: sempre inicia watcher e integra snapshots com SyncWorker)
                 let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
                 let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
                 watcher_config.debounce.debounce_duration =
@@ -250,13 +294,13 @@ fn run_desktop_main(args: Vec<String>) -> anyhow::Result<()> {
                     file_access,
                 ) {
                     Ok((_watcher, rx)) => {
-                        let _ = savevault_app::pipeline::run_pipeline(
+                        let _ = savevault_app::pipeline::run_pipeline_with_worker(
                             db_conn_bg.clone(),
                             rx,
                             config_bg.paths.backup_dir.clone(),
                             config_bg.general.max_versions,
                             pipeline_shutdown_rx,
-                            false,
+                            sync_worker_bg.clone(),
                         )
                         .await;
                     }
@@ -473,6 +517,23 @@ async fn run_resident_daemon(
 ) -> anyhow::Result<()> {
     tracing::info!("SaveVault iniciando...");
 
+    // Se for modo residente contínuo, protege imediatamente contra instâncias secundárias
+    // antes de tocar no banco de dados SQLite ou executar o discovery pesado
+    let _single_instance = if !args.iter().any(|a| a == "--once" || a == "scan") {
+        match savevault_app::SingleInstanceGuard::acquire("Local\\SaveVault_SingleInstance_Mutex") {
+            Some(guard) => Some(guard),
+            None => {
+                tracing::info!(
+                    "SaveVault já está em execução em segundo plano. Encerrando instância."
+                );
+                println!("SaveVault já está em execução em segundo plano.");
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
     // Limpeza de Banco de Dados (Pruning)
@@ -525,17 +586,6 @@ async fn run_resident_daemon(
     // ------------------------------------------------------------------------
     // MODO RESIDENTE: Monitoramento Contínuo e Sincronização em Background
     // ------------------------------------------------------------------------
-    let _single_instance = match savevault_app::SingleInstanceGuard::acquire(
-        "Local\\SaveVault_SingleInstance_Mutex",
-    ) {
-        Some(guard) => guard,
-        None => {
-            tracing::info!("SaveVault já está em execução em segundo plano. Encerrando instância.");
-            println!("SaveVault já está em execução em segundo plano.");
-            return Ok(());
-        }
-    };
-
     let all_locations = locations_repo.list_all()?;
     if all_locations.is_empty() {
         tracing::warn!("Nenhum local de save encontrado no banco para monitorar.");
@@ -973,9 +1023,28 @@ async fn handle_cloud_list(config: &Config) -> anyhow::Result<()> {
         &config.cloud.provider,
         &config.paths.backup_dir,
     );
-    let _ =
+    if let Err(e) =
         savevault_app::cloud_recovery::reconstruct_catalog_from_cloud(&db.conn, provider.as_ref())
-            .await;
+            .await
+    {
+        match &e {
+            savevault_app::cloud_recovery::RecoveryError::ManifestNotFound => {
+                tracing::debug!("Nenhum manifesto de backup encontrado na nuvem.");
+            }
+            savevault_app::cloud_recovery::RecoveryError::Authentication(msg) => {
+                eprintln!("Aviso: Falha de autenticação no provedor de nuvem: {}", msg);
+            }
+            savevault_app::cloud_recovery::RecoveryError::Network(msg) => {
+                eprintln!("Aviso: Falha de rede ao contatar a nuvem: {}", msg);
+            }
+            other => {
+                eprintln!(
+                    "Aviso: Não foi possível sincronizar catálogo da nuvem: {}",
+                    other
+                );
+            }
+        }
+    }
     let items =
         savevault_app::cloud_recovery::list_cloud_snapshots(&db.conn, &config.paths.backup_dir)?;
 

@@ -99,6 +99,7 @@ pub struct Reconciler {
     pub max_versions: u32,
     pub scanner: SaveScanner,
     is_reconciling: Arc<AtomicBool>,
+    sync_worker: Option<Arc<crate::sync_worker::SyncWorker>>,
 }
 
 impl Reconciler {
@@ -113,6 +114,7 @@ impl Reconciler {
             max_versions,
             scanner: SaveScanner::default(),
             is_reconciling: Arc::new(AtomicBool::new(false)),
+            sync_worker: None,
         }
     }
 
@@ -128,7 +130,14 @@ impl Reconciler {
             max_versions,
             scanner,
             is_reconciling: Arc::new(AtomicBool::new(false)),
+            sync_worker: None,
         }
+    }
+
+    /// Anexa uma instância opcional de `SyncWorker` para notificação imediata quando novos snapshots forem criados.
+    pub fn with_sync_worker(mut self, worker: Option<Arc<crate::sync_worker::SyncWorker>>) -> Self {
+        self.sync_worker = worker;
+        self
     }
 
     /// Retorna se há uma reconciliação atualmente em execução.
@@ -297,6 +306,9 @@ impl Reconciler {
                                 report.files_added += 1;
                             } else {
                                 report.files_changed += 1;
+                            }
+                            if let Some(ref worker) = self.sync_worker {
+                                worker.notify_new_item();
                             }
                             tracing::info!(
                                 "Reconciliação: snapshot v{} criado para {} (novo: {})",

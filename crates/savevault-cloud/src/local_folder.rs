@@ -6,11 +6,10 @@
 //!   instalado no sistema (ex.: %OneDrive%\SaveVault, G:\Meu Drive\SaveVault).
 //! - O aplicativo oficial da Microsoft/Google cuida do upload e download em background.
 
-use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::CloudProvider;
+use crate::{CloudCatalogManifest, CloudError, CloudProvider, CloudResult, RemoteFileInfo};
 
 /// Informações sobre uma pasta de nuvem detectada no computador do usuário.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,25 +125,30 @@ impl LocalFolderProvider {
     }
 
     /// Limpa e sanitiza um caminho relativo para prevenir path traversal.
-    fn sanitize_rel_path(path_str: &str) -> Result<PathBuf> {
+    fn sanitize_rel_path(path_str: &str) -> CloudResult<PathBuf> {
         let clean = path_str.trim().replace('\\', "/");
         let clean = clean.trim_start_matches('/');
 
         if clean.is_empty() {
-            return Err(anyhow!("Caminho relativo de nuvem não pode ser vazio"));
+            return Err(CloudError::InvalidRemoteId(
+                "Caminho relativo de nuvem não pode ser vazio".to_string(),
+            ));
         }
 
-        let rel = PathBuf::from(clean);
+        let rel = PathBuf::from(&clean);
         for comp in rel.components() {
             match comp {
                 std::path::Component::ParentDir => {
-                    return Err(anyhow!(
+                    return Err(CloudError::InvalidRemoteId(format!(
                         "Tentativa de path traversal detectada: {}",
                         path_str
-                    ));
+                    )));
                 }
                 std::path::Component::RootDir | std::path::Component::Prefix(_) => {
-                    return Err(anyhow!("Caminho absoluto não permitido: {}", path_str));
+                    return Err(CloudError::InvalidRemoteId(format!(
+                        "Caminho absoluto não permitido: {}",
+                        path_str
+                    )));
                 }
                 _ => {}
             }
@@ -156,7 +160,7 @@ impl LocalFolderProvider {
 
 #[async_trait::async_trait]
 impl CloudProvider for LocalFolderProvider {
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> Result<String> {
+    async fn upload(&self, local_path: &Path, cloud_path: &str) -> CloudResult<String> {
         let rel_path = Self::sanitize_rel_path(cloud_path)?;
         let target_path = self.sync_root.join(&rel_path);
 
@@ -165,33 +169,33 @@ impl CloudProvider for LocalFolderProvider {
             (local_path.canonicalize(), target_path.canonicalize())
         {
             if can_local == can_target {
-                return Ok(rel_path.to_string_lossy().to_string());
+                return Ok(rel_path.to_string_lossy().replace('\\', "/"));
             }
         }
 
         if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         // Cópia atômica via arquivo temporário
         let tmp_path =
             target_path.with_extension(format!("tmp_{}", uuid::Uuid::new_v4().as_simple()));
-        std::fs::copy(local_path, &tmp_path)?;
-        std::fs::rename(&tmp_path, &target_path)?;
+        tokio::fs::copy(local_path, &tmp_path).await?;
+        tokio::fs::rename(&tmp_path, &target_path).await?;
 
-        Ok(rel_path.to_string_lossy().to_string())
+        Ok(rel_path.to_string_lossy().replace('\\', "/"))
     }
 
-    async fn download(&self, remote_file_id: &str, local_path: &Path) -> Result<()> {
+    async fn download(&self, remote_file_id: &str, local_path: &Path) -> CloudResult<()> {
         let rel_path = Self::sanitize_rel_path(remote_file_id)?;
         let source_path = self.sync_root.join(&rel_path);
 
         if !source_path.exists() {
-            return Err(anyhow!(
+            return Err(CloudError::FileNotFound(format!(
                 "Arquivo remoto '{}' não encontrado na pasta de nuvem '{}'",
                 remote_file_id,
                 self.sync_root.display()
-            ));
+            )));
         }
 
         if let (Ok(can_src), Ok(can_dest)) = (source_path.canonicalize(), local_path.canonicalize())
@@ -202,25 +206,86 @@ impl CloudProvider for LocalFolderProvider {
         }
 
         if let Some(parent) = local_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         let tmp_path =
             local_path.with_extension(format!("tmp_dl_{}", uuid::Uuid::new_v4().as_simple()));
-        std::fs::copy(&source_path, &tmp_path)?;
-        std::fs::rename(&tmp_path, local_path)?;
+        tokio::fs::copy(&source_path, &tmp_path).await?;
+        tokio::fs::rename(&tmp_path, local_path).await?;
 
         Ok(())
     }
 
-    async fn delete(&self, remote_file_id: &str) -> Result<()> {
+    async fn delete(&self, remote_file_id: &str) -> CloudResult<()> {
         let rel_path = Self::sanitize_rel_path(remote_file_id)?;
         let target_path = self.sync_root.join(&rel_path);
 
         if target_path.exists() {
-            let _ = std::fs::remove_file(&target_path);
+            let _ = tokio::fs::remove_file(&target_path).await;
         }
 
+        Ok(())
+    }
+
+    async fn find_file_by_name(
+        &self,
+        filename: &str,
+        folder: Option<&str>,
+    ) -> CloudResult<Option<RemoteFileInfo>> {
+        let target_dir = match folder {
+            Some(f) if !f.trim().is_empty() => {
+                let rel = Self::sanitize_rel_path(f)?;
+                self.sync_root.join(rel)
+            }
+            _ => self.sync_root.clone(),
+        };
+
+        let file_path = target_dir.join(filename);
+        if file_path.exists() && file_path.is_file() {
+            let rel = file_path
+                .strip_prefix(&self.sync_root)
+                .map_err(|e| CloudError::Other(e.into()))?;
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let size = tokio::fs::metadata(&file_path).await.ok().map(|m| m.len());
+            Ok(Some(RemoteFileInfo {
+                id: rel_str,
+                name: filename.to_string(),
+                size_bytes: size,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn download_by_path(&self, remote_path: &str, local_path: &Path) -> CloudResult<()> {
+        self.download(remote_path, local_path).await
+    }
+
+    async fn get_manifest(&self) -> CloudResult<Option<CloudCatalogManifest>> {
+        let manifest_path = self.sync_root.join("savevault_manifest.json");
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+
+        let content = tokio::fs::read_to_string(&manifest_path).await?;
+        let manifest: CloudCatalogManifest = serde_json::from_str(&content)
+            .map_err(|e| CloudError::InvalidManifest(format!("JSON inválido: {}", e)))?;
+        Ok(Some(manifest))
+    }
+
+    async fn save_manifest(&self, manifest: &CloudCatalogManifest) -> CloudResult<()> {
+        if !self.sync_root.exists() {
+            tokio::fs::create_dir_all(&self.sync_root).await?;
+        }
+        let manifest_path = self.sync_root.join("savevault_manifest.json");
+        let content = serde_json::to_string_pretty(manifest)
+            .map_err(|e| CloudError::InvalidManifest(e.to_string()))?;
+
+        let tmp_path =
+            manifest_path.with_extension(format!("tmp_{}", uuid::Uuid::new_v4().as_simple()));
+        tokio::fs::write(&tmp_path, content).await?;
+        tokio::fs::rename(&tmp_path, &manifest_path).await?;
         Ok(())
     }
 }
@@ -266,7 +331,29 @@ mod tests {
             b"meu savegame de teste"
         );
 
-        // 3. Delete
+        // 3. Find file by name
+        let found = provider
+            .find_file_by_name("save.dat", Some("Elden Ring/v1"))
+            .await
+            .unwrap()
+            .expect("Deveria encontrar save.dat");
+        assert_eq!(found.id, "Elden Ring/v1/save.dat");
+
+        // 4. Manifest test
+        let manifest = CloudCatalogManifest {
+            schema_version: 1,
+            ..Default::default()
+        };
+        provider.save_manifest(&manifest).await.unwrap();
+
+        let loaded = provider
+            .get_manifest()
+            .await
+            .unwrap()
+            .expect("Deveria carregar manifest");
+        assert_eq!(loaded.schema_version, 1);
+
+        // 5. Delete
         provider.delete(&remote_id).await.expect("Delete falhou");
         assert!(!dest_on_cloud.exists());
     }

@@ -70,6 +70,24 @@ impl<'a> FilesRepo<'a> {
         Ok(entries)
     }
 
+    pub fn count_by_all_locations(&self) -> Result<std::collections::HashMap<Uuid, i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT save_location_id, COUNT(*) FROM files GROUP BY save_location_id")?;
+        let rows = stmt.query_map([], |row| {
+            let id_str: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            let id = Uuid::parse_str(&id_str).unwrap_or_default();
+            Ok((id, count))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (id, count) = r?;
+            map.insert(id, count);
+        }
+        Ok(map)
+    }
+
     pub fn delete(&self, id: Uuid) -> Result<()> {
         self.conn
             .execute("DELETE FROM files WHERE id = ?1", params![id.to_string()])?;

@@ -1,32 +1,14 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SaveVault — checkpoint (DEV-UI-01)</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="tailwind.css" />
   <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            app: {
-              bg:           '#f8fafc',
-              card:         '#ffffff',
-              sidebar:      '#f1f5f9',
-              border:       'rgba(203,213,225,0.7)',
-              emeraldBadge: '#dcfce7',
-              emeraldText:  '#15803d',
-            }
-          },
-          fontFamily: { sans: ['Inter', 'sans-serif'] },
-          boxShadow: { xs: '0 1px 3px rgba(0,0,0,0.06)' }
-        }
-      }
-    };
     if (localStorage.getItem("savevault-theme") === "dark" || (!localStorage.getItem("savevault-theme") && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
       document.documentElement.classList.add("dark");
     } else {
@@ -37,192 +19,427 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="app.js" defer></script>
   <style>
-    * { -webkit-app-region: no-drag; }
-    [data-tauri-drag-region] { -webkit-app-region: drag; }
+    * {
+      -webkit-app-region: no-drag;
+    }
+
+    [data-tauri-drag-region] {
+      -webkit-app-region: drag;
+    }
+
     [data-tauri-drag-region] button,
-    [data-tauri-drag-region] a { -webkit-app-region: no-drag; }
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-    .hidden { display: none !important; }
+    [data-tauri-drag-region] a {
+      -webkit-app-region: no-drag;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    svg {
+      max-width: 100%;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* Apple/macOS Micro-Interactions */
+    .onboarding-card {
+      transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }
+
+    .onboarding-card:hover {
+      transform: translateY(-1.5px);
+    }
+
+    .onboarding-card:active {
+      transform: translateY(0) scale(0.995);
+    }
+
+    .onboarding-card:focus-visible {
+      outline: 2px solid #10b981;
+      outline-offset: 2px;
+    }
+
+    .onboarding-pane {
+      animation: paneIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .onboarding-pane.pane-back {
+      animation: paneInBack 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes paneIn {
+      from {
+        opacity: 0;
+        transform: translateX(12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes paneInBack {
+      from {
+        opacity: 0;
+        transform: translateX(-12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .onboarding-pulse-check {
+      animation: checkPulse 260ms ease-out forwards;
+    }
+
+    @keyframes checkPulse {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+      }
+
+      50% {
+        transform: scale(1.15);
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .onboarding-pane,
+      .onboarding-pane.pane-back,
+      .onboarding-card,
+      button,
+      [class*="transition"],
+      .animate-pulse {
+        transition: none !important;
+        animation: none !important;
+        transform: none !important;
+      }
+    }
   </style>
 </head>
+
 <body class="bg-transparent w-screen h-screen overflow-hidden select-none font-sans p-1">
 
-<!-- Desktop window wrapper -->
-<div class="w-full h-full bg-slate-50/95 dark:bg-slate-950 backdrop-blur-md rounded-xl shadow-2xl border border-slate-300/70 dark:border-slate-800 text-slate-900 dark:text-slate-100 overflow-hidden flex flex-col">
+  <!-- Desktop window wrapper -->
+  <div
+    class="w-full h-full bg-slate-50/95 dark:bg-slate-950 backdrop-blur-md rounded-xl shadow-2xl border border-slate-300/70 dark:border-slate-800 text-slate-900 dark:text-slate-100 overflow-hidden flex flex-col">
 
-  <!-- ── TitleBar ── -->
-  <header data-tauri-drag-region class="h-9 px-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/60 shrink-0">
-    <div class="flex items-center gap-2 pointer-events-none">
-      <div class="w-4 h-4 bg-slate-800 dark:bg-emerald-600 rounded flex items-center justify-center">
-        <svg class="w-2.5 h-2.5 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-      <span class="text-xs font-semibold text-slate-600 dark:text-slate-300 tracking-tight">checkpoint</span>
-    </div>
-    <div class="flex items-center gap-1">
-      <button id="titlebar-minimize" aria-label="Minimizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-      <button id="titlebar-maximize" aria-label="Maximizar" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-      </button>
-      <button id="titlebar-close" aria-label="Fechar" title="Minimizar para segundo plano (apps ocultos)" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition-colors cursor-pointer">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-  </header>
-
-  <!-- ── App Body ── -->
-  <div class="flex flex-1 overflow-hidden">
-
-    <!-- ── Sidebar ── -->
-    <aside class="w-56 bg-white/50 dark:bg-slate-900/50 border-r border-slate-200/60 dark:border-slate-800 flex flex-col p-4 shrink-0">
-      <!-- Logo -->
-      <div class="flex items-center gap-2 px-2 mb-6">
-        <div class="w-7 h-7 bg-slate-800 dark:bg-emerald-600 rounded-lg flex items-center justify-center shadow-sm">
-          <svg class="w-4 h-4 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- ── TitleBar ── -->
+    <header data-tauri-drag-region
+      class="h-9 px-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/60 shrink-0">
+      <div class="flex items-center gap-2 pointer-events-none">
+        <div class="w-4 h-4 bg-slate-800 dark:bg-emerald-600 rounded flex items-center justify-center">
+          <svg class="w-2.5 h-2.5 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round"
+              stroke-linejoin="round" />
           </svg>
         </div>
-        <span class="font-bold text-slate-800 dark:text-slate-100 text-base tracking-tight">checkpoint</span>
+        <span class="text-xs font-semibold text-slate-600 dark:text-slate-300 tracking-tight">checkpoint</span>
       </div>
+      <div class="flex items-center gap-1">
+        <button id="titlebar-minimize" aria-label="Minimizar"
+          class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+        <button id="titlebar-maximize" aria-label="Maximizar"
+          class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-200/80 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+        </button>
+        <button id="titlebar-close" aria-label="Fechar" title="Minimizar para segundo plano (apps ocultos)"
+          class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition-colors cursor-pointer">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    </header>
 
-      <!-- Navigation -->
-      <nav class="space-y-0.5 flex-1">
-        <a id="nav-inicio" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Início</span>
-        </a>
-        <a id="nav-jogos" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Jogos</span>
-        </a>
-        <a id="nav-atividade" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Atividade</span>
-        </a>
-        <a id="nav-nuvem" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
-          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Nuvem</span>
-        </a>
-      </nav>
+    <!-- ── App Body ── -->
+    <div class="flex flex-1 overflow-hidden">
 
-      <!-- Botão de Ajuda (?) acima de Configurações -->
-      <a id="nav-ajuda" href="#" onclick="openHelpModal(event)" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-auto">
-        <div class="w-4 h-4 rounded-full border border-slate-400 dark:border-slate-500 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">?</div>
-        <span>Ajuda & Guia</span>
-      </a>
-
-      <!-- Alternador Modo Escuro -->
-      <button id="btn-theme-toggle" onclick="toggleTheme()" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer w-full text-left mt-1">
-        <span id="theme-toggle-icon" class="text-sm">🌙</span>
-        <span id="theme-toggle-label">Modo Escuro</span>
-      </button>
-
-      <!-- Settings at bottom -->
-      <a id="nav-config" href="#" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-1">
-        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span>Configurações</span>
-      </a>
-    </aside>
-        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span>Configurações</span>
-      </a>
-    </aside>
-
-    <!-- ── Main Content ── -->
-    <main class="flex-1 overflow-y-auto">
-
-      <!-- ════ ABA: INÍCIO ════ -->
-      <div id="tab-inicio" class="p-6 space-y-6">
-        <!-- Status banner -->
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white shadow-sm shadow-emerald-300/40 shrink-0">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-            <div>
-              <h1 class="text-xl font-bold text-slate-900 tracking-tight">Tudo certo</h1>
-              <p id="status-text" class="text-sm text-slate-500">Seus saves estão protegidos e sincronizados.</p>
-            </div>
+      <!-- ── Sidebar ── -->
+      <aside
+        class="w-56 bg-white/50 dark:bg-slate-900/50 border-r border-slate-200/60 dark:border-slate-800 flex flex-col p-4 shrink-0">
+        <!-- Logo -->
+        <div class="flex items-center gap-2 px-2 mb-6">
+          <div class="w-7 h-7 bg-slate-800 dark:bg-emerald-600 rounded-lg flex items-center justify-center shadow-sm">
+            <svg class="w-4 h-4 fill-none stroke-white stroke-2" viewBox="0 0 24 24">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </svg>
           </div>
-          <div class="flex items-center gap-2">
-            <!-- Cloud sync badge -->
-            <div class="bg-white border border-slate-200/90 rounded-xl px-3 py-2 flex items-center gap-2 shadow-xs cursor-pointer hover:bg-slate-50 transition-colors">
-              <span class="text-base">☁️</span>
-              <span class="text-xs font-medium text-slate-700">Pasta da Nuvem: Conectado</span>
+          <span class="font-bold text-slate-800 dark:text-slate-100 text-base tracking-tight">checkpoint</span>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="space-y-0.5 flex-1">
+          <a id="nav-inicio" href="#"
+            class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path
+                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+                stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Início</span>
+          </a>
+          <a id="nav-jogos" href="#"
+            class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path
+                d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"
+                stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Jogos</span>
+          </a>
+          <a id="nav-atividade" href="#"
+            class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Atividade</span>
+          </a>
+          <a id="nav-nuvem" href="#"
+            class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z"
+                stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Nuvem</span>
+          </a>
+        </nav>
+
+        <!-- Botão de Ajuda (?) acima de Configurações -->
+        <a id="nav-ajuda" href="#" onclick="openHelpModal(event)"
+          class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-auto">
+          <div
+            class="w-4 h-4 rounded-full border border-slate-400 dark:border-slate-500 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">
+            ?</div>
+          <span>Ajuda & Guia</span>
+        </a>
+
+        <!-- Alternador Modo Escuro -->
+        <button id="btn-theme-toggle" onclick="toggleTheme()"
+          class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer w-full text-left mt-1">
+          <span id="theme-toggle-icon" class="text-sm">🌙</span>
+          <span id="theme-toggle-label">Modo Escuro</span>
+        </button>
+
+        <!-- Settings at bottom -->
+        <a id="nav-config" href="#"
+          class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer mt-1">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>Configurações</span>
+        </a>
+      </aside>
+
+      <!-- ── Main Content ── -->
+      <main class="flex-1 overflow-y-auto">
+
+        <!-- ════ ABA: INÍCIO ════ -->
+        <div id="tab-inicio" class="p-6 space-y-6">
+          <!-- Remapping Alert Banner (AUD-03) -->
+          <div id="remapping-alert-banner"
+            class="hidden bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-xs">
+            <div class="flex items-center gap-3">
+              <div
+                class="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-base shrink-0">
+                ⚠️
+              </div>
+              <div>
+                <h3 class="text-xs font-bold text-amber-900 dark:text-amber-200">Remapeamento de Saves Necessário</h3>
+                <p id="remapping-alert-text" class="text-xs text-amber-700 dark:text-amber-400">Existem saves
+                  recuperados da nuvem aguardando definição de pasta nesta máquina.</p>
+              </div>
             </div>
-            <button id="btn-reconcile" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium px-3 py-2 rounded-xl transition-colors shadow-xs">
-              Sincronizar Agora
+            <button onclick="openRemappingModal()"
+              class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors shrink-0 cursor-pointer">
+              Remapear Agora
             </button>
           </div>
+
+          <!-- Status banner -->
+          <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div
+                class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white shadow-sm shadow-emerald-300/40 shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h1 class="text-xl font-bold text-slate-900 dark:text-slate-50 tracking-tight">Tudo certo</h1>
+                  <span id="app-mode-badge"
+                    class="hidden px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">Modo:
+                    Simples</span>
+                </div>
+                <p id="status-text" class="text-sm text-slate-500">Seus saves estão protegidos e sincronizados.</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <!-- Cloud sync badge -->
+              <div
+                class="bg-white border border-slate-200/90 rounded-xl px-3 py-2 flex items-center gap-2 shadow-xs cursor-pointer hover:bg-slate-50 transition-colors">
+                <span class="text-base">☁️</span>
+                <span class="text-xs font-medium text-slate-700">Pasta da Nuvem: Conectado</span>
+              </div>
+              <button id="btn-reconcile"
+                class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium px-3 py-2 rounded-xl transition-colors shadow-xs">
+                Sincronizar Agora
+              </button>
+            </div>
+          </div>
+
+          <!-- UltraLight Guidance Banner in Dashboard -->
+          <div id="dashboard-ultralight-notice" class="hidden p-3.5 bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200/80 dark:border-purple-800/60 rounded-2xl flex items-center justify-between text-xs text-purple-900 dark:text-purple-300">
+            <div class="flex items-center gap-2.5">
+              <span class="text-base">🪶</span>
+              <span><strong>Modo Ultra Leve Ativo:</strong> O SaveVault está operando discretamente em segundo plano na bandeja do sistema.</span>
+            </div>
+            <button onclick="document.getElementById('dashboard-ultralight-notice').classList.add('hidden')" class="text-purple-500 hover:text-purple-700 text-xs font-bold cursor-pointer">✕</button>
+          </div>
+
+          <!-- KPI Cards -->
+          <div class="grid grid-cols-3 gap-4">
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+              <span id="kpi-games" class="text-3xl font-bold text-slate-900 tracking-tight">0</span>
+              <span class="text-xs text-slate-500 font-medium mt-1">jogos protegidos</span>
+            </div>
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+              <span id="kpi-saves" class="text-3xl font-bold text-slate-900 tracking-tight">0</span>
+              <span class="text-xs text-slate-500 font-medium mt-1">saves sincronizados</span>
+            </div>
+            <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+              <span class="text-xs text-slate-500 font-medium">Último backup</span>
+              <span id="kpi-time" class="text-lg font-bold text-slate-900 tracking-tight mt-2">--:--</span>
+            </div>
+          </div>
+
+          <!-- Jogos recentes -->
+          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-sm font-semibold text-slate-800">Jogos recentes</h2>
+              <a id="link-ver-todos" href="#" class="text-xs text-slate-400 hover:text-slate-600 transition-colors">Ver
+                todos →</a>
+            </div>
+            <div id="jogos-recentes-list" class="space-y-0">
+              <p class="text-sm text-slate-400">Carregando...</p>
+            </div>
+          </div>
         </div>
 
-        <!-- KPI Cards -->
-        <div class="grid grid-cols-3 gap-4">
-          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-            <span id="kpi-games" class="text-3xl font-bold text-slate-900 tracking-tight">0</span>
-            <span class="text-xs text-slate-500 font-medium mt-1">jogos protegidos</span>
-          </div>
-          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-            <span id="kpi-saves" class="text-3xl font-bold text-slate-900 tracking-tight">0</span>
-            <span class="text-xs text-slate-500 font-medium mt-1">saves sincronizados</span>
-          </div>
-          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-            <span class="text-xs text-slate-500 font-medium">Último backup</span>
-            <span id="kpi-time" class="text-lg font-bold text-slate-900 tracking-tight mt-2">--:--</span>
-          </div>
-        </div>
+        <!-- ════ ABA: JOGOS ════ -->
+        <div id="tab-jogos" class="hidden p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Jogos Monitorados</h2>
+              <span class="text-sm text-slate-400">Todos os locais de save protegidos pelo SaveVault</span>
+            </div>
 
-        <!-- Jogos recentes -->
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold text-slate-800">Jogos recentes</h2>
-            <a id="link-ver-todos" href="#" class="text-xs text-slate-400 hover:text-slate-600 transition-colors">Ver todos →</a>
+            <div class="flex items-center gap-2 w-full sm:w-auto">
+              <!-- Barra de Pesquisa com Lupa -->
+              <div class="relative flex-1 sm:w-64">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="M21 21l-4.35-4.35" stroke-linecap="round" stroke-linejoin="round"></path>
+                  </svg>
+                </div>
+                <input type="text" id="jogos-search-input" placeholder="Buscar por nome do jogo ou caminho..."
+                  class="w-full pl-9 pr-8 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-800 dark:text-slate-100 placeholder-slate-400 shadow-xs" />
+                <button id="jogos-search-clear"
+                  class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                  title="Limpar busca">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Botão Adicionar Jogo Manualmente -->
+              <button onclick="openAddGameModal()"
+                class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer">
+                <span class="text-sm font-bold leading-none">+</span>
+                <span>Adicionar Jogo</span>
+              </button>
+            </div>
           </div>
-          <div id="jogos-recentes-list" class="space-y-0">
+
+          <!-- Estatísticas da busca quando filtrado -->
+          <div id="jogos-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
+
+          <div id="jogos-list" class="space-y-3">
             <p class="text-sm text-slate-400">Carregando...</p>
           </div>
         </div>
-      </div>
 
-      <!-- ════ ABA: JOGOS ════ -->
-      <div id="tab-jogos" class="hidden p-6 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Jogos Monitorados</h2>
-            <span class="text-sm text-slate-400">Todos os locais de save protegidos pelo SaveVault</span>
+        <!-- ════ ABA: ATIVIDADE ════ -->
+        <div id="tab-atividade" class="hidden p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Histórico de Snapshots</h2>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Pontos de restauração capturados com proteção
+                de integridade Blake3.</p>
+            </div>
+            <span
+              class="text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-200/60 dark:border-emerald-800/60 self-start sm:self-auto">
+              🛡️ Safety Backup automático ao restaurar
+            </span>
           </div>
 
-          <div class="flex items-center gap-2 w-full sm:w-auto">
-            <!-- Barra de Pesquisa com Lupa -->
-            <div class="relative flex-1 sm:w-64">
-              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+          <!-- Linha de Pesquisa e Filtro de Jogo -->
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <!-- Barra de Pesquisa de Snapshots com Lupa -->
+            <div class="relative flex-1">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <path d="M21 21l-4.35-4.35" stroke-linecap="round" stroke-linejoin="round"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </div>
-              <input
-                type="text"
-                id="jogos-search-input"
-                placeholder="Buscar por nome do jogo ou caminho..."
-                class="w-full pl-9 pr-8 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-800 dark:text-slate-100 placeholder-slate-400 shadow-xs"
-              />
-              <button
-                id="jogos-search-clear"
-                class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                title="Limpar busca"
-              >
+              <input type="text" id="atividade-search-input" placeholder="Pesquisar por arquivo, versão ou hash..."
+                class="w-full pl-10 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl text-sm placeholder-slate-400 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
+                oninput="renderAtividadeList(this.value)" />
+              <button id="atividade-search-clear" onclick="clearAtividadeSearch()"
+                class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                title="Limpar pesquisa">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                   <line x1="18" y1="6" x2="6" y2="18"></line>
                   <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -230,590 +447,940 @@
               </button>
             </div>
 
-            <!-- Botão Adicionar Jogo Manualmente -->
-            <button onclick="openAddGameModal()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer">
-              <span class="text-sm font-bold leading-none">+</span>
-              <span>Adicionar Jogo</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Estatísticas da busca quando filtrado -->
-        <div id="jogos-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
-
-        <div id="jogos-list" class="space-y-3">
-          <p class="text-sm text-slate-400">Carregando...</p>
-        </div>
-      </div>
-
-      <!-- ════ ABA: ATIVIDADE ════ -->
-      <div id="tab-atividade" class="hidden p-6 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Histórico de Snapshots</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Pontos de restauração capturados com proteção de integridade Blake3.</p>
-          </div>
-          <span class="text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-200/60 dark:border-emerald-800/60 self-start sm:self-auto">
-            🛡️ Safety Backup automático ao restaurar
-          </span>
-        </div>
-
-        <!-- Linha de Pesquisa e Filtro de Jogo -->
-        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <!-- Barra de Pesquisa de Snapshots com Lupa -->
-          <div class="relative flex-1">
-            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z"/>
-              </svg>
+            <!-- Dropdown Filtro por Jogo -->
+            <div class="w-full sm:w-60">
+              <select id="atividade-game-filter" onchange="onAtividadeFilterChange()"
+                class="w-full bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer">
+                <option value="">🎮 Todos os Jogos</option>
+              </select>
             </div>
-            <input
-              type="text"
-              id="atividade-search-input"
-              placeholder="Pesquisar por arquivo, versão ou hash..."
-              class="w-full pl-10 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl text-sm placeholder-slate-400 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-xs"
-              oninput="renderAtividadeList(this.value)"
-            />
-            <button
-              id="atividade-search-clear"
-              onclick="clearAtividadeSearch()"
-              class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-              title="Limpar pesquisa"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
           </div>
 
-          <!-- Dropdown Filtro por Jogo -->
-          <div class="w-full sm:w-60">
-            <select
-              id="atividade-game-filter"
-              onchange="onAtividadeFilterChange()"
-              class="w-full bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-xs cursor-pointer"
-            >
-              <option value="">🎮 Todos os Jogos</option>
-            </select>
+          <!-- Estatísticas da busca de atividade -->
+          <div id="atividade-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
+
+          <div id="atividade-list" class="space-y-3">
+            <p class="text-sm text-slate-400">Carregando...</p>
           </div>
         </div>
 
-        <!-- Estatísticas da busca de atividade -->
-        <div id="atividade-search-stats" class="hidden text-xs text-slate-500 dark:text-slate-400 font-medium"></div>
-
-        <div id="atividade-list" class="space-y-3">
-          <p class="text-sm text-slate-400">Carregando...</p>
-        </div>
-      </div>
-
-      <!-- ════ ABA: NUVEM ════ -->
-      <div id="tab-nuvem" class="hidden p-6 space-y-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Sincronização em Nuvem</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Gerencie seu serviço de nuvem, pasta de sincronização e estado do backup.</p>
-          </div>
-          <button onclick="openCloudConfigModal()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer">
-            <span>⚙️</span> Alterar Nuvem / Pasta
-          </button>
-        </div>
-        <div id="nuvem-info">
-          <p class="text-sm text-slate-400">Carregando...</p>
-        </div>
-      </div>
-
-      <!-- ════ ABA: CONFIGURAÇÕES & MANUTENÇÃO ════ -->
-      <div id="tab-config" class="hidden p-6 space-y-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Configurações & Manutenção</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Parâmetros do sistema, integridade dos backups e otimização do banco.</p>
-          </div>
-          <button onclick="openSetupWizard()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer">
-            <span>🧙</span> Abrir Assistente
-          </button>
-        </div>
-
-        <div id="config-info">
-          <p class="text-sm text-slate-400">Carregando...</p>
-        </div>
-
-        <!-- Ações de Manutenção e Exportação -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-          <!-- Card Otimização do Banco -->
-          <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3">
+        <!-- ════ ABA: NUVEM ════ -->
+        <div id="tab-nuvem" class="hidden p-6 space-y-4">
+          <div class="flex items-center justify-between">
             <div>
-              <div class="flex items-center gap-2 mb-1.5">
-                <span class="text-base">🧹</span>
-                <h3 class="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">Otimizar Banco de Dados</h3>
-              </div>
-              <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Limpa registros antigos da fila de sincronização e desfragmenta o SQLite (VACUUM) para manter o checkpoint ultra rápido e leve.
-              </p>
+              <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Sincronização em Nuvem</h2>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Gerencie seu serviço de nuvem, pasta de
+                sincronização e estado do backup.</p>
             </div>
-            <button
-              id="btn-optimize-db"
-              onclick="triggerOptimizeDatabase()"
-              class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>⚡</span> Otimizar SQLite Agora
+            <button onclick="openCloudConfigModal()"
+              class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer">
+              <span>⚙️</span> Alterar Nuvem / Pasta
             </button>
           </div>
-
-          <!-- Card Exportar Backups ZIP -->
-          <div class="bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3">
-            <div>
-              <div class="flex items-center gap-2 mb-1.5">
-                <span class="text-base">📦</span>
-                <h3 class="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">Exportar Backups (.ZIP)</h3>
-              </div>
-              <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Gera um arquivo compacto .ZIP com todos os seus saves na pasta Downloads para transporte em pendrive ou segurança extra.
-              </p>
-            </div>
-            <button
-              id="btn-export-zip"
-              onclick="triggerExportZip()"
-              class="w-full px-3 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>💾</span> Exportar para .ZIP
-            </button>
+          <div id="nuvem-info">
+            <p class="text-sm text-slate-400">Carregando...</p>
           </div>
         </div>
-      </div>
 
-    </main>
+        <!-- ════ ABA: CONFIGURAÇÕES & MANUTENÇÃO ════ -->
+        <div id="tab-config" class="hidden p-6 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 dark:text-slate-100">Configurações & Manutenção</h2>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Parâmetros do sistema, integridade dos
+                backups e otimização do banco.</p>
+            </div>
+            <button onclick="openSetupWizard()"
+              class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer">
+              <span>🧙</span> Abrir Assistente
+            </button>
+          </div>
+
+          <div id="config-info">
+            <p class="text-sm text-slate-400">Carregando...</p>
+          </div>
+
+          <!-- Ações de Manutenção e Exportação -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <!-- Card Otimização do Banco -->
+            <div
+              class="maintenance-technical-only bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex items-center gap-2 mb-1.5">
+                  <span class="text-base">🧹</span>
+                  <h3 class="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">Otimizar
+                    Banco de Dados</h3>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Limpa registros antigos da fila de sincronização e desfragmenta o SQLite (VACUUM) para manter o
+                  checkpoint ultra rápido e leve.
+                </p>
+              </div>
+              <button id="btn-optimize-db" onclick="triggerOptimizeDatabase()"
+                class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                <span>⚡</span> Otimizar SQLite Agora
+              </button>
+            </div>
+
+            <!-- Card Exportar Backups ZIP -->
+            <div
+              class="maintenance-technical-only bg-white dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex items-center gap-2 mb-1.5">
+                  <span class="text-base">📦</span>
+                  <h3 class="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">Exportar
+                    Backups (.ZIP)</h3>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Gera um arquivo compacto .ZIP com todos os seus saves na pasta Downloads para transporte em pendrive
+                  ou segurança extra.
+                </p>
+              </div>
+              <button id="btn-export-zip" onclick="triggerExportZip()"
+                class="w-full px-3 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                <span>💾</span> Exportar para .ZIP
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
   </div>
-</div>
 
-<!-- ════ MODAL: ASSISTENTE DE PRIMEIRO ACESSO (SETUP WIZARD) ════ -->
-<div id="setup-wizard-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-    
-    <!-- Modal Header -->
-    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="text-lg">🧙</span>
-          <h3 class="text-sm font-bold tracking-tight">Assistente de Configuração — SaveVault</h3>
-        </div>
-        <p id="wizard-step-subtitle" class="text-xs text-slate-300 mt-0.5">Passo 1 de 5: Boas-vindas</p>
-      </div>
-      <button onclick="closeSetupWizard()" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-    </div>
+  <!-- ════ MODAL: ONBOARDING MODERNIZADO (6 ETAPAS APPLE/MACOS) ════ -->
+  <div id="setup-wizard-modal"
+    class="hidden fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+    <div
+      class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/90 dark:border-slate-800 overflow-hidden flex flex-col my-auto transition-all duration-300 max-h-[92vh]">
 
-    <!-- Stepper Indicator -->
-    <div class="px-6 py-2.5 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between gap-1 text-[11px] font-medium shrink-0">
-      <div id="pill-step-1" class="wizard-step-pill px-2.5 py-1 rounded-full bg-slate-800 text-white font-semibold">1. Início</div>
-      <div id="pill-step-2" class="wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">2. Nuvem</div>
-      <div id="pill-step-3" class="wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">3. Jogos</div>
-      <div id="pill-step-4" class="wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">4. Sistema</div>
-      <div id="pill-step-5" class="wizard-step-pill px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">5. Concluir</div>
-    </div>
+      <!-- Top Progress Bar & Header -->
+      <div
+        class="px-6 sm:px-8 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col items-center justify-center relative shrink-0">
 
-    <!-- Modal Body (Scrollable) -->
-    <div class="p-6 overflow-y-auto space-y-4 grow">
+        <!-- Close / Dismiss button (top right) -->
+        <button onclick="closeSetupWizard()" title="Fechar"
+          class="absolute top-5 right-5 w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
 
-      <!-- STEP 1: Boas-vindas -->
-      <div id="wizard-pane-1" class="space-y-4">
-        <div class="text-center py-2">
-          <div class="text-4xl mb-2">🛡️🎮</div>
-          <h4 class="text-base font-bold text-slate-900">Proteção Definitiva para seus Saves</h4>
-          <p class="text-xs text-slate-500 max-w-md mx-auto mt-1 leading-relaxed">
-            O <strong>SaveVault</strong> monitora seus jogos automaticamente em segundo plano, criando snapshots criptografados com BLAKE3 e sincronizando com sua pasta da nuvem sem você precisar configurar chaves ou senhas.
-          </p>
+        <!-- Step Dots with connecting track -->
+        <div class="flex items-center gap-2 mb-2.5">
+          <div id="step-dot-1"
+            class="w-2.5 h-2.5 rounded-full bg-slate-900 dark:bg-emerald-500 transition-all duration-300"></div>
+          <div id="step-line-1" class="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-dot-2"
+            class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-line-2" class="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-dot-3"
+            class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-line-3" class="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-dot-4"
+            class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-line-4" class="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-dot-5"
+            class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-line-5" class="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
+          <div id="step-dot-6"
+            class="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 transition-all duration-300"></div>
         </div>
 
-        <div class="grid grid-cols-3 gap-3 pt-2">
-          <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-center">
-            <div class="text-xl mb-1">⚡</div>
-            <p class="text-xs font-bold text-slate-800">Zero Impacto</p>
-            <p class="text-[11px] text-slate-500 mt-0.5">Leve, silencioso e sem travar seus jogos</p>
-          </div>
-          <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-center">
-            <div class="text-xl mb-1">☁️</div>
-            <p class="text-xs font-bold text-slate-800">Nuvem Própria</p>
-            <p class="text-[11px] text-slate-500 mt-0.5">OneDrive, Google Drive ou Dropbox local</p>
-          </div>
-          <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-center">
-            <div class="text-xl mb-1">🛡️</div>
-            <p class="text-xs font-bold text-slate-800">Anti-Corrupção</p>
-            <p class="text-[11px] text-slate-500 mt-0.5">Gravação atômica e snapshots diários</p>
-          </div>
-        </div>
+        <span id="onboarding-step-indicator"
+          class="text-[11px] font-semibold tracking-wider uppercase text-slate-400 dark:text-slate-500">
+          Etapa 1 de 6 · Boas-vindas
+        </span>
       </div>
 
-      <!-- STEP 2: Nuvem -->
-      <div id="wizard-pane-2" class="hidden space-y-4">
-        <div>
-          <h4 class="text-sm font-bold text-slate-900">Pasta de Sincronização na Nuvem</h4>
-          <p class="text-xs text-slate-500 mt-0.5">
-            Escolha ou confirme a pasta local do seu serviço de nuvem. O SaveVault salvará os backups nela e seu aplicativo de nuvem cuidará do upload.
-          </p>
-        </div>
+      <!-- Body Scrollable -->
+      <div class="p-6 sm:p-8 overflow-y-auto grow space-y-6">
 
-        <div class="space-y-2">
-          <label class="text-xs font-semibold text-slate-700">Pastas de Nuvem Detectadas no PC:</label>
-          <div id="wizard-detected-folders" class="space-y-2 max-h-40 overflow-y-auto">
-            <p class="text-xs text-slate-400">Detectando provedores de nuvem...</p>
+        <!-- ── ETAPA 1: WELCOME ── -->
+        <div id="onboarding-pane-1" class="onboarding-pane space-y-6 py-4 text-center">
+          <!-- Logo Branding -->
+          <div class="flex justify-center">
+            <div class="relative">
+              <div
+                class="w-20 h-20 rounded-3xl bg-gradient-to-tr from-slate-900 to-slate-800 dark:from-emerald-600 dark:to-teal-500 flex items-center justify-center shadow-xl shadow-emerald-500/15 ring-8 ring-emerald-500/10">
+                <svg class="w-10 h-10 text-white fill-none stroke-current stroke-2" viewBox="0 0 24 24">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </div>
+              <div
+                class="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold ring-4 ring-white dark:ring-slate-900 shadow-md">
+                ✓
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="pt-2 border-t border-slate-100">
-          <label class="text-xs font-semibold text-slate-700 block mb-1">Ou personalize o caminho da pasta:</label>
-          <div class="flex gap-2">
-            <input type="text" id="wizard-input-cloud-path" placeholder="C:\Users\...\Google Drive\SaveVault" class="grow text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 font-mono text-slate-700" />
-          </div>
-        </div>
-      </div>
-
-      <!-- STEP 3: Jogos -->
-      <div id="wizard-pane-3" class="hidden space-y-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h4 class="text-sm font-bold text-slate-900">Varredura de Jogos Instalados</h4>
-            <p class="text-xs text-slate-500 mt-0.5">
-              Mapeamos seus jogos e locais de save (Steam, GOG e pastas do sistema).
+          <div class="space-y-2">
+            <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">
+              Vamos preparar seu SaveVault.
+            </h2>
+            <p class="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+              Em poucos passos, vamos configurar onde procurar seus jogos, onde guardar seus saves e como o aplicativo deve funcionar.
             </p>
           </div>
-          <button id="btn-wizard-scan" onclick="runWizardDiscovery()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5 shrink-0">
-            <span>🔍</span> Escanear Agora
+
+          <!-- Feature pills (Clean, Apple-like, compact) -->
+          <div class="flex flex-wrap items-center justify-center gap-2 pt-1 max-w-md mx-auto">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 text-xs font-medium border border-slate-200/60 dark:border-slate-700/60">
+              <span>⚡</span> Leve e imperceptível
+            </span>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 text-xs font-medium border border-slate-200/60 dark:border-slate-700/60">
+              <span>🛡️</span> Snapshots Blake3
+            </span>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 text-xs font-medium border border-slate-200/60 dark:border-slate-700/60">
+              <span>☁️</span> Nuvem flexível
+            </span>
+          </div>
+
+          <div class="pt-4 flex flex-col items-center gap-2.5">
+            <button onclick="onboardingGoToStep(2)"
+              class="w-full sm:w-64 py-3 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-semibold text-sm rounded-2xl shadow-sm transition-all cursor-pointer">
+              Começar
+            </button>
+            <button onclick="skipOnboarding()"
+              class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium transition-colors cursor-pointer py-1">
+              Já configurei isso
+            </button>
+          </div>
+        </div>
+
+        <!-- ── ETAPA 2: LIBRARIES ── -->
+        <div id="onboarding-pane-2" class="hidden space-y-5">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900 dark:text-slate-100">
+              Onde estão seus jogos?
+            </h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              O SaveVault pode procurar automaticamente suas bibliotecas.
+            </p>
+          </div>
+
+          <!-- Section 1: Bibliotecas -->
+          <div class="space-y-2">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs font-bold text-slate-700 dark:text-slate-300">Bibliotecas</span>
+              <div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div>
+            </div>
+            <div class="space-y-2.5" id="onboarding-libraries-store-container">
+              <div
+                class="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between">
+                <span class="text-xs text-slate-400">Procurando bibliotecas...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Outros jogos -->
+          <div class="space-y-2 pt-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs font-bold text-slate-700 dark:text-slate-300">Outros jogos</span>
+              <div class="h-px bg-slate-200 dark:bg-slate-800 flex-1"></div>
+            </div>
+            <p class="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+              Emuladores e jogos que não pertencem a uma biblioteca conhecida.
+            </p>
+
+            <div class="space-y-2.5" id="onboarding-libraries-other-container">
+              <!-- Populated dynamically via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── ETAPA 3: STORAGE ── -->
+        <div id="onboarding-pane-3" class="hidden space-y-5">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900 dark:text-slate-100">
+              Onde seus saves devem ficar seguros?
+            </h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Você pode escolher agora ou deixar o SaveVault preparar isso quando for necessário.
+            </p>
+          </div>
+
+          <div class="space-y-3" id="onboarding-storage-options">
+            <!-- Option: Automático (Recomendado) -->
+            <div onclick="selectOnboardingStorageMode('automatic')" id="storage-card-automatic"
+              tabindex="0" role="radio" aria-checked="true"
+              class="onboarding-card p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 cursor-pointer flex items-start gap-3.5 transition-all">
+              <div
+                class="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-lg shrink-0">
+                ⚡
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between">
+                  <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">Automático</h4>
+                  <span
+                    class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">Recomendado</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Não quero decidir agora. O SaveVault escolherá e preparará um local quando necessário.
+                </p>
+              </div>
+              <div
+                class="w-5 h-5 rounded-full border-2 border-emerald-500 bg-emerald-500 text-white flex items-center justify-center text-xs shrink-0 mt-0.5"
+                id="storage-radio-automatic">✓</div>
+            </div>
+
+            <!-- Cloud folders dynamically detected (OneDrive, Google Drive, Dropbox) -->
+            <div id="onboarding-cloud-folders-list" class="space-y-3">
+              <!-- Rendered by JS -->
+            </div>
+
+            <!-- Option: Pasta personalizada -->
+            <div onclick="selectOnboardingStorageMode('custom')" id="storage-card-custom"
+              tabindex="0" role="radio" aria-checked="false"
+              class="onboarding-card p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer transition-all">
+              <div class="flex items-start gap-3.5">
+                <div
+                  class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center text-lg shrink-0">
+                  📁
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between">
+                    <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">Escolher uma pasta</h4>
+                    <span
+                      class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">Personalizado</span>
+                  </div>
+                  <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Selecione qualquer pasta local ou disco externo para guardar seus backups.
+                  </p>
+                </div>
+                <div
+                  class="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5"
+                  id="storage-radio-custom"></div>
+              </div>
+
+              <!-- Custom Path Input -->
+              <div id="storage-custom-input-box"
+                class="hidden mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60 space-y-2">
+                <div class="flex items-center gap-2">
+                  <input type="text" id="onboarding-custom-storage-input"
+                    placeholder="Ex: D:\Saves ou C:\Users\...\Backups"
+                    class="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all" />
+                  <button type="button" onclick="browseCustomStorageFolder(event)"
+                    id="btn-browse-custom-storage"
+                    class="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer">
+                    📁 Procurar…
+                  </button>
+                </div>
+                <p class="text-[11px] text-slate-400">Caminho validado com segurança contra acessos indevidos.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── ETAPA 4: STARTUP ── -->
+        <div id="onboarding-pane-4" class="hidden space-y-5">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900 dark:text-slate-100">
+              Quer que o SaveVault esteja sempre pronto?
+            </h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Quando o computador ligar, o SaveVault poderá iniciar automaticamente em segundo plano.
+            </p>
+          </div>
+
+          <div
+            class="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 flex items-center justify-between gap-4">
+            <div class="flex items-start gap-3.5">
+              <div
+                class="w-10 h-10 rounded-xl bg-slate-200/80 dark:bg-slate-700/60 text-slate-700 dark:text-slate-200 flex items-center justify-center text-lg shrink-0">
+                🚀
+              </div>
+              <div>
+                <h4 id="onboarding-autostart-label" class="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Sim, iniciar com o computador
+                </h4>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Você poderá alterar isso depois nas configurações.
+                </p>
+                <span id="onboarding-autostart-os-badge"
+                  class="inline-block mt-2 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                  Integração nativa com o sistema operacional
+                </span>
+              </div>
+            </div>
+
+            <!-- Apple style iOS Toggle -->
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input type="checkbox" id="onboarding-toggle-autostart" onchange="onboardingAutostartToggleChanged()" class="sr-only peer" checked>
+              <div
+                class="w-12 h-6.5 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5.5 after:w-5.5 after:transition-all peer-checked:bg-emerald-500">
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- ── ETAPA 5: INTERFACE MODE ── -->
+        <div id="onboarding-pane-5" class="hidden space-y-5">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900 dark:text-slate-100">
+              Como você quer usar o SaveVault?
+            </h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Escolha o nível de controle e visibilidade ideal para o seu dia a dia.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 gap-3.5">
+            <!-- Modo Simples -->
+            <div onclick="selectOnboardingInterfaceMode('basic')" id="mode-card-basic"
+              tabindex="0" role="radio" aria-checked="true"
+              class="onboarding-card p-4.5 rounded-2xl border-2 border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20 cursor-pointer flex items-start gap-4 transition-all">
+              <div
+                class="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-lg shrink-0">
+                🌿
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between">
+                  <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">Simples</h4>
+                  <span
+                    class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">Essencial</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Essencial e sem complicação.</p>
+                <div class="flex flex-wrap gap-2 mt-2.5">
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">✓ Dashboard</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">✓ Jogos</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">✓ Pastas</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">✓ Status dos backups</span>
+                </div>
+              </div>
+              <div
+                class="w-5 h-5 rounded-full border-2 border-emerald-500 bg-emerald-500 text-white flex items-center justify-center text-xs shrink-0 mt-0.5"
+                id="mode-radio-basic">✓</div>
+            </div>
+
+            <!-- Modo Avançado -->
+            <div onclick="selectOnboardingInterfaceMode('advanced')" id="mode-card-advanced"
+              tabindex="0" role="radio" aria-checked="false"
+              class="onboarding-card p-4.5 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer flex items-start gap-4 transition-all">
+              <div
+                class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center text-lg shrink-0">
+                ⚡
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between">
+                  <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">Avançado</h4>
+                  <span
+                    class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">Controle Total</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Controle total sobre seus backups.</p>
+                <div class="flex flex-wrap gap-2 mt-2.5">
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Quantidade de snapshots</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Regras por jogo</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Exclusões</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Armazenamento</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Sincronização</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Retenção detalhada</span>
+                </div>
+              </div>
+              <div
+                class="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5"
+                id="mode-radio-advanced"></div>
+            </div>
+
+            <!-- Modo Ultra Leve -->
+            <div onclick="selectOnboardingInterfaceMode('ultra_light')" id="mode-card-ultra_light"
+              tabindex="0" role="radio" aria-checked="false"
+              class="onboarding-card p-4.5 rounded-2xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/40 cursor-pointer flex items-start gap-4 transition-all">
+              <div
+                class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400 flex items-center justify-center text-lg shrink-0">
+                🪶
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between">
+                  <h4 class="text-sm font-bold text-slate-900 dark:text-slate-100">Ultra leve</h4>
+                  <span
+                    class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300">Segundo Plano</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">O SaveVault trabalha em segundo plano.</p>
+                <div class="flex flex-wrap gap-2 mt-2.5">
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Ícone na bandeja</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Operação silenciosa</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Baixo uso de interface</span>
+                  <span class="inline-flex items-center text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md">Acesso pela bandeja</span>
+                </div>
+              </div>
+              <div
+                class="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs shrink-0 mt-0.5"
+                id="mode-radio-ultra_light"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── ETAPA 6: FINISH / PREPARING ── -->
+        <div id="onboarding-pane-6" class="hidden space-y-6 py-4 text-center">
+          <div
+            class="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 mx-auto flex items-center justify-center text-2xl">
+            ✨
+          </div>
+
+          <div>
+            <h3 id="onboarding-finish-title" class="text-xl font-bold text-slate-900 dark:text-slate-50">
+              Está tudo pronto.
+            </h3>
+            <p id="onboarding-finish-status-text" class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Confira o resumo das suas escolhas antes de concluir.
+            </p>
+          </div>
+
+          <!-- Static Review Summary (displayed prior to clicking finish) -->
+          <div id="onboarding-summary-container"
+            class="max-w-md mx-auto p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 text-left space-y-3 text-xs">
+            <div class="flex items-center gap-2.5 text-slate-700 dark:text-slate-300">
+              <span class="text-emerald-500 font-bold text-sm">✓</span>
+              <span class="font-medium">Bibliotecas:</span>
+              <span id="finish-summary-libs" class="text-slate-500 dark:text-slate-400 ml-auto font-medium text-[11px]">Steam, GOG</span>
+              <button type="button" onclick="onboardingGoToStep(2)" title="Alterar bibliotecas"
+                class="ml-2 text-[10px] text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 font-semibold underline cursor-pointer">
+                Editar
+              </button>
+            </div>
+            <div class="flex items-center gap-2.5 text-slate-700 dark:text-slate-300">
+              <span class="text-emerald-500 font-bold text-sm">✓</span>
+              <span class="font-medium">Armazenamento:</span>
+              <span id="finish-summary-storage"
+                class="text-slate-500 dark:text-slate-400 ml-auto font-medium text-[11px] truncate max-w-[180px]">Automático</span>
+              <button type="button" onclick="onboardingGoToStep(3)" title="Alterar armazenamento"
+                class="ml-2 text-[10px] text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 font-semibold underline cursor-pointer">
+                Editar
+              </button>
+            </div>
+            <div class="flex items-center gap-2.5 text-slate-700 dark:text-slate-300">
+              <span class="text-emerald-500 font-bold text-sm">✓</span>
+              <span class="font-medium">Inicialização:</span>
+              <span id="finish-summary-startup" class="text-slate-500 dark:text-slate-400 ml-auto font-medium text-[11px]">Sim, com o computador</span>
+              <button type="button" onclick="onboardingGoToStep(4)" title="Alterar inicialização"
+                class="ml-2 text-[10px] text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 font-semibold underline cursor-pointer">
+                Editar
+              </button>
+            </div>
+            <div class="flex items-center gap-2.5 text-slate-700 dark:text-slate-300">
+              <span class="text-emerald-500 font-bold text-sm">✓</span>
+              <span class="font-medium">Modo de Interface:</span>
+              <span id="finish-summary-mode" class="text-slate-500 dark:text-slate-400 ml-auto font-medium text-[11px]">Simples</span>
+              <button type="button" onclick="onboardingGoToStep(5)" title="Alterar modo de interface"
+                class="ml-2 text-[10px] text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 font-semibold underline cursor-pointer">
+                Editar
+              </button>
+            </div>
+          </div>
+
+          <!-- Sequential Animated Preparation Checklist (displayed during finalization) -->
+          <div id="onboarding-prep-container"
+            class="hidden max-w-md mx-auto p-4.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 text-left space-y-3 text-xs">
+            <div id="prep-item-1" class="flex items-center gap-2.5 text-slate-400 dark:text-slate-500 transition-all duration-300">
+              <span id="prep-check-1" class="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] text-transparent transition-all duration-300">✓</span>
+              <span class="font-medium">Preferências salvas</span>
+            </div>
+            <div id="prep-item-2" class="flex items-center gap-2.5 text-slate-400 dark:text-slate-500 transition-all duration-300">
+              <span id="prep-check-2" class="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] text-transparent transition-all duration-300">✓</span>
+              <span class="font-medium">Bibliotecas configuradas</span>
+            </div>
+            <div id="prep-item-3" class="flex items-center gap-2.5 text-slate-400 dark:text-slate-500 transition-all duration-300">
+              <span id="prep-check-3" class="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] text-transparent transition-all duration-300">✓</span>
+              <span class="font-medium">Armazenamento preparado</span>
+            </div>
+            <div id="prep-item-4" class="flex items-center gap-2.5 text-slate-400 dark:text-slate-500 transition-all duration-300">
+              <span id="prep-check-4" class="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] text-transparent transition-all duration-300">✓</span>
+              <span class="font-medium">SaveVault pronto</span>
+            </div>
+          </div>
+
+          <div id="onboarding-ultralight-banner"
+            class="hidden max-w-md mx-auto p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/60 rounded-xl text-left text-xs text-purple-900 dark:text-purple-300">
+            💡 <strong>Modo Ultra Leve Ativado:</strong> O SaveVault operará na bandeja do sistema ao lado do relógio.
+            Você pode acessar suas opções ou abrir o aplicativo a qualquer momento clicando no ícone.
+          </div>
+
+          <div class="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button id="btn-onboarding-finish-prev" onclick="onboardingGoToStep(5)"
+              class="w-full sm:w-auto px-5 py-3 rounded-2xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer">
+              ← Voltar e editar
+            </button>
+            <button id="btn-onboarding-finish" onclick="finishOnboarding()"
+              class="w-full sm:w-64 py-3 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-semibold text-sm rounded-2xl shadow-sm transition-all cursor-pointer">
+              Concluir configuração
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Error Banner Area (Human readable) -->
+      <div id="onboarding-error-banner"
+        class="hidden mx-6 sm:mx-8 mb-2 p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 rounded-xl text-xs text-red-700 dark:text-red-300 flex items-start justify-between gap-2">
+        <div class="flex items-start gap-2">
+          <span class="text-sm">⚠️</span>
+          <p id="onboarding-error-message" class="leading-relaxed"></p>
+        </div>
+        <button onclick="dismissOnboardingError()"
+          class="text-red-400 hover:text-red-600 text-xs font-bold cursor-pointer">✕</button>
+      </div>
+
+      <!-- Modal Footer Navigation -->
+      <div id="onboarding-footer"
+        class="px-6 sm:px-8 py-4 bg-slate-50/80 dark:bg-slate-900/80 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
+        <button id="btn-onboarding-prev" onclick="onboardingPrevStep()"
+          class="hidden px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer">
+          ← Voltar
+        </button>
+        <div class="flex items-center gap-2 ml-auto">
+          <button id="btn-onboarding-next" onclick="onboardingNextStep()"
+            class="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer">
+            <span id="btn-onboarding-next-label">Continuar</span> →
           </button>
         </div>
-
-        <div id="wizard-games-container" class="border border-slate-200/90 rounded-xl bg-slate-50/50 p-3 min-h-[160px] max-h-[220px] overflow-y-auto space-y-2">
-          <div class="text-center py-8 text-slate-400 text-xs">
-            Clique em <strong>"Escanear Agora"</strong> para identificar seus jogos automaticamente.
-          </div>
-        </div>
       </div>
 
-      <!-- STEP 4: Sistema / Preferências -->
-      <div id="wizard-pane-4" class="hidden space-y-4">
-        <div>
-          <h4 class="text-sm font-bold text-slate-900">Preferências do Windows</h4>
-          <p class="text-xs text-slate-500 mt-0.5">Defina como o SaveVault deve agir no seu computador.</p>
+    </div>
+  </div>
+
+  <!-- ════ CONTAINER DE TOASTS MODERNOS ════ -->
+  <div id="toast-container"
+    class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 pointer-events-none max-w-sm w-full"></div>
+
+  <!-- ════ MODAL: CONFIRMAÇÃO MODERNA (Substitui confirm/alert) ════ -->
+  <div id="custom-confirm-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 transform transition-all">
+      <div class="flex items-start gap-3.5">
+        <div id="confirm-modal-icon"
+          class="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 flex items-center justify-center text-amber-600 dark:text-amber-400 text-xl shrink-0">
+          ⚠️
         </div>
-
-        <div class="space-y-3">
-          <div class="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl">
-            <div>
-              <p class="text-xs font-bold text-slate-800">Iniciar com o Windows</p>
-              <p class="text-[11px] text-slate-500 mt-0.5">Executa de forma silenciosa na bandeja do sistema ao ligar o PC</p>
-            </div>
-            <input type="checkbox" id="wizard-opt-autostart" checked class="w-4 h-4 accent-slate-800 cursor-pointer" />
-          </div>
-
-          <div class="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl">
-            <div>
-              <p class="text-xs font-bold text-slate-800">Notificações Discretas</p>
-              <p class="text-[11px] text-slate-500 mt-0.5">Alertas nativos rápidos do Windows após sincronização de saves</p>
-            </div>
-            <input type="checkbox" id="wizard-opt-notifications" checked class="w-4 h-4 accent-slate-800 cursor-pointer" />
-          </div>
+        <div class="flex-1">
+          <h3 id="confirm-modal-title" class="font-bold text-slate-900 dark:text-slate-100 text-base">Confirmar Ação
+          </h3>
+          <p id="confirm-modal-message"
+            class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed whitespace-pre-line"></p>
         </div>
       </div>
+      <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <button id="confirm-modal-cancel" onclick="closeConfirmModal(false)"
+          class="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+          Cancelar
+        </button>
+        <button id="confirm-modal-ok" onclick="closeConfirmModal(true)"
+          class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+          Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
 
-      <!-- STEP 5: Concluir -->
-      <div id="wizard-pane-5" class="hidden space-y-4">
-        <div class="text-center py-3">
-          <div class="text-4xl mb-2">🎉</div>
-          <h4 class="text-base font-bold text-slate-900">Configuração Pronta!</h4>
-          <p class="text-xs text-slate-500 max-w-sm mx-auto mt-0.5">
-            O SaveVault está preparado para proteger seu progresso em tempo real.
+  <!-- ════ MODAL: CENTRAL DE AJUDA & GUIA RÁPIDO ════ -->
+  <div id="help-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
+      <div
+        class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div
+            class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 font-bold text-sm">
+            ?</div>
+          <div>
+            <h3 class="font-bold text-sm">Guia do Usuário & Central de Ajuda</h3>
+            <p class="text-[11px] text-slate-300">Entenda como o SaveVault protege seus jogos</p>
+          </div>
+        </div>
+        <button onclick="closeHelpModal()"
+          class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-600 dark:text-slate-300">
+        <!-- Card 1: Como Funciona -->
+        <div
+          class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+          <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+            <span>🎮</span> O que o SaveVault faz?
+          </div>
+          <p class="leading-relaxed">
+            O SaveVault monitora os saves dos seus jogos automaticamente em segundo plano. Sempre que você salva seu
+            progresso dentro do jogo, o SaveVault detecta a mudança e cria um <strong>ponto de restauração seguro
+              (snapshot)</strong> sem você precisar pausar ou sair da partida.
           </p>
         </div>
 
-        <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
-          <div class="flex justify-between border-b border-slate-200/60 pb-2">
-            <span class="text-slate-500">Pasta de Nuvem:</span>
-            <span id="wizard-summary-cloud" class="font-semibold text-slate-800 font-mono text-[11px] max-w-[280px] truncate">—</span>
+        <!-- Card 2: Snapshots & Safety Backup -->
+        <div
+          class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+          <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+            <span>🛡️</span> Snapshots & Safety Backup (Restauração 100% Segura)
           </div>
-          <div class="flex justify-between border-b border-slate-200/60 pb-2">
-            <span class="text-slate-500">Jogos Monitorados:</span>
-            <span id="wizard-summary-games" class="font-semibold text-slate-800">0 jogo(s)</span>
+          <p class="leading-relaxed">
+            Cada snapshot é versionado (v1, v2, v3...) e protegido com integridade criptográfica
+            <strong>Blake3</strong>. Se você restaurar um save antigo na aba <em>Atividade</em>, o SaveVault cria
+            primeiro um <strong>Safety Backup</strong> do save atual. Você <strong>nunca perde progresso por
+              engano</strong>!
+          </p>
+        </div>
+
+        <!-- Card 3: Sincronização em Nuvem -->
+        <div
+          class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+          <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+            <span>☁️</span> Como funciona a Nuvem?
           </div>
-          <div class="flex justify-between border-b border-slate-200/60 pb-2">
-            <span class="text-slate-500">Iniciar com Windows:</span>
-            <span id="wizard-summary-autostart" class="font-semibold text-slate-800">Ativado</span>
+          <p class="leading-relaxed">
+            O SaveVault sincroniza com o <strong>OneDrive, Google Drive ou Dropbox</strong> usando a pasta local do seu
+            computador. Não é necessário digitar senhas nem autorizar tokens que expiram: basta o aplicativo da sua
+            nuvem estar instalado no Windows. Você pode alterar o serviço a qualquer momento na aba <em>Nuvem</em>.
+          </p>
+        </div>
+
+        <!-- Card 4: Dicas Rápidas -->
+        <div
+          class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
+          <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+            <span>💡</span> Dicas e Recursos Úteis
           </div>
-          <div class="flex justify-between">
-            <span class="text-slate-500">Notificações:</span>
-            <span id="wizard-summary-notifications" class="font-semibold text-slate-800">Ativadas</span>
-          </div>
+          <ul class="list-disc list-inside space-y-1 pl-1 text-[11px] leading-relaxed">
+            <li><strong>Segundo Plano:</strong> O SaveVault minimiza para os ícones ocultos da barra de tarefas (System
+              Tray).</li>
+            <li><strong>Lupa de Pesquisa:</strong> Use o campo de busca nas abas <em>Jogos</em> e <em>Atividade</em>
+              para localizar qualquer save imediatamente.</li>
+            <li><strong>Adicionar Jogo:</strong> Se tiver um jogo não detectado automaticamente, use o botão <em>+
+                Adicionar Jogo</em> na aba Jogos.</li>
+            <li><strong>Abrir Pasta:</strong> Clique no ícone de pastinha 📂 em qualquer card para abrir o arquivo
+              direto no Windows Explorer.</li>
+          </ul>
         </div>
       </div>
 
-    </div>
-
-    <!-- Modal Footer -->
-    <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-      <button id="btn-wizard-prev" onclick="wizardPrevStep()" class="hidden px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
-        ← Voltar
-      </button>
-      <div class="flex items-center gap-2 ml-auto">
-        <button onclick="closeSetupWizard()" class="px-3.5 py-1.5 text-slate-500 hover:text-slate-800 text-xs font-medium transition-colors">
-          Pular
-        </button>
-        <button id="btn-wizard-next" onclick="wizardNextStep()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1.5">
-          <span>Avançar</span> →
+      <div
+        class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+        <button onclick="closeHelpModal()"
+          class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+          Entendi, fechar
         </button>
       </div>
     </div>
-
   </div>
-</div>
 
-<!-- ════ CONTAINER DE TOASTS MODERNOS ════ -->
-<div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 pointer-events-none max-w-sm w-full"></div>
-
-<!-- ════ MODAL: CONFIRMAÇÃO MODERNA (Substitui confirm/alert) ════ -->
-<div id="custom-confirm-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 transform transition-all">
-    <div class="flex items-start gap-3.5">
-      <div id="confirm-modal-icon" class="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 flex items-center justify-center text-amber-600 dark:text-amber-400 text-xl shrink-0">
-        ⚠️
+  <!-- ════ MODAL: ADICIONAR JOGO MANUALMENTE ════ -->
+  <div id="add-game-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+      <div
+        class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🎮</span>
+          <h3 class="font-bold text-sm">Adicionar Jogo Manualmente</h3>
+        </div>
+        <button onclick="closeAddGameModal()"
+          class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+          ✕
+        </button>
       </div>
-      <div class="flex-1">
-        <h3 id="confirm-modal-title" class="font-bold text-slate-900 dark:text-slate-100 text-base">Confirmar Ação</h3>
-        <p id="confirm-modal-message" class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed whitespace-pre-line"></p>
-      </div>
-    </div>
-    <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-      <button id="confirm-modal-cancel" onclick="closeConfirmModal(false)" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
-        Cancelar
-      </button>
-      <button id="confirm-modal-ok" onclick="closeConfirmModal(true)" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
-        Confirmar
-      </button>
-    </div>
-  </div>
-</div>
 
-<!-- ════ MODAL: CENTRAL DE AJUDA & GUIA RÁPIDO ════ -->
-<div id="help-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
-    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-2.5">
-        <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 font-bold text-sm">?</div>
+      <div class="p-6 space-y-4">
         <div>
-          <h3 class="font-bold text-sm">Guia do Usuário & Central de Ajuda</h3>
-          <p class="text-[11px] text-slate-300">Entenda como o SaveVault protege seus jogos</p>
+          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Nome do Jogo</label>
+          <input type="text" id="add-game-name" placeholder="Ex: Hollow Knight, Elden Ring, Zelda..."
+            class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all" />
         </div>
-      </div>
-      <button onclick="closeHelpModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
-        ✕
-      </button>
-    </div>
 
-    <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-600 dark:text-slate-300">
-      <!-- Card 1: Como Funciona -->
-      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
-        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-          <span>🎮</span> O que o SaveVault faz?
-        </div>
-        <p class="leading-relaxed">
-          O SaveVault monitora os saves dos seus jogos automaticamente em segundo plano. Sempre que você salva seu progresso dentro do jogo, o SaveVault detecta a mudança e cria um <strong>ponto de restauração seguro (snapshot)</strong> sem você precisar pausar ou sair da partida.
-        </p>
-      </div>
-
-      <!-- Card 2: Snapshots & Safety Backup -->
-      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
-        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-          <span>🛡️</span> Snapshots & Safety Backup (Restauração 100% Segura)
-        </div>
-        <p class="leading-relaxed">
-          Cada snapshot é versionado (v1, v2, v3...) e protegido com integridade criptográfica <strong>Blake3</strong>. Se você restaurar um save antigo na aba <em>Atividade</em>, o SaveVault cria primeiro um <strong>Safety Backup</strong> do save atual. Você <strong>nunca perde progresso por engano</strong>!
-        </p>
-      </div>
-
-      <!-- Card 3: Sincronização em Nuvem -->
-      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
-        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-          <span>☁️</span> Como funciona a Nuvem?
-        </div>
-        <p class="leading-relaxed">
-          O SaveVault sincroniza com o <strong>OneDrive, Google Drive ou Dropbox</strong> usando a pasta local do seu computador. Não é necessário digitar senhas nem autorizar tokens que expiram: basta o aplicativo da sua nuvem estar instalado no Windows. Você pode alterar o serviço a qualquer momento na aba <em>Nuvem</em>.
-        </p>
-      </div>
-
-      <!-- Card 4: Dicas Rápidas -->
-      <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl p-4 space-y-1.5">
-        <div class="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-          <span>💡</span> Dicas e Recursos Úteis
-        </div>
-        <ul class="list-disc list-inside space-y-1 pl-1 text-[11px] leading-relaxed">
-          <li><strong>Segundo Plano:</strong> O SaveVault minimiza para os ícones ocultos da barra de tarefas (System Tray).</li>
-          <li><strong>Lupa de Pesquisa:</strong> Use o campo de busca nas abas <em>Jogos</em> e <em>Atividade</em> para localizar qualquer save imediatamente.</li>
-          <li><strong>Adicionar Jogo:</strong> Se tiver um jogo não detectado automaticamente, use o botão <em>+ Adicionar Jogo</em> na aba Jogos.</li>
-          <li><strong>Abrir Pasta:</strong> Clique no ícone de pastinha 📂 em qualquer card para abrir o arquivo direto no Windows Explorer.</li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-      <button onclick="closeHelpModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
-        Entendi, fechar
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ════ MODAL: ADICIONAR JOGO MANUALMENTE ════ -->
-<div id="add-game-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
-    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-2">
-        <span class="text-base">🎮</span>
-        <h3 class="font-bold text-sm">Adicionar Jogo Manualmente</h3>
-      </div>
-      <button onclick="closeAddGameModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
-        ✕
-      </button>
-    </div>
-
-    <div class="p-6 space-y-4">
-      <div>
-        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Nome do Jogo</label>
-        <input
-          type="text"
-          id="add-game-name"
-          placeholder="Ex: Hollow Knight, Elden Ring, Zelda..."
-          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-        />
-      </div>
-
-      <div>
-        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Caminho da Pasta ou Arquivo de Save</label>
-        <input
-          type="text"
-          id="add-game-path"
-          placeholder="Ex: C:\Users\SeuNome\AppData\LocalLow\Team Cherry\Hollow Knight"
-          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-        />
-        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-          💡 Dica: Cole o caminho da pasta onde o jogo grava os saves (ex: em AppData, Saved Games ou Documents).
-        </p>
-      </div>
-    </div>
-
-    <div class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
-      <button onclick="closeAddGameModal()" class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
-        Cancelar
-      </button>
-      <button onclick="submitAddGame()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
-        Salvar e Monitorar
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ════ MODAL: ALTERAR PROVEDOR / PASTA DA NUVEM ════ -->
-<div id="cloud-config-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
-    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-2">
-        <span class="text-base">☁️</span>
-        <h3 class="font-bold text-sm">Configurar Sincronização em Nuvem</h3>
-      </div>
-      <button onclick="closeCloudConfigModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
-        ✕
-      </button>
-    </div>
-
-    <div class="p-6 space-y-4">
-      <div>
-        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">Serviços Detectados no seu PC</label>
-        <div id="cloud-modal-detected-list" class="space-y-2">
-          <!-- Populado dinamicamente com opções do OneDrive, Google Drive, Dropbox -->
-        </div>
-      </div>
-
-      <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
-        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Ou especifique uma Pasta Personalizada</label>
-        <input
-          type="text"
-          id="cloud-modal-custom-path"
-          placeholder="Ex: D:\Nuvem\SaveVault ou E:\Backups\SaveVault"
-          class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-        />
-        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-          Você pode usar qualquer pasta local, pen drive ou pasta compartilhada de rede (NAS).
-        </p>
-      </div>
-    </div>
-
-    <div class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
-      <button onclick="closeCloudConfigModal()" class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
-        Cancelar
-      </button>
-      <button onclick="submitCloudConfig()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
-        Salvar Configuração
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ════ MODAL: DETALHES DO JOGO ════ -->
-<div id="game-details-modal" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-  <div class="w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
-    <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-3">
-        <div id="game-details-avatar" class="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center text-white font-bold text-xs shrink-0">
-          🎮
-        </div>
         <div>
-          <h3 id="game-details-title" class="font-bold text-sm">Detalhes do Jogo</h3>
-          <p id="game-details-subtitle" class="text-[11px] text-slate-300 font-mono truncate max-w-sm"></p>
-        </div>
-      </div>
-      <button onclick="closeGameDetailsModal()" class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
-        ✕
-      </button>
-    </div>
-
-    <div class="p-6 overflow-y-auto space-y-4">
-      <!-- Info Bar -->
-      <div class="grid grid-cols-2 gap-3 text-xs">
-        <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
-          <p class="text-slate-400 text-[11px]">Plataforma</p>
-          <p id="game-details-platform" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
-        </div>
-        <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
-          <p class="text-slate-400 text-[11px]">Arquivos Monitorados</p>
-          <p id="game-details-files-count" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
+          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Caminho da Pasta ou Arquivo de
+            Save</label>
+          <input type="text" id="add-game-path"
+            placeholder="Ex: C:\Users\SeuNome\AppData\LocalLow\Team Cherry\Hollow Knight"
+            class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all" />
+          <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+            💡 Dica: Cole o caminho da pasta onde o jogo grava os saves (ex: em AppData, Saved Games ou Documents).
+          </p>
         </div>
       </div>
 
-      <!-- Action buttons -->
-      <div class="flex items-center gap-2">
-        <button id="game-details-btn-open-folder" class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
-          <span>📂</span> Abrir no Windows Explorer
+      <div
+        class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
+        <button onclick="closeAddGameModal()"
+          class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
+          Cancelar
         </button>
-        <button id="game-details-btn-scan" class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
-          <span>🔍</span> Fazer Scan Agora
+        <button onclick="submitAddGame()"
+          class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+          Salvar e Monitorar
         </button>
       </div>
-
-      <!-- Snapshots desse jogo -->
-      <div>
-        <h4 class="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Snapshots Recentes deste Jogo</h4>
-        <div id="game-details-snapshots-list" class="space-y-2">
-          <!-- Populado dinamicamente -->
-        </div>
-      </div>
-    </div>
-
-    <div class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-      <button onclick="closeGameDetailsModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
-        Fechar
-      </button>
     </div>
   </div>
-</div>
+
+  <!-- ════ MODAL: ALTERAR PROVEDOR / PASTA DA NUVEM ════ -->
+  <div id="cloud-config-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+      <div
+        class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <span class="text-base">☁️</span>
+          <h3 class="font-bold text-sm">Configurar Sincronização em Nuvem</h3>
+        </div>
+        <button onclick="closeCloudConfigModal()"
+          class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">Serviços Detectados no seu
+            PC</label>
+          <div id="cloud-modal-detected-list" class="space-y-2">
+            <!-- Populado dinamicamente com opções do OneDrive, Google Drive, Dropbox -->
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
+          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Ou especifique uma Pasta
+            Personalizada</label>
+          <input type="text" id="cloud-modal-custom-path" placeholder="Ex: D:\Nuvem\SaveVault ou E:\Backups\SaveVault"
+            class="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all" />
+          <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+            Você pode usar qualquer pasta local, pen drive ou pasta compartilhada de rede (NAS).
+          </p>
+        </div>
+      </div>
+
+      <div
+        class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2 shrink-0">
+        <button onclick="closeCloudConfigModal()"
+          class="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium transition-colors">
+          Cancelar
+        </button>
+        <button onclick="submitCloudConfig()"
+          class="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer">
+          Salvar Configuração
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: DETALHES DO JOGO ════ -->
+  <div id="game-details-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]">
+      <div
+        class="px-6 py-4 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+          <div id="game-details-avatar"
+            class="w-20 h-10 sm:w-24 sm:h-12 rounded-xl bg-slate-800 border border-slate-700/60 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden shadow-xs">
+            <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="6" width="20" height="12" rx="4"></rect>
+              <line x1="6" y1="12" x2="10" y2="12"></line>
+              <line x1="8" y1="10" x2="8" y2="14"></line>
+              <line x1="15" y1="11" x2="15.01" y2="11"></line>
+              <line x1="18" y1="13" x2="18.01" y2="13"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 id="game-details-title" class="font-bold text-sm">Detalhes do Jogo</h3>
+            <p id="game-details-subtitle" class="text-[11px] text-slate-300 font-mono truncate max-w-sm"></p>
+          </div>
+        </div>
+        <button onclick="closeGameDetailsModal()"
+          class="w-7 h-7 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition-colors">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-6 overflow-y-auto space-y-4">
+        <!-- Info Bar -->
+        <div class="grid grid-cols-2 gap-3 text-xs">
+          <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
+            <p class="text-slate-400 text-[11px]">Plataforma</p>
+            <p id="game-details-platform" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
+          </div>
+          <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
+            <p class="text-slate-400 text-[11px]">Arquivos Monitorados</p>
+            <p id="game-details-files-count" class="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">—</p>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex items-center gap-2">
+          <button id="game-details-btn-open-folder"
+            class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+            <span>📂</span> Abrir no Windows Explorer
+          </button>
+          <button id="game-details-btn-scan"
+            class="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+            <span>🔍</span> Fazer Scan Agora
+          </button>
+        </div>
+
+        <!-- Snapshots desse jogo -->
+        <div>
+          <h4 class="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Snapshots Recentes deste Jogo</h4>
+          <div id="game-details-snapshots-list" class="space-y-2">
+            <!-- Populado dinamicamente -->
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="px-6 py-3 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+        <button onclick="closeGameDetailsModal()"
+          class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+          Fechar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: REMAPEAMENTO DE SAVES MULTIPLATAFORMA (AUD-03) ════ -->
+  <div id="remapping-modal"
+    class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div
+      class="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[90vh]">
+      <div
+        class="px-6 py-4 bg-gradient-to-r from-amber-600 to-amber-700 text-white flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🔀</span>
+          <h3 class="font-bold text-sm">Remapeamento de Saves Multiplataforma</h3>
+        </div>
+        <button onclick="closeRemappingModal()"
+          class="w-7 h-7 rounded-lg hover:bg-white/10 text-white/80 hover:text-white flex items-center justify-center transition-colors">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-6 overflow-y-auto space-y-4">
+        <p class="text-xs text-slate-500 dark:text-slate-400">
+          Os seguintes locais de save foram recuperados de outra máquina ou não existem neste computador. Escolha ou
+          confirme a pasta local correspondente para que os próximos restores e sincronizações funcionem com segurança.
+        </p>
+
+        <div id="remapping-items-list" class="space-y-4">
+          <!-- Itens de remapeamento gerados dinamicamente via JS -->
+        </div>
+      </div>
+
+      <div
+        class="px-6 py-3.5 bg-slate-50 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between shrink-0">
+        <span class="text-xs text-slate-400">A pasta original é preservada para fins de auditoria e disaster
+          recovery.</span>
+        <button onclick="closeRemappingModal()"
+          class="px-4 py-2 bg-slate-800 hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+          Fechar
+        </button>
+      </div>
+    </div>
+  </div>
 
 </body>
+
 </html>

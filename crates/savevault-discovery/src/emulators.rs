@@ -5,7 +5,6 @@ use anyhow::Result;
 use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use std::path::PathBuf;
 use tracing::debug;
-use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredEmulator {
@@ -39,12 +38,8 @@ impl EmulatorDetector {
                         None,
                         Confidence::High,
                     );
-                    let location = SaveLocation {
-                        id: Uuid::new_v4(),
-                        game_id: game.id,
-                        path: path.clone(),
-                        location_type: SaveLocationType::Directory,
-                    };
+                    let location =
+                        SaveLocation::new(game.id, path.clone(), SaveLocationType::Directory);
                     results.push(DiscoveredEmulator {
                         game,
                         save_locations: vec![location],
@@ -106,4 +101,18 @@ fn get_documents_dir() -> String {
     // Tenta via USERPROFILE\Documents (fallback simples)
     let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
     format!("{}\\Documents", userprofile)
+}
+
+/// Retorna emuladores que possuem pastas existentes no sistema.
+pub fn find_installed_emulators() -> Vec<(String, PathBuf)> {
+    let mut found = Vec::new();
+    for (_, name, paths) in emulator_profiles() {
+        for path in paths {
+            if path.exists() {
+                found.push((name.to_string(), path));
+                break;
+            }
+        }
+    }
+    found
 }

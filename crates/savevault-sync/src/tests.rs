@@ -70,15 +70,23 @@ impl MockCloudProvider {
 
 #[async_trait]
 impl CloudProvider for MockCloudProvider {
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> anyhow::Result<String> {
+    async fn upload(
+        &self,
+        local_path: &Path,
+        cloud_path: &str,
+    ) -> savevault_cloud::CloudResult<String> {
         if self.permanent_failure.load(Ordering::SeqCst) {
-            anyhow::bail!("Erro de rede permanente simulado no CloudProvider");
+            return Err(savevault_cloud::CloudError::Network(
+                "Erro de rede permanente simulado no CloudProvider".into(),
+            ));
         }
 
         let remaining = self.fail_uploads_remaining.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_uploads_remaining.fetch_sub(1, Ordering::SeqCst);
-            anyhow::bail!("Erro temporário simulado de rede/timeout na Cloud");
+            return Err(savevault_cloud::CloudError::Network(
+                "Erro temporário simulado de rede/timeout na Cloud".into(),
+            ));
         }
 
         self.uploaded_files
@@ -89,15 +97,26 @@ impl CloudProvider for MockCloudProvider {
         Ok(remote_id)
     }
 
-    async fn download(&self, _remote_file_id: &str, _local_path: &Path) -> anyhow::Result<()> {
+    async fn download(
+        &self,
+        _remote_file_id: &str,
+        _local_path: &Path,
+    ) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, remote_file_id: &str) -> anyhow::Result<()> {
+    async fn delete(&self, remote_file_id: &str) -> savevault_cloud::CloudResult<()> {
         self.deleted_files
             .lock()
             .unwrap()
             .push(remote_file_id.to_string());
+        Ok(())
+    }
+
+    async fn save_manifest(
+        &self,
+        _manifest: &savevault_cloud::CloudCatalogManifest,
+    ) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 }
@@ -129,12 +148,11 @@ fn create_test_hierarchy(
     );
     games_repo.insert(&game).unwrap();
 
-    let loc = SaveLocation {
-        id: Uuid::new_v4(),
-        game_id: game.id,
-        path: PathBuf::from(r"C:\Saves\SyncTestGame"),
-        location_type: SaveLocationType::Directory,
-    };
+    let loc = SaveLocation::new(
+        game.id,
+        PathBuf::from(r"C:\Saves\SyncTestGame"),
+        SaveLocationType::Directory,
+    );
     loc_repo.insert(&loc).unwrap();
 
     let file_id = Uuid::new_v4();

@@ -201,12 +201,7 @@ fn detect_save_paths_from_registry(
         if let Ok(raw_path) = game_key.get_value::<String, _>(field) {
             let p = PathBuf::from(&raw_path);
             if p.exists() && p.is_dir() {
-                paths.push(SaveLocation {
-                    id: Uuid::new_v4(),
-                    game_id,
-                    path: p,
-                    location_type: SaveLocationType::Directory,
-                });
+                paths.push(SaveLocation::new(game_id, p, SaveLocationType::Directory));
             }
         }
     }
@@ -217,12 +212,11 @@ fn detect_save_paths_from_registry(
             for subfolder in &["saves", "save", "Saves", "Save", "savegames", "SaveGames"] {
                 let candidate = base.join(subfolder);
                 if candidate.exists() {
-                    paths.push(SaveLocation {
-                        id: Uuid::new_v4(),
+                    paths.push(SaveLocation::new(
                         game_id,
-                        path: candidate,
-                        location_type: SaveLocationType::Directory,
-                    });
+                        candidate,
+                        SaveLocationType::Directory,
+                    ));
                     break;
                 }
             }
@@ -287,12 +281,11 @@ fn detect_save_paths_in_folder(game_id: Uuid, base: &Path) -> Vec<SaveLocation> 
     for subfolder in &["saves", "save", "Saves", "Save", "savegames", "SaveGames"] {
         let candidate = base.join(subfolder);
         if candidate.exists() {
-            paths.push(SaveLocation {
-                id: Uuid::new_v4(),
+            paths.push(SaveLocation::new(
                 game_id,
-                path: candidate,
-                location_type: SaveLocationType::Directory,
-            });
+                candidate,
+                SaveLocationType::Directory,
+            ));
             break;
         }
     }
@@ -303,7 +296,7 @@ fn detect_save_paths_in_folder(game_id: Uuid, base: &Path) -> Vec<SaveLocation> 
 // Detecção da pasta raiz do GOG Galaxy
 // ---------------------------------------------------------------------------
 
-fn find_gog_root() -> Option<PathBuf> {
+pub fn find_gog_root() -> Option<PathBuf> {
     // Primeiro tenta extrair do registro a pasta de instalação do Galaxy
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     for reg_path in &[

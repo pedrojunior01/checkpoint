@@ -541,4 +541,38 @@ DOOM:
             }
         }
     }
+
+    mod run_filtered_tests {
+        use tempfile::tempdir;
+
+        #[tokio::test]
+        async fn run_filtered_with_empty_selection_returns_empty() {
+            let dir = tempdir().unwrap();
+            let res = crate::run_filtered(dir.path(), &[]).await.unwrap();
+            assert_eq!(res.games.len(), 0);
+            assert_eq!(res.save_locations.len(), 0);
+        }
+
+        #[tokio::test]
+        async fn run_filtered_with_nonexistent_cache_dir_returns_ok() {
+            let dir = tempdir().unwrap();
+            let cache_path = dir.path().join("does_not_exist");
+            let res = crate::run_filtered(&cache_path, &["steam".into()])
+                .await
+                .unwrap();
+            // Should succeed without panicking even if Steam isn't installed
+            let _ = res.games;
+        }
+
+        #[test]
+        fn library_detectors_can_be_queried() {
+            let _steam_root = crate::steam::find_steam_root();
+            let _gog_root = crate::gog::find_gog_root();
+            let emus = crate::emulators::find_installed_emulators();
+            for (name, path) in emus {
+                assert!(!name.is_empty());
+                assert!(path.exists());
+            }
+        }
+    }
 }

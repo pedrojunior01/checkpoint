@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "checkpoint",
+  "productName": "SaveVault",
   "version": "0.1.0",
-  "identifier": "com.checkpoint.desktop",
+  "identifier": "com.savevault.desktop",
   "build": {
     "frontendDist": "./ui/frontend"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "checkpoint",
+        "title": "SaveVault",
         "width": 1040,
         "height": 720,
         "minWidth": 860,
@@ -26,10 +26,10 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://shared.cloudflare.steamstatic.com https://cdn.cloudflare.steamstatic.com https://steamcdn-a.akamaihd.net; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self';"
     },
     "trayIcon": {
-      "id": "checkpoint-tray",
+      "id": "savevault-tray",
       "iconPath": "icons/32x32.png",
       "iconAsTemplate": false,
       "menuOnLeftClick": false

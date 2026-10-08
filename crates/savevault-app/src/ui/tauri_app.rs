@@ -7,9 +7,9 @@ use tauri::{
 use uuid::Uuid;
 
 use crate::ui::state::{
-    open_path_in_explorer, CloudConfigView, DashboardSummary, DevUiState, DiscoveredGameView,
-    LocationView, ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SetupStatusView,
-    SnapshotView,
+    open_path_in_explorer, CloudConfigView, DashboardSummary, DetectedLibraryView, DevUiState,
+    DiscoveredGameView, LocationView, OnboardingRequest, ReconciliationView, RestoreApiResponse,
+    SafetyBackupGroup, SetupStatusView, SnapshotView,
 };
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -58,6 +58,11 @@ pub async fn trigger_reconcile(state: State<'_, Arc<DevUiState>>) -> Result<Stri
 }
 
 #[tauri::command]
+pub async fn trigger_sync(state: State<'_, Arc<DevUiState>>) -> Result<usize, String> {
+    state.trigger_sync().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn restore_snapshot(
     state: State<'_, Arc<DevUiState>>,
     snapshot_id: String,
@@ -80,10 +85,37 @@ pub async fn get_setup_status(
 }
 
 #[tauri::command]
+pub async fn get_available_libraries(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<Vec<DetectedLibraryView>, String> {
+    state.get_available_libraries().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn complete_onboarding(
+    state: State<'_, Arc<DevUiState>>,
+    req: OnboardingRequest,
+) -> Result<SetupStatusView, String> {
+    state
+        .complete_onboarding(req)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn skip_onboarding(state: State<'_, Arc<DevUiState>>) -> Result<SetupStatusView, String> {
+    state.skip_onboarding().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn run_setup_discovery(
     state: State<'_, Arc<DevUiState>>,
+    selected_libraries: Option<Vec<String>>,
 ) -> Result<Vec<DiscoveredGameView>, String> {
-    state.run_setup_discovery().await.map_err(|e| e.to_string())
+    state
+        .run_setup_discovery_filtered(selected_libraries)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -211,6 +243,51 @@ pub async fn export_backup_zip(
     state.export_backup_zip().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_pending_remappings(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<Vec<crate::remapping::PendingMappingView>, String> {
+    state
+        .get_pending_remappings()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn validate_remapping_path(
+    state: State<'_, Arc<DevUiState>>,
+    candidate_path: String,
+) -> Result<crate::remapping::ValidationResult, String> {
+    Ok(state.validate_remapping_path(&candidate_path).await)
+}
+
+#[tauri::command]
+pub async fn apply_remapping(
+    state: State<'_, Arc<DevUiState>>,
+    location_id: String,
+    new_path: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
+    state
+        .apply_remapping(id, &new_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reset_remapping(
+    state: State<'_, Arc<DevUiState>>,
+    location_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
+    state.reset_remapping(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn pick_folder(state: State<'_, Arc<DevUiState>>) -> Result<Option<String>, String> {
+    state.pick_folder_dialog().await.map_err(|e| e.to_string())
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -225,14 +302,19 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
             get_safety_backups,
             get_reconciliation_status,
             trigger_reconcile,
+            trigger_sync,
             restore_snapshot,
             get_setup_status,
+            get_available_libraries,
+            complete_onboarding,
+            skip_onboarding,
             run_setup_discovery,
             get_cloud_folders,
             save_setup_cloud,
             complete_setup,
             add_game,
             open_folder,
+            pick_folder,
             get_cloud_config,
             update_cloud_config,
             hide_window,
@@ -240,21 +322,31 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
             toggle_maximize_window,
             optimize_database,
             export_backup_zip,
+            get_pending_remappings,
+            validate_remapping_path,
+            apply_remapping,
+            reset_remapping,
         ])
         .setup(move |app| {
-            // Configura System Tray
-            let show_item = MenuItemBuilder::with_id("show", "Abrir checkpoint").build(app)?;
-            let hide_item = MenuItemBuilder::with_id("hide", "Ocultar").build(app)?;
+            // Configura System Tray moderno e enriquecido
+            let status_item = MenuItemBuilder::with_id("status", "✓ Status: Protegido")
+                .enabled(false)
+                .build(app)?;
+            let show_item = MenuItemBuilder::with_id("show", "🖥️ Abrir SaveVault").build(app)?;
             let reconcile_item =
-                MenuItemBuilder::with_id("reconcile", "Reconciliar Agora").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Sair do checkpoint").build(app)?;
+                MenuItemBuilder::with_id("reconcile", "🔄 Sincronizar / Verificar").build(app)?;
+            let games_item = MenuItemBuilder::with_id("games", "🎮 Ver Jogos").build(app)?;
+            let config_item = MenuItemBuilder::with_id("config", "⚙️ Configurações").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "❌ Sair").build(app)?;
 
             let menu = MenuBuilder::new(app)
+                .item(&status_item)
+                .separator()
                 .item(&show_item)
-                .item(&hide_item)
-                .separator()
                 .item(&reconcile_item)
+                .item(&games_item)
                 .separator()
+                .item(&config_item)
                 .item(&quit_item)
                 .build()?;
 
@@ -277,7 +369,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
             if let Some(ic) = tray_icon {
                 TrayIconBuilder::new()
                     .icon(ic)
-                    .tooltip("checkpoint — Proteção de Saves")
+                    .tooltip("SaveVault — Proteção de Saves")
                     .menu(&menu)
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "show" => {
@@ -287,9 +379,20 @@ pub fn run_tauri_app(state: Arc<DevUiState>, start_minimized: bool) -> anyhow::R
                                 let _ = win.set_focus();
                             }
                         }
-                        "hide" => {
+                        "games" => {
                             if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.hide();
+                                let _ = win.show();
+                                let _ = win.unminimize();
+                                let _ = win.set_focus();
+                                let _ = win.eval("if (window.showTab) { window.showTab('nav-jogos'); }");
+                            }
+                        }
+                        "config" => {
+                            if let Some(win) = app.get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.unminimize();
+                                let _ = win.set_focus();
+                                let _ = win.eval("if (window.showTab) { window.showTab('nav-config'); }");
                             }
                         }
                         "reconcile" => {

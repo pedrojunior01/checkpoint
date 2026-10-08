@@ -48,6 +48,71 @@ mod tests {
             cfg.save(&path).expect("deve criar diretórios e salvar");
             assert!(path.exists());
         }
+
+        #[test]
+        fn default_config_includes_interface_mode_and_selected_libraries() {
+            let cfg = Config::default();
+            assert_eq!(
+                cfg.general.interface_mode,
+                crate::config::InterfaceMode::Basic
+            );
+            assert_eq!(
+                cfg.general.selected_libraries,
+                vec!["steam", "gog", "emulators", "generic"]
+            );
+            assert!(!cfg.general.setup_completed);
+        }
+
+        #[test]
+        fn config_serializes_and_deserializes_interface_modes() {
+            let dir = tempdir().unwrap();
+            for mode in [
+                crate::config::InterfaceMode::Basic,
+                crate::config::InterfaceMode::Advanced,
+                crate::config::InterfaceMode::UltraLight,
+            ] {
+                let path = dir.path().join(format!("config_{:?}.toml", mode));
+                let mut cfg = Config::default();
+                cfg.general.interface_mode = mode;
+                cfg.general.selected_libraries = vec!["steam".into()];
+                cfg.save(&path).expect("salvar config");
+
+                let loaded = Config::load(&path).expect("carregar config");
+                assert_eq!(loaded.general.interface_mode, mode);
+                assert_eq!(loaded.general.selected_libraries, vec!["steam"]);
+            }
+        }
+
+        #[test]
+        fn legacy_config_toml_without_interface_mode_uses_default() {
+            let legacy_toml = r#"
+[general]
+max_versions = 5
+log_level = "debug"
+debounce_ms = 1000
+reconciliation_interval_secs = 20
+autostart = true
+device_name = "Legacy-PC"
+setup_completed = true
+
+[cloud]
+provider = "none"
+
+[paths]
+backup_dir = "C:\\backups"
+database_path = "C:\\savevault.db"
+"#;
+            let loaded: Config = toml::from_str(legacy_toml).expect("parse legacy toml");
+            assert_eq!(
+                loaded.general.interface_mode,
+                crate::config::InterfaceMode::Basic
+            );
+            assert_eq!(
+                loaded.general.selected_libraries,
+                vec!["steam", "gog", "emulators", "generic"]
+            );
+            assert!(loaded.general.setup_completed);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -116,6 +181,7 @@ mod tests {
                 game_id: Uuid::new_v4(),
                 path: PathBuf::from(r"C:\Users\pedro\AppData\Roaming\StardewValley\Saves"),
                 location_type: SaveLocationType::Directory,
+                ..Default::default()
             };
             assert_eq!(loc.location_type, SaveLocationType::Directory);
             assert!(loc.is_directory());

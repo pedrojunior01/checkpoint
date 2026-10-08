@@ -10,3 +10,6 @@ Cargo.lock
 .vs/
 
 .vs/
+
+*.exe
+*.dll

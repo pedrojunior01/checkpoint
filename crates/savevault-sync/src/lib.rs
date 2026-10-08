@@ -58,7 +58,7 @@ impl SyncEngineConfig {
 // ---------------------------------------------------------------------------
 
 /// Motor de sincronização de backups com a cloud.
-pub struct SyncEngine<P: CloudProvider> {
+pub struct SyncEngine<P: CloudProvider = Box<dyn CloudProvider>> {
     provider: P,
     /// Diretório raiz onde os snapshots locais estão armazenados.
     /// Deve coincidir com o `backup_root` do `SnapshotManager`.
@@ -87,6 +87,11 @@ impl<P: CloudProvider> SyncEngine<P> {
             backup_root,
             config,
         }
+    }
+
+    /// Retorna uma referência ao diretório raiz de backups utilizado pela engine.
+    pub fn backup_root(&self) -> &std::path::Path {
+        &self.backup_root
     }
 
     /// Processa todos os itens pendentes na fila de sync da SQLite.
@@ -595,9 +600,8 @@ impl<P: CloudProvider> SyncEngine<P> {
         let drive_file_id = self.provider.upload(&local_path, &cloud_path).await?;
 
         // Atualiza manifesto remoto para possibilitar Disaster Recovery em novos PCs (F-05)
-        let _ = self
-            .update_manifest(file_id, version, &cloud_path, &drive_file_id, conn)
-            .await;
+        self.update_manifest(file_id, version, &cloud_path, &drive_file_id, conn)
+            .await?;
 
         Ok((cloud_path, drive_file_id))
     }
@@ -657,7 +661,7 @@ impl<P: CloudProvider> SyncEngine<P> {
             });
             manifest.entries.push(entry);
 
-            let _ = self.provider.save_manifest(&manifest).await;
+            self.provider.save_manifest(&manifest).await?;
         }
 
         Ok(())
@@ -689,6 +693,15 @@ pub fn resolve_active_cloud_provider(
     provider_name: &str,
     backup_root: &std::path::Path,
 ) -> Box<dyn CloudProvider> {
+    resolve_active_cloud_provider_with_path(provider_name, backup_root, None)
+}
+
+/// Resolve dinamicamente o provedor de nuvem ativo, aceitando opcionalmente uma pasta local personalizada.
+pub fn resolve_active_cloud_provider_with_path(
+    provider_name: &str,
+    backup_root: &std::path::Path,
+    custom_local_path: Option<&std::path::Path>,
+) -> Box<dyn CloudProvider> {
     match provider_name.to_lowercase().as_str() {
         "google_drive" | "gdrive" => {
             if let Some(gdrive) = savevault_cloud::GoogleDriveProvider::from_env() {
@@ -697,7 +710,7 @@ pub fn resolve_active_cloud_provider(
                 tracing::warn!(
                     "Credenciais do Google Drive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
                 );
-                resolve_local_cloud_provider(backup_root)
+                resolve_local_cloud_provider(backup_root, custom_local_path)
             }
         }
         "onedrive" => {
@@ -707,17 +720,24 @@ pub fn resolve_active_cloud_provider(
                 tracing::warn!(
                     "Credenciais do OneDrive não configuradas ou incompletas no ambiente. Usando pasta local de nuvem como fallback."
                 );
-                resolve_local_cloud_provider(backup_root)
+                resolve_local_cloud_provider(backup_root, custom_local_path)
             }
         }
-        _ => resolve_local_cloud_provider(backup_root),
+        _ => resolve_local_cloud_provider(backup_root, custom_local_path),
     }
 }
 
-fn resolve_local_cloud_provider(backup_root: &std::path::Path) -> Box<dyn CloudProvider> {
-    let sync_path = std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
-        .map(std::path::PathBuf::from)
-        .ok()
+fn resolve_local_cloud_provider(
+    backup_root: &std::path::Path,
+    custom_local_path: Option<&std::path::Path>,
+) -> Box<dyn CloudProvider> {
+    let sync_path = custom_local_path
+        .map(|p| p.to_path_buf())
+        .or_else(|| {
+            std::env::var("SAVEVAULT_LOCAL_SYNC_PATH")
+                .map(std::path::PathBuf::from)
+                .ok()
+        })
         .or_else(|| {
             savevault_cloud::detect_cloud_folders()
                 .into_iter()
@@ -735,10 +755,24 @@ pub async fn process_queue_active_provider(
     backup_root: std::path::PathBuf,
     provider_name: &str,
 ) -> Result<usize> {
+    process_queue_active_provider_with_path(conn, backup_root, provider_name, None).await
+}
+
+/// Processa a fila de sync usando o provedor de nuvem ativo configurado e caminho local opcional.
+pub async fn process_queue_active_provider_with_path(
+    conn: &Connection,
+    backup_root: std::path::PathBuf,
+    provider_name: &str,
+    custom_local_path: Option<&std::path::Path>,
+) -> Result<usize> {
     match provider_name.to_lowercase().as_str() {
         "none" | "disabled" | "offline" => Ok(0),
         _ => {
-            let provider = resolve_active_cloud_provider(provider_name, &backup_root);
+            let provider = resolve_active_cloud_provider_with_path(
+                provider_name,
+                &backup_root,
+                custom_local_path,
+            );
             let engine = SyncEngine::new(provider, backup_root);
             engine.process_queue(conn).await
         }
@@ -751,10 +785,24 @@ pub async fn process_queue_active_provider_unlocked(
     backup_root: std::path::PathBuf,
     provider_name: &str,
 ) -> Result<usize> {
+    process_queue_active_provider_unlocked_with_path(db, backup_root, provider_name, None).await
+}
+
+/// Processa a fila de sync sem reter o Mutex do banco, aceitando caminho de sincronização local customizado.
+pub async fn process_queue_active_provider_unlocked_with_path(
+    db: &std::sync::Arc<tokio::sync::Mutex<Connection>>,
+    backup_root: std::path::PathBuf,
+    provider_name: &str,
+    custom_local_path: Option<&std::path::Path>,
+) -> Result<usize> {
     match provider_name.to_lowercase().as_str() {
         "none" | "disabled" | "offline" => Ok(0),
         _ => {
-            let provider = resolve_active_cloud_provider(provider_name, &backup_root);
+            let provider = resolve_active_cloud_provider_with_path(
+                provider_name,
+                &backup_root,
+                custom_local_path,
+            );
             let engine = SyncEngine::new(provider, backup_root);
             engine.process_queue_unlocked(db).await
         }

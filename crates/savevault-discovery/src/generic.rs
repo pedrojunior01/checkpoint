@@ -18,7 +18,6 @@ use anyhow::Result;
 use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
-use uuid::Uuid;
 use walkdir::WalkDir;
 
 /// Extensões de arquivo que indicam save games com alta probabilidade.
@@ -123,16 +122,15 @@ impl GenericDetector {
                 let game = Game::new(game_name, Platform::Generic, None, confidence);
                 let game_id = game.id;
 
-                let loc = SaveLocation {
-                    id: Uuid::new_v4(),
+                let loc = SaveLocation::new(
                     game_id,
-                    path: candidate.path.clone(),
-                    location_type: if candidate.is_directory {
+                    candidate.path.clone(),
+                    if candidate.is_directory {
                         SaveLocationType::Directory
                     } else {
                         SaveLocationType::File
                     },
-                };
+                );
 
                 results.push(GenericGameInfo {
                     game,

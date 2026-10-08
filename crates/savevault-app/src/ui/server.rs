@@ -10,8 +10,8 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::assets::{APP_JS, INDEX_HTML};
-use super::state::{open_path_in_explorer, DevUiEventLevel, DevUiState};
+use super::assets::{APP_JS, INDEX_HTML, TAILWIND_CSS};
+use super::state::{open_path_in_explorer, DevUiEventLevel, DevUiState, OnboardingRequest};
 
 #[derive(Debug, Deserialize)]
 struct RestorePayload {
@@ -22,6 +22,11 @@ struct RestorePayload {
 #[derive(Debug, Deserialize)]
 struct ScanPayload {
     location_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetupScanPayload {
+    selected_libraries: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +59,22 @@ struct CloudUpdatePayload {
     provider: Option<String>,
     local_sync_path: Option<String>,
     enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemappingValidatePayload {
+    candidate_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemappingApplyPayload {
+    location_id: Uuid,
+    new_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemappingResetPayload {
+    location_id: Uuid,
 }
 
 /// Executa o loop principal do servidor HTTP atendendo conexões concorrentes até receber sinal de shutdown.
@@ -281,6 +302,17 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             .await?;
         }
 
+        ("GET", "/tailwind.css") => {
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "text/css; charset=utf-8",
+                TAILWIND_CSS,
+            )
+            .await?;
+        }
+
         ("GET", "/favicon.ico") => {
             send_bytes_response(
                 &mut stream,
@@ -486,6 +518,33 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             }
         }
 
+        // Disparo manual de sincronização em nuvem
+        ("POST", "/api/sync-now") | ("POST", "/api/sync") => match state.trigger_sync().await {
+            Ok(count) => {
+                let json = serde_json::json!({
+                    "success": true,
+                    "synced_count": count,
+                })
+                .to_string();
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({
+                    "success": false,
+                    "error": e.to_string()
+                })
+                .to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
+
         // -------------------------------------------------------------
         // REST: Restauração com Safety Backup
         // -------------------------------------------------------------
@@ -566,7 +625,7 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         }
 
         // -------------------------------------------------------------
-        // REST: Assistente de Primeiro Acesso (Setup Wizard)
+        // REST: Assistente de Primeiro Acesso (Setup Wizard e Onboarding)
         // -------------------------------------------------------------
         ("GET", "/api/setup/status") => match state.get_setup_status().await {
             Ok(status) => {
@@ -586,18 +645,13 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
             }
         },
 
-        ("POST", "/api/setup/scan") => match state.run_setup_discovery().await {
-            Ok(games) => {
-                let json = serde_json::json!({
-                    "success": true,
-                    "games": games
-                })
-                .to_string();
+        ("GET", "/api/setup/libraries") => match state.get_available_libraries() {
+            Ok(libraries) => {
+                let json = serde_json::to_string(&libraries)?;
                 send_response(&mut stream, 200, "OK", "application/json", &json).await?;
             }
             Err(e) => {
-                let err_json =
-                    serde_json::json!({ "success": false, "error": e.to_string() }).to_string();
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
                 send_response(
                     &mut stream,
                     500,
@@ -608,6 +662,38 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 .await?;
             }
         },
+
+        ("POST", "/api/setup/scan") => {
+            let selected_libs = if !body.is_empty() {
+                serde_json::from_str::<SetupScanPayload>(body)
+                    .ok()
+                    .and_then(|p| p.selected_libraries)
+            } else {
+                None
+            };
+            match state.run_setup_discovery_filtered(selected_libs).await {
+                Ok(games) => {
+                    let json = serde_json::json!({
+                        "success": true,
+                        "games": games
+                    })
+                    .to_string();
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json =
+                        serde_json::json!({ "success": false, "error": e.to_string() }).to_string();
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
 
         ("GET", "/api/setup/cloud-folders") => {
             let folders = savevault_cloud::detect_cloud_folders();
@@ -696,6 +782,78 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 }
             }
         }
+
+        ("POST", "/api/setup/onboarding") => {
+            match serde_json::from_str::<OnboardingRequest>(body) {
+                Ok(req) => match state.complete_onboarding(req).await {
+                    Ok(status) => {
+                        let json = serde_json::to_string(&status)?;
+                        send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                    }
+                    Err(e) => {
+                        let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json",
+                            &err_json,
+                        )
+                        .await?;
+                    }
+                },
+                Err(e) => {
+                    let err_json = serde_json::json!({
+                        "error": format!("Payload de onboarding inválido: {}", e)
+                    })
+                    .to_string();
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        ("POST", "/api/setup/skip") => match state.skip_onboarding().await {
+            Ok(status) => {
+                let json = serde_json::to_string(&status)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
+
+        ("POST", "/api/setup/pick-folder") => match state.pick_folder_dialog().await {
+            Ok(path) => {
+                let json = serde_json::json!({ "path": path }).to_string();
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
 
         // -------------------------------------------------------------
         // REST: Cadastro Manual de Jogos
@@ -892,6 +1050,135 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 .await?;
             }
         },
+
+        // -------------------------------------------------------------
+        // REST: Remapeamento de Saves Multiplataforma (AUD-03)
+        // -------------------------------------------------------------
+        ("GET", "/api/remapping/pending") => match state.get_pending_remappings().await {
+            Ok(pending) => {
+                let json = serde_json::to_string(&pending)?;
+                send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+            }
+            Err(e) => {
+                let err_json = serde_json::json!({ "error": e.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json",
+                    &err_json,
+                )
+                .await?;
+            }
+        },
+
+        ("POST", "/api/remapping/validate") => {
+            match serde_json::from_str::<RemappingValidatePayload>(body) {
+                Ok(payload) => {
+                    let res = state.validate_remapping_path(&payload.candidate_path).await;
+                    let json = serde_json::to_string(&res)?;
+                    send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                }
+                Err(e) => {
+                    let err_json = serde_json::json!({
+                        "error": format!("Payload JSON inválido: {}", e),
+                        "details": "Esperado formato: { \"candidate_path\": \"caminho\" }"
+                    })
+                    .to_string();
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        ("POST", "/api/remapping/apply") => {
+            match serde_json::from_str::<RemappingApplyPayload>(body) {
+                Ok(payload) => match state
+                    .apply_remapping(payload.location_id, &payload.new_path)
+                    .await
+                {
+                    Ok(()) => {
+                        let json = serde_json::json!({ "success": true }).to_string();
+                        send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                    }
+                    Err(e) => {
+                        let err_json =
+                            serde_json::json!({ "success": false, "error": e.to_string() })
+                                .to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json",
+                            &err_json,
+                        )
+                        .await?;
+                    }
+                },
+                Err(e) => {
+                    let err_json = serde_json::json!({
+                        "success": false,
+                        "error": format!("Payload JSON inválido: {}", e),
+                        "details": "Esperado formato: { \"location_id\": \"uuid\", \"new_path\": \"caminho\" }"
+                    })
+                    .to_string();
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        ("POST", "/api/remapping/reset") => {
+            match serde_json::from_str::<RemappingResetPayload>(body) {
+                Ok(payload) => match state.reset_remapping(payload.location_id).await {
+                    Ok(()) => {
+                        let json = serde_json::json!({ "success": true }).to_string();
+                        send_response(&mut stream, 200, "OK", "application/json", &json).await?;
+                    }
+                    Err(e) => {
+                        let err_json =
+                            serde_json::json!({ "success": false, "error": e.to_string() })
+                                .to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json",
+                            &err_json,
+                        )
+                        .await?;
+                    }
+                },
+                Err(e) => {
+                    let err_json = serde_json::json!({
+                        "success": false,
+                        "error": format!("Payload JSON inválido: {}", e),
+                        "details": "Esperado formato: { \"location_id\": \"uuid\" }"
+                    })
+                    .to_string();
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json",
+                        &err_json,
+                    )
+                    .await?;
+                }
+            }
+        }
 
         // -------------------------------------------------------------
         // 404 Não Encontrado

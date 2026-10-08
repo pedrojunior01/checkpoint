@@ -461,3 +461,127 @@ async fn test_onedrive_timeout_handling() {
         "Requisição que excede o timeout deve falhar explicitamente"
     );
 }
+
+#[tokio::test]
+async fn test_contract_onedrive_rejects_manifest_filename_as_file_id() {
+    let auth = OneDriveAuthService::with_fixed_token("fake-token".to_string());
+    let provider = OneDriveProvider::with_custom_endpoints(auth, "http://127.0.0.1:9".to_string());
+
+    let tmp = NamedTempFile::new().unwrap();
+    let res = provider
+        .download("savevault_manifest.json", tmp.path())
+        .await;
+
+    assert!(
+        matches!(res, Err(savevault_cloud::CloudError::InvalidRemoteId(_))),
+        "download() com '.json' deve ser rejeitado estritamente como InvalidRemoteId no OneDrive, obtido: {:?}",
+        res
+    );
+}
+
+#[tokio::test]
+async fn test_contract_onedrive_manifest_lifecycle() {
+    let manifest_saved = Arc::new(std::sync::Mutex::new(None::<String>));
+    let manifest_clone = manifest_saved.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, req| {
+        // 1. Salvar manifesto via PUT
+        if method == "PUT" && path.contains("approot:/savevault_manifest.json:/content") {
+            *manifest_clone.lock().unwrap() = Some(req.to_string());
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"onedrive_manifest_item_id_888","name":"savevault_manifest.json"}"#.to_string(),
+            }
+        }
+        // 2. Download do manifesto via GET /content
+        else if method == "GET" && path.contains("approot:/savevault_manifest.json:/content") {
+            let cur = manifest_clone.lock().unwrap().clone();
+            if cur.is_some() {
+                let json = serde_json::json!({
+                    "schema_version": 1,
+                    "updated_at": "2026-10-02T12:00:00Z",
+                    "entries": [
+                        {
+                            "game_name": "Cyberpunk 2077",
+                            "platform": "steam",
+                            "save_location_path": "C:\\Saves",
+                            "relative_file_path": "manualsave.dat",
+                            "file_hash": "cp77hash",
+                            "version": 1,
+                            "cloud_file_id": "onedrive_item_cp77",
+                            "cloud_path": "loc/file/v1_manualsave.dat",
+                            "created_at": "2026-10-02T12:00:00Z"
+                        }
+                    ]
+                });
+                MockResponse {
+                    status: 200,
+                    status_text: "OK",
+                    content_type: "application/json",
+                    body: json.to_string(),
+                }
+            } else {
+                MockResponse {
+                    status: 404,
+                    status_text: "Not Found",
+                    content_type: "application/json",
+                    body: r#"{"error":{"code":"itemNotFound","message":"Item not found"}}"#.to_string(),
+                }
+            }
+        }
+        // 3. Busca de item pelo path/nome
+        else if method == "GET" && path.contains("approot:/savevault_manifest.json:") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"onedrive_manifest_item_id_888","name":"savevault_manifest.json","size":512}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: format!("Not Found: {} {}", method, path),
+            }
+        }
+    })
+    .await;
+
+    let auth = OneDriveAuthService::with_fixed_token("fake-token".to_string());
+    let provider = OneDriveProvider::with_custom_endpoints(auth, server.base_url);
+
+    // 1. Antes de salvar, manifesto não existe (retorna None)
+    let initial = provider.get_manifest().await.unwrap();
+    assert_eq!(initial, None);
+
+    // 2. Salva manifesto
+    let manifest = savevault_cloud::CloudCatalogManifest {
+        schema_version: 1,
+        updated_at: "2026-10-02T12:00:00Z".to_string(),
+        entries: vec![],
+    };
+    provider
+        .save_manifest(&manifest)
+        .await
+        .expect("save_manifest deve salvar via PUT no approot");
+
+    // 3. Busca arquivo pelo nome no approot
+    let found = provider
+        .find_file_by_name("savevault_manifest.json", None)
+        .await
+        .unwrap()
+        .expect("find_file_by_name deve encontrar no approot");
+    assert_eq!(found.id, "onedrive_manifest_item_id_888");
+
+    // 4. Download e parse do manifesto
+    let loaded = provider
+        .get_manifest()
+        .await
+        .unwrap()
+        .expect("get_manifest deve carregar manifesto");
+    assert_eq!(loaded.entries.len(), 1);
+    assert_eq!(loaded.entries[0].game_name, "Cyberpunk 2077");
+}
