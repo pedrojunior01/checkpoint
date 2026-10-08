@@ -88,6 +88,17 @@ impl InFlightTracker {
             s.cancel_token.store(true, Ordering::SeqCst);
         }
     }
+
+    /// Remove o caminho do mapa se a geração atual for a indicada, liberando a memória
+    /// após a conclusão de uma verificação de estabilidade física.
+    pub fn remove_if_current(&self, path: &Path, generation: u64) {
+        let mut map = self.inner.lock().unwrap();
+        if let Some(s) = map.get(path) {
+            if s.generation == generation {
+                map.remove(path);
+            }
+        }
+    }
 }
 
 /// Configurações para a etapa de debounce e coalescing.
@@ -181,7 +192,10 @@ impl FileDebouncer {
         self,
         mut raw_rx: mpsc::Receiver<RawFileEvent>,
         mut shutdown_rx: watch::Receiver<bool>,
-    ) -> (mpsc::Receiver<CoalescedFileEvent>, tokio::task::JoinHandle<()>) {
+    ) -> (
+        mpsc::Receiver<CoalescedFileEvent>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (output_tx, output_rx) = mpsc::channel(self.config.channel_capacity);
         let config = self.config;
         let tracker = self.in_flight_tracker;
@@ -289,12 +303,14 @@ impl FileDebouncer {
             let now = Instant::now();
             for (path, state) in pending {
                 if state.deadline <= now {
-                    let _ = output_tx.send(CoalescedFileEvent {
-                        path,
-                        save_location_id: state.save_location_id,
-                        kind: state.latest_kind,
-                        generation: state.generation,
-                    }).await;
+                    let _ = output_tx
+                        .send(CoalescedFileEvent {
+                            path,
+                            save_location_id: state.save_location_id,
+                            kind: state.latest_kind,
+                            generation: state.generation,
+                        })
+                        .await;
                 }
             }
         });

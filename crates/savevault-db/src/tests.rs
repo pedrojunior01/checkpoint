@@ -1,16 +1,19 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use crate::Database;
-    use rusqlite::params;
-    use crate::repositories::{GamesRepo, SaveLocationsRepo, FilesRepo, BackupsRepo, SyncQueueRepo};
-    use savevault_core::models::{
-        Confidence, Game, Platform, SaveLocation, SaveLocationType,
-        FileEntry, Backup, SyncQueueItem, SyncOperation, SyncStatus,
+    use crate::repositories::{
+        BackupsRepo, FilesRepo, GameMetadataRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
     };
-    use uuid::Uuid;
+    use crate::Database;
     use chrono::Utc;
+    use rusqlite::params;
+    use savevault_core::models::{
+        Backup, Confidence, FileEntry, Game, GameMetadata, MappingSource, MappingStatus,
+        MetadataSource, Platform, SaveLocation, SaveLocationType, SyncOperation, SyncQueueItem,
+        SyncStatus,
+    };
     use std::path::PathBuf;
+    use uuid::Uuid;
 
     fn open_test_db() -> Database {
         Database::open_in_memory().expect("banco em memória deve abrir")
@@ -35,7 +38,12 @@ mod tests {
         let db = open_test_db();
         let repo = GamesRepo::new(&db.conn);
 
-        let g1 = Game::new("Celeste", Platform::Steam, Some("504230".into()), Confidence::High);
+        let g1 = Game::new(
+            "Celeste",
+            Platform::Steam,
+            Some("504230".into()),
+            Confidence::High,
+        );
         let g2 = Game::new("Hollow Knight", Platform::Gog, None, Confidence::Medium);
 
         repo.insert(&g1).unwrap();
@@ -54,7 +62,12 @@ mod tests {
         let db = open_test_db();
         let repo = GamesRepo::new(&db.conn);
 
-        let game = Game::new("Stardew Valley", Platform::Steam, Some("413150".into()), Confidence::High);
+        let game = Game::new(
+            "Stardew Valley",
+            Platform::Steam,
+            Some("413150".into()),
+            Confidence::High,
+        );
         let id = game.id;
         repo.insert(&game).unwrap();
 
@@ -93,16 +106,30 @@ mod tests {
         let repo = GamesRepo::new(&db.conn);
 
         let platforms = [
-            Platform::Steam, Platform::Gog, Platform::Dolphin,
-            Platform::Pcsx2, Platform::Ppsspp, Platform::RetroArch, Platform::Generic,
+            Platform::Steam,
+            Platform::Gog,
+            Platform::Dolphin,
+            Platform::Pcsx2,
+            Platform::Ppsspp,
+            Platform::RetroArch,
+            Platform::Generic,
         ];
 
         for (i, platform) in platforms.iter().enumerate() {
-            let game = Game::new(format!("Jogo {}", i), platform.clone(), None, Confidence::Medium);
+            let game = Game::new(
+                format!("Jogo {}", i),
+                platform.clone(),
+                None,
+                Confidence::Medium,
+            );
             let id = game.id;
             repo.insert(&game).unwrap();
             let found = repo.find_by_id(id).unwrap().unwrap();
-            assert_eq!(&found.platform, platform, "Platform {:?} não sobreviveu ao roundtrip", platform);
+            assert_eq!(
+                &found.platform, platform,
+                "Platform {:?} não sobreviveu ao roundtrip",
+                platform
+            );
         }
     }
 
@@ -111,13 +138,112 @@ mod tests {
         let db = open_test_db();
         let repo = GamesRepo::new(&db.conn);
 
-        for (i, confidence) in [Confidence::High, Confidence::Medium, Confidence::Low].iter().enumerate() {
-            let game = Game::new(format!("Conf {}", i), Platform::Generic, None, confidence.clone());
+        for (i, confidence) in [Confidence::High, Confidence::Medium, Confidence::Low]
+            .iter()
+            .enumerate()
+        {
+            let game = Game::new(
+                format!("Conf {}", i),
+                Platform::Generic,
+                None,
+                confidence.clone(),
+            );
             let id = game.id;
             repo.insert(&game).unwrap();
             let found = repo.find_by_id(id).unwrap().unwrap();
             assert_eq!(&found.confidence, confidence);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // GameMetadataRepo & Migration 010
+    // ------------------------------------------------------------------
+    #[test]
+    fn game_metadata_upsert_and_find() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let meta_repo = GameMetadataRepo::new(&db.conn);
+
+        let game = Game::new(
+            "Cyberpunk 2077",
+            Platform::Steam,
+            Some("1091500".into()),
+            Confidence::High,
+        );
+        games_repo.insert(&game).unwrap();
+
+        // Insere metadados com Steam CDN URL
+        let cover_url = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg";
+        let meta = GameMetadata::new(
+            game.id,
+            Some("1091500".into()),
+            Some(cover_url.into()),
+            MetadataSource::Steam,
+        );
+        meta_repo.upsert(&meta).unwrap();
+
+        // Busca por game_id
+        let found = meta_repo
+            .find_by_game_id(game.id)
+            .unwrap()
+            .expect("metadata deve existir");
+        assert_eq!(found.game_id, game.id);
+        assert_eq!(found.steam_app_id.as_deref(), Some("1091500"));
+        assert_eq!(found.cover_url.as_deref(), Some(cover_url));
+        assert_eq!(found.source, MetadataSource::Steam);
+
+        // Busca por steam_app_id
+        let found_by_app = meta_repo
+            .find_by_steam_app_id("1091500")
+            .unwrap()
+            .expect("deve achar por app_id");
+        assert_eq!(found_by_app.game_id, game.id);
+
+        // Atualização idempotente via upsert (ON CONFLICT)
+        let updated_cover = "https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/header.jpg";
+        let updated_meta = GameMetadata::new(
+            game.id,
+            Some("1091500".into()),
+            Some(updated_cover.into()),
+            MetadataSource::Manual,
+        );
+        meta_repo.upsert(&updated_meta).unwrap();
+
+        let refetched = meta_repo.find_by_game_id(game.id).unwrap().unwrap();
+        assert_eq!(refetched.cover_url.as_deref(), Some(updated_cover));
+        assert_eq!(refetched.source, MetadataSource::Manual);
+
+        // Deleção do jogo dispara CASCADE na tabela game_metadata
+        games_repo.delete(game.id).unwrap();
+        assert!(meta_repo.find_by_game_id(game.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn game_metadata_none_source_and_missing() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let meta_repo = GameMetadataRepo::new(&db.conn);
+
+        let game = Game::new(
+            "Custom Indie Game",
+            Platform::Generic,
+            None,
+            Confidence::Low,
+        );
+        games_repo.insert(&game).unwrap();
+
+        // Registra resultado negativo em cache para evitar queries redundantes
+        let empty_meta = GameMetadata::empty(game.id);
+        meta_repo.upsert(&empty_meta).unwrap();
+
+        let found = meta_repo.find_by_game_id(game.id).unwrap().unwrap();
+        assert!(found.steam_app_id.is_none());
+        assert!(found.cover_url.is_none());
+        assert_eq!(found.source, MetadataSource::None);
+
+        // ID inexistente retorna None
+        let missing = meta_repo.find_by_game_id(Uuid::new_v4()).unwrap();
+        assert!(missing.is_none());
     }
 
     // ------------------------------------------------------------------
@@ -138,6 +264,7 @@ mod tests {
             game_id,
             path: PathBuf::from(r"C:\Users\pedro\AppData\Local\Celeste\Saves"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -161,13 +288,17 @@ mod tests {
             game_id,
             path: PathBuf::from(r"C:\Saves\CascadeTest"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
         // Ao deletar o jogo, SaveLocation deve ser removida por CASCADE
         games_repo.delete(game_id).unwrap();
         let remaining = loc_repo.list_by_game(game_id).unwrap();
-        assert!(remaining.is_empty(), "ON DELETE CASCADE deve remover save locations");
+        assert!(
+            remaining.is_empty(),
+            "ON DELETE CASCADE deve remover save locations"
+        );
     }
 
     #[test]
@@ -214,7 +345,9 @@ mod tests {
         assert_eq!(found.id, loc.id);
         assert!(found.is_file());
 
-        let nonexistent = loc_repo.find_by_game_and_path(game.id, &PathBuf::from(r"C:\Other\path")).unwrap();
+        let nonexistent = loc_repo
+            .find_by_game_and_path(game.id, &PathBuf::from(r"C:\Other\path"))
+            .unwrap();
         assert!(nonexistent.is_none());
     }
 
@@ -224,13 +357,26 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("Multi-Loc Game", Platform::Steam, Some("12345".into()), Confidence::High);
+        let game = Game::new(
+            "Multi-Loc Game",
+            Platform::Steam,
+            Some("12345".into()),
+            Confidence::High,
+        );
         let game_id = game.id;
         games_repo.insert(&game).unwrap();
 
         // Um jogo pode ter um diretório principal de saves e um arquivo de configuração/save separado
-        let loc1 = SaveLocation::new(game_id, r"C:\AppData\Local\Game\Saves", SaveLocationType::Directory);
-        let loc2 = SaveLocation::new(game_id, r"C:\Documents\My Games\Game\profile.sav", SaveLocationType::File);
+        let loc1 = SaveLocation::new(
+            game_id,
+            r"C:\AppData\Local\Game\Saves",
+            SaveLocationType::Directory,
+        );
+        let loc2 = SaveLocation::new(
+            game_id,
+            r"C:\Documents\My Games\Game\profile.sav",
+            SaveLocationType::File,
+        );
 
         loc_repo.insert(&loc1).unwrap();
         loc_repo.insert(&loc2).unwrap();
@@ -238,8 +384,12 @@ mod tests {
         let locs = loc_repo.list_by_game(game_id).unwrap();
         assert_eq!(locs.len(), 2, "Game deve suportar múltiplos SaveLocations");
 
-        let has_dir = locs.iter().any(|l| l.is_directory() && l.path == std::path::Path::new(r"C:\AppData\Local\Game\Saves"));
-        let has_file = locs.iter().any(|l| l.is_file() && l.path == std::path::Path::new(r"C:\Documents\My Games\Game\profile.sav"));
+        let has_dir = locs.iter().any(|l| {
+            l.is_directory() && l.path == std::path::Path::new(r"C:\AppData\Local\Game\Saves")
+        });
+        let has_file = locs.iter().any(|l| {
+            l.is_file() && l.path == std::path::Path::new(r"C:\Documents\My Games\Game\profile.sav")
+        });
         assert!(has_dir);
         assert!(has_file);
     }
@@ -262,9 +412,13 @@ mod tests {
         assert!(res.is_err(), "Índice único idx_save_locations_game_path deve rejeitar caminho duplicado para o mesmo jogo");
 
         // Tentar inserir com case diferente também deve falhar pelo índice COLLATE NOCASE
-        let loc_case = SaveLocation::new(game.id, r"c:\saves\samepath", SaveLocationType::Directory);
+        let loc_case =
+            SaveLocation::new(game.id, r"c:\saves\samepath", SaveLocationType::Directory);
         let res_case = loc_repo.insert(&loc_case);
-        assert!(res_case.is_err(), "Índice único deve rejeitar caminho duplicado mesmo com casing diferente");
+        assert!(
+            res_case.is_err(),
+            "Índice único deve rejeitar caminho duplicado mesmo com casing diferente"
+        );
     }
 
     #[test]
@@ -285,12 +439,19 @@ mod tests {
         // Executar upsert 10 vezes com a mesma localização lógica
         for _ in 0..10 {
             let res = loc_repo.upsert(&loc).unwrap();
-            assert_eq!(res.id, loc.id, "ID original deve ser mantido em chamadas subsequentes");
+            assert_eq!(
+                res.id, loc.id,
+                "ID original deve ser mantido em chamadas subsequentes"
+            );
         }
 
         // Deve existir apenas 1 registro no banco
         let locs = loc_repo.list_by_game(game.id).unwrap();
-        assert_eq!(locs.len(), 1, "Persistência repetida não pode criar duplicatas");
+        assert_eq!(
+            locs.len(),
+            1,
+            "Persistência repetida não pode criar duplicatas"
+        );
     }
 
     #[test]
@@ -308,6 +469,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Games\GogGame\Save"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         let res1 = loc_repo.upsert(&loc1).unwrap();
         assert_eq!(res1.id, original_id);
@@ -321,17 +483,27 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"c:\games\goggame\save\"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
 
         // O upsert deve reconhecer a mesma identidade lógica e PRESERVAR o UUID do banco
         let res2 = loc_repo.upsert(&loc2).unwrap();
-        assert_eq!(res2.id, original_id, "O UUID retornado pelo upsert DEVE ser o original gravado no banco");
+        assert_eq!(
+            res2.id, original_id,
+            "O UUID retornado pelo upsert DEVE ser o original gravado no banco"
+        );
 
         let in_db = loc_repo.find_by_id(original_id).unwrap();
-        assert!(in_db.is_some(), "Registro com o UUID original deve permanecer no banco");
+        assert!(
+            in_db.is_some(),
+            "Registro com o UUID original deve permanecer no banco"
+        );
 
         let in_db_new = loc_repo.find_by_id(new_generated_id).unwrap();
-        assert!(in_db_new.is_none(), "Novo UUID efêmero não deve ser gravado");
+        assert!(
+            in_db_new.is_none(),
+            "Novo UUID efêmero não deve ser gravado"
+        );
     }
 
     #[test]
@@ -350,7 +522,11 @@ mod tests {
         loc_repo.upsert(&loc2).unwrap();
 
         let locs = loc_repo.list_by_game(game.id).unwrap();
-        assert_eq!(locs.len(), 1, "Variação de casing no Windows não deve produzir duas linhas");
+        assert_eq!(
+            locs.len(),
+            1,
+            "Variação de casing no Windows não deve produzir duas linhas"
+        );
     }
 
     #[test]
@@ -359,7 +535,12 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("Separator Test", Platform::Generic, None, Confidence::Medium);
+        let game = Game::new(
+            "Separator Test",
+            Platform::Generic,
+            None,
+            Confidence::Medium,
+        );
         games_repo.insert(&game).unwrap();
 
         let loc1 = SaveLocation::new(game.id, r"C:\Games\Save", SaveLocationType::Directory);
@@ -373,7 +554,11 @@ mod tests {
         loc_repo.upsert(&loc4).unwrap();
 
         let locs = loc_repo.list_by_game(game.id).unwrap();
-        assert_eq!(locs.len(), 1, "Variação de separadores e trailing slashes não pode duplicar registro");
+        assert_eq!(
+            locs.len(),
+            1,
+            "Variação de separadores e trailing slashes não pode duplicar registro"
+        );
     }
 
     #[test]
@@ -382,7 +567,12 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("Multi Loc Test", Platform::Generic, None, Confidence::Medium);
+        let game = Game::new(
+            "Multi Loc Test",
+            Platform::Generic,
+            None,
+            Confidence::Medium,
+        );
         games_repo.insert(&game).unwrap();
 
         let loc_a = SaveLocation::new(game.id, r"C:\SaveA", SaveLocationType::Directory);
@@ -394,7 +584,11 @@ mod tests {
         loc_repo.upsert(&loc_c).unwrap();
 
         let locs = loc_repo.list_by_game(game.id).unwrap();
-        assert_eq!(locs.len(), 3, "Três locais distintos para o mesmo jogo devem produzir 3 registros");
+        assert_eq!(
+            locs.len(),
+            3,
+            "Três locais distintos para o mesmo jogo devem produzir 3 registros"
+        );
 
         // Segunda execução completa
         loc_repo.upsert(&loc_a).unwrap();
@@ -402,7 +596,11 @@ mod tests {
         loc_repo.upsert(&loc_c).unwrap();
 
         let locs_after = loc_repo.list_by_game(game.id).unwrap();
-        assert_eq!(locs_after.len(), 3, "Segunda execução deve continuar com 3 registros");
+        assert_eq!(
+            locs_after.len(),
+            3,
+            "Segunda execução deve continuar com 3 registros"
+        );
     }
 
     #[test]
@@ -411,17 +609,30 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("NonExistent Path Test", Platform::Generic, None, Confidence::Medium);
+        let game = Game::new(
+            "NonExistent Path Test",
+            Platform::Generic,
+            None,
+            Confidence::Medium,
+        );
         games_repo.insert(&game).unwrap();
 
         let non_existing = PathBuf::from(r"C:\DefinitelyNonExistentGame12345\Save");
-        assert!(!non_existing.exists(), "Pré-condição: caminho não existe no disco");
+        assert!(
+            !non_existing.exists(),
+            "Pré-condição: caminho não existe no disco"
+        );
 
         let loc = SaveLocation::new(game.id, non_existing.clone(), SaveLocationType::Directory);
         let saved = loc_repo.upsert(&loc).unwrap();
 
-        let found = loc_repo.find_by_game_and_path(game.id, &non_existing).unwrap();
-        assert!(found.is_some(), "Caminho inexistente fisicamente deve poder ser persistido e consultado com sucesso");
+        let found = loc_repo
+            .find_by_game_and_path(game.id, &non_existing)
+            .unwrap();
+        assert!(
+            found.is_some(),
+            "Caminho inexistente fisicamente deve poder ser persistido e consultado com sucesso"
+        );
         assert_eq!(saved.id, found.unwrap().id);
     }
 
@@ -431,7 +642,12 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("Glob Persist Test", Platform::Generic, None, Confidence::Medium);
+        let game = Game::new(
+            "Glob Persist Test",
+            Platform::Generic,
+            None,
+            Confidence::Medium,
+        );
         games_repo.insert(&game).unwrap();
 
         let glob_path = PathBuf::from(r"C:\MyGame\*.sav");
@@ -455,7 +671,12 @@ mod tests {
         let games_repo = GamesRepo::new(&db.conn);
         let loc_repo = SaveLocationsRepo::new(&db.conn);
 
-        let game = Game::new("Corrupt UUID Test", Platform::Generic, None, Confidence::Low);
+        let game = Game::new(
+            "Corrupt UUID Test",
+            Platform::Generic,
+            None,
+            Confidence::Low,
+        );
         games_repo.insert(&game).unwrap();
 
         // Inserir manualmente linha com UUID corrompido
@@ -465,7 +686,10 @@ mod tests {
         ).unwrap();
 
         let res = loc_repo.list_by_game(game.id);
-        assert!(res.is_err(), "UUID corrompido deve propagar erro de conversão SQL em vez de fabricar UUID aleatório");
+        assert!(
+            res.is_err(),
+            "UUID corrompido deve propagar erro de conversão SQL em vez de fabricar UUID aleatório"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -486,6 +710,7 @@ mod tests {
             game_id: game.id,
             path: PathBuf::from(r"C:\Saves"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -512,13 +737,19 @@ mod tests {
         let loc_repo = SaveLocationsRepo::new(&db.conn);
         let files_repo = FilesRepo::new(&db.conn);
 
-        let game = Game::new("HashUpdateTest", Platform::Generic, None, Confidence::Medium);
+        let game = Game::new(
+            "HashUpdateTest",
+            Platform::Generic,
+            None,
+            Confidence::Medium,
+        );
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
             id: Uuid::new_v4(),
             game_id: game.id,
             path: PathBuf::from(r"C:\Saves2"),
             location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
 
@@ -564,22 +795,33 @@ mod tests {
         let game = Game::new("BackupTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\S1"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\S1"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\S1\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\S1\s.dat"),
+            hash: "h".into(),
+            size_bytes: 1,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         for v in 1..=3u32 {
             let b = Backup {
-                id: Uuid::new_v4(), file_id, version: v,
-                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+                id: Uuid::new_v4(),
+                file_id,
+                version: v,
+                cloud_path: None,
+                drive_file_id: None,
+                sync_status: SyncStatus::Pending,
+                created_at: Utc::now(),
             };
             backups_repo.insert(&b).unwrap();
         }
@@ -603,22 +845,33 @@ mod tests {
         let game = Game::new("PruneTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\P1"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\P1"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\P1\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\P1\s.dat"),
+            hash: "h".into(),
+            size_bytes: 1,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         for v in 1..=10u32 {
             let b = Backup {
-                id: Uuid::new_v4(), file_id, version: v,
-                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+                id: Uuid::new_v4(),
+                file_id,
+                version: v,
+                cloud_path: None,
+                drive_file_id: None,
+                sync_status: SyncStatus::Pending,
+                created_at: Utc::now(),
             };
             backups_repo.insert(&b).unwrap();
         }
@@ -645,15 +898,21 @@ mod tests {
         let game = Game::new("PruneCaseA", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\PruneA"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\PruneA"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\PruneA\s.dat"), hash: "hash".into(),
-            size_bytes: 100, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneA\s.dat"),
+            hash: "hash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
@@ -661,8 +920,13 @@ mod tests {
         let mut ids = Vec::new();
         for v in 1..=4u32 {
             let b = Backup {
-                id: Uuid::new_v4(), file_id, version: v,
-                cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+                id: Uuid::new_v4(),
+                file_id,
+                version: v,
+                cloud_path: None,
+                drive_file_id: None,
+                sync_status: SyncStatus::Pending,
+                created_at: Utc::now(),
             };
             backups_repo.insert(&b).unwrap();
             ids.push(b.id);
@@ -672,7 +936,11 @@ mod tests {
         backups_repo.prune_old_versions(file_id, 2).unwrap();
 
         let remaining = backups_repo.list_by_file(file_id).unwrap();
-        assert_eq!(remaining.len(), 2, "Apenas as 2 mais recentes devem permanecer");
+        assert_eq!(
+            remaining.len(),
+            2,
+            "Apenas as 2 mais recentes devem permanecer"
+        );
         assert_eq!(remaining[0].version, 4);
         assert_eq!(remaining[1].version, 3);
 
@@ -682,7 +950,11 @@ mod tests {
 
         // Nenhum delete remoto enfileirado
         let queue = queue_repo.list_pending().unwrap();
-        assert_eq!(queue.len(), 0, "Nenhum delete remoto necessário para backups locais sem drive_file_id");
+        assert_eq!(
+            queue.len(),
+            0,
+            "Nenhum delete remoto necessário para backups locais sem drive_file_id"
+        );
     }
 
     #[test]
@@ -697,21 +969,29 @@ mod tests {
         let game = Game::new("PruneCaseB", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\PruneB"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\PruneB"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\PruneB\s.dat"), hash: "hash".into(),
-            size_bytes: 100, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneB\s.dat"),
+            hash: "hash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         // v1: sincronizado com drive_file_id remoto
         let b1 = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
             cloud_path: Some("cloud/v1.sav".into()),
             drive_file_id: Some("drive_file_id_alpha_999".into()),
             sync_status: SyncStatus::Synced,
@@ -721,15 +1001,21 @@ mod tests {
 
         // v2: local sem cloud
         let b2 = Backup {
-            id: Uuid::new_v4(), file_id, version: 2,
-            cloud_path: None, drive_file_id: None,
-            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            id: Uuid::new_v4(),
+            file_id,
+            version: 2,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         backups_repo.insert(&b2).unwrap();
 
         // v3: mais recente
         let b3 = Backup {
-            id: Uuid::new_v4(), file_id, version: 3,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 3,
             cloud_path: Some("cloud/v3.sav".into()),
             drive_file_id: Some("drive_file_id_beta_888".into()),
             sync_status: SyncStatus::Synced,
@@ -745,12 +1031,22 @@ mod tests {
         assert!(backups_repo.find_by_id(b2.id).unwrap().is_none());
 
         // v1 (com drive_file_id) Teve sua referência remota PRESERVADA!
-        let b1_persisted = backups_repo.find_by_id(b1.id).unwrap().expect("b1 deve ser preservado para deleção remota");
-        assert_eq!(b1_persisted.drive_file_id, Some("drive_file_id_alpha_999".to_string()));
+        let b1_persisted = backups_repo
+            .find_by_id(b1.id)
+            .unwrap()
+            .expect("b1 deve ser preservado para deleção remota");
+        assert_eq!(
+            b1_persisted.drive_file_id,
+            Some("drive_file_id_alpha_999".to_string())
+        );
 
         // Fila possui exatamente a operação Delete com o backup_id correto
         let queue = queue_repo.list_pending().unwrap();
-        assert_eq!(queue.len(), 1, "Operação de delete remoto deve estar enfileirada");
+        assert_eq!(
+            queue.len(),
+            1,
+            "Operação de delete remoto deve estar enfileirada"
+        );
         assert_eq!(queue[0].backup_id, b1.id);
         assert_eq!(queue[0].operation, SyncOperation::Delete);
         assert_eq!(queue[0].status, SyncStatus::Pending);
@@ -768,20 +1064,28 @@ mod tests {
         let game = Game::new("PruneCaseC", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\PruneC"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\PruneC"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\PruneC\s.dat"), hash: "hash".into(),
-            size_bytes: 100, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneC\s.dat"),
+            hash: "hash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         let b1 = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
             cloud_path: Some("cloud/offline.sav".into()),
             drive_file_id: Some("drive_offline_token_123".into()),
             sync_status: SyncStatus::Synced,
@@ -790,9 +1094,13 @@ mod tests {
         backups_repo.insert(&b1).unwrap();
 
         let b2 = Backup {
-            id: Uuid::new_v4(), file_id, version: 2,
-            cloud_path: None, drive_file_id: None,
-            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            id: Uuid::new_v4(),
+            file_id,
+            version: 2,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         backups_repo.insert(&b2).unwrap();
 
@@ -807,12 +1115,19 @@ mod tests {
 
         // 2. Não perdeu a identidade remota
         let b1_check = backups_repo.find_by_id(b1.id).unwrap().unwrap();
-        assert_eq!(b1_check.drive_file_id.as_deref(), Some("drive_offline_token_123"));
+        assert_eq!(
+            b1_check.drive_file_id.as_deref(),
+            Some("drive_offline_token_123")
+        );
 
         // 3. Chamadas subsequentes de prune são idempotentes e não duplicam itens na fila
         backups_repo.prune_old_versions(file_id, 1).unwrap();
         let queue_after = queue_repo.list_pending().unwrap();
-        assert_eq!(queue_after.len(), 1, "Idempotência: não deve duplicar item de deleção");
+        assert_eq!(
+            queue_after.len(),
+            1,
+            "Idempotência: não deve duplicar item de deleção"
+        );
     }
 
     #[test]
@@ -826,20 +1141,28 @@ mod tests {
         let game = Game::new("PruneCaseD", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\PruneD"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\PruneD"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\PruneD\s.dat"), hash: "hash".into(),
-            size_bytes: 100, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\PruneD\s.dat"),
+            hash: "hash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         let b1 = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
             cloud_path: Some("cloud/crash_test.sav".into()),
             drive_file_id: Some("drive_crash_protection_id".into()),
             sync_status: SyncStatus::Synced,
@@ -848,23 +1171,30 @@ mod tests {
         backups_repo.insert(&b1).unwrap();
 
         // Simula falha abortando se sync_queue sofrer INSERT
-        db.conn.execute_batch(
-            "CREATE TRIGGER abort_sync_queue BEFORE INSERT ON sync_queue \
+        db.conn
+            .execute_batch(
+                "CREATE TRIGGER abort_sync_queue BEFORE INSERT ON sync_queue \
              BEGIN \
                  SELECT RAISE(FAIL, 'Simulated crash before local removal'); \
              END;",
-        ).unwrap();
+            )
+            .unwrap();
 
         // Execução do prune deve falhar atomicamente
         let res = backups_repo.prune_old_versions(file_id, 0);
         assert!(res.is_err(), "Falha simulada deve retornar Err");
 
         // Remove trigger para verificar consistência
-        db.conn.execute("DROP TRIGGER abort_sync_queue", []).unwrap();
+        db.conn
+            .execute("DROP TRIGGER abort_sync_queue", [])
+            .unwrap();
 
         // O backup original permanece intocado: a referência remota NÃO foi silenciosamente perdida
         let b1_recovered = backups_repo.find_by_id(b1.id).unwrap().unwrap();
-        assert_eq!(b1_recovered.drive_file_id.as_deref(), Some("drive_crash_protection_id"));
+        assert_eq!(
+            b1_recovered.drive_file_id.as_deref(),
+            Some("drive_crash_protection_id")
+        );
     }
 
     #[test]
@@ -878,20 +1208,28 @@ mod tests {
         let game = Game::new("ClearMeta", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\ClearMeta"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\ClearMeta"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\ClearMeta\s.dat"), hash: "hash".into(),
-            size_bytes: 100, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\ClearMeta\s.dat"),
+            hash: "hash".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
             cloud_path: Some("cloud/active.sav".into()),
             drive_file_id: Some("drive_id_active".into()),
             sync_status: SyncStatus::Synced,
@@ -900,7 +1238,9 @@ mod tests {
         backups_repo.insert(&backup).unwrap();
 
         // Limpa metadados de nuvem mantendo registro local
-        backups_repo.clear_cloud_metadata(backup.id, &SyncStatus::PendingOffline).unwrap();
+        backups_repo
+            .clear_cloud_metadata(backup.id, &SyncStatus::PendingOffline)
+            .unwrap();
 
         let updated = backups_repo.find_by_id(backup.id).unwrap().unwrap();
         assert!(updated.cloud_path.is_none());
@@ -919,26 +1259,39 @@ mod tests {
         let game = Game::new("StatusTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\ST"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\ST"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\ST\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\ST\s.dat"),
+            hash: "h".into(),
+            size_bytes: 1,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         let backup_id = backup.id;
         backups_repo.insert(&backup).unwrap();
 
-        backups_repo.update_sync_status(backup_id, &SyncStatus::Synced).unwrap();
+        backups_repo
+            .update_sync_status(backup_id, &SyncStatus::Synced)
+            .unwrap();
         let updated = backups_repo.list_by_file(file_id).unwrap();
         assert_eq!(updated[0].sync_status, SyncStatus::Synced);
     }
@@ -954,23 +1307,32 @@ mod tests {
         let game = Game::new("FindBackupTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\FB"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\FB"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\FB\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\FB\s.dat"),
+            hash: "h".into(),
+            size_bytes: 1,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
 
         let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
             cloud_path: Some("cloud/path/v1".into()),
             drive_file_id: Some("drive_id_abc123".into()),
-            sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         backups_repo.insert(&backup).unwrap();
 
@@ -1002,29 +1364,42 @@ mod tests {
         let game = Game::new("QueueTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\Q1"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\Q1"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
         let entry = FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\Q1\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
+            id: file_id,
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\Q1\s.dat"),
+            hash: "h".into(),
+            size_bytes: 1,
+            modified_at: Utc::now(),
         };
         files_repo.upsert(&entry).unwrap();
         let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         let backup_id = backup.id;
         backups_repo.insert(&backup).unwrap();
 
         let item = SyncQueueItem {
-            id: Uuid::new_v4(), backup_id,
+            id: Uuid::new_v4(),
+            backup_id,
             operation: SyncOperation::Upload,
             status: SyncStatus::Pending,
-            attempts: 0, created_at: Utc::now(),
+            attempts: 0,
+            created_at: Utc::now(),
         };
         queue_repo.enqueue(&item).unwrap();
 
@@ -1046,29 +1421,46 @@ mod tests {
         let game = Game::new("DelQueueTest", Platform::Generic, None, Confidence::High);
         games_repo.insert(&game).unwrap();
         let loc = SaveLocation {
-            id: Uuid::new_v4(), game_id: game.id,
-            path: PathBuf::from(r"C:\DQ"), location_type: SaveLocationType::Directory,
+            id: Uuid::new_v4(),
+            game_id: game.id,
+            path: PathBuf::from(r"C:\DQ"),
+            location_type: SaveLocationType::Directory,
+            ..Default::default()
         };
         loc_repo.insert(&loc).unwrap();
         let file_id = Uuid::new_v4();
-        files_repo.upsert(&FileEntry {
-            id: file_id, save_location_id: loc.id,
-            path: PathBuf::from(r"C:\DQ\s.dat"), hash: "h".into(),
-            size_bytes: 1, modified_at: Utc::now(),
-        }).unwrap();
+        files_repo
+            .upsert(&FileEntry {
+                id: file_id,
+                save_location_id: loc.id,
+                path: PathBuf::from(r"C:\DQ\s.dat"),
+                hash: "h".into(),
+                size_bytes: 1,
+                modified_at: Utc::now(),
+            })
+            .unwrap();
         let backup = Backup {
-            id: Uuid::new_v4(), file_id, version: 1,
-            cloud_path: None, drive_file_id: None, sync_status: SyncStatus::Pending, created_at: Utc::now(),
+            id: Uuid::new_v4(),
+            file_id,
+            version: 1,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
         };
         backups_repo.insert(&backup).unwrap();
 
         let item_id = Uuid::new_v4();
-        queue_repo.enqueue(&SyncQueueItem {
-            id: item_id, backup_id: backup.id,
-            operation: SyncOperation::Upload,
-            status: SyncStatus::Pending,
-            attempts: 0, created_at: Utc::now(),
-        }).unwrap();
+        queue_repo
+            .enqueue(&SyncQueueItem {
+                id: item_id,
+                backup_id: backup.id,
+                operation: SyncOperation::Upload,
+                status: SyncStatus::Pending,
+                attempts: 0,
+                created_at: Utc::now(),
+            })
+            .unwrap();
 
         assert_eq!(queue_repo.list_pending().unwrap().len(), 1);
         queue_repo.delete(item_id).unwrap();
@@ -1100,21 +1492,32 @@ mod tests {
         let db = open_test_db();
         let games_repo = GamesRepo::new(&db.conn);
 
-        let g = Game::new("Super Mario World", Platform::RetroArch, None, Confidence::High);
+        let g = Game::new(
+            "Super Mario World",
+            Platform::RetroArch,
+            None,
+            Confidence::High,
+        );
         games_repo.insert(&g).unwrap();
 
         // Exact match
-        let found = games_repo.find_by_name_and_platform("Super Mario World", &Platform::RetroArch).unwrap();
+        let found = games_repo
+            .find_by_name_and_platform("Super Mario World", &Platform::RetroArch)
+            .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, g.id);
 
         // Case-insensitive match
-        let found_lower = games_repo.find_by_name_and_platform("super mario world", &Platform::RetroArch).unwrap();
+        let found_lower = games_repo
+            .find_by_name_and_platform("super mario world", &Platform::RetroArch)
+            .unwrap();
         assert!(found_lower.is_some());
         assert_eq!(found_lower.unwrap().id, g.id);
 
         // Different platform returns None
-        let found_diff_platform = games_repo.find_by_name_and_platform("Super Mario World", &Platform::Dolphin).unwrap();
+        let found_diff_platform = games_repo
+            .find_by_name_and_platform("Super Mario World", &Platform::Dolphin)
+            .unwrap();
         assert!(found_diff_platform.is_none());
     }
 
@@ -1134,6 +1537,338 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, g1.id);
     }
+
+    #[test]
+    fn files_repo_upsert_idempotent_with_case_insensitivity() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+
+        let game = Game::new("Case Game", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Saves\CaseTest", SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        let entry1 = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\Saves\CaseTest\save.dat"),
+            hash: "hash_initial".into(),
+            size_bytes: 100,
+            modified_at: Utc::now(),
+        };
+        let saved1 = files_repo.upsert(&entry1).unwrap();
+        assert_eq!(saved1.id, entry1.id);
+        assert_eq!(saved1.hash, "hash_initial");
+
+        // Upsert com caminho em casing diferente e ID diferente
+        let entry2 = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"c:\saves\casetest\SAVE.DAT"),
+            hash: "hash_updated".into(),
+            size_bytes: 200,
+            modified_at: Utc::now(),
+        };
+        let saved2 = files_repo.upsert(&entry2).unwrap();
+        // Deve reutilizar o id canônico original e atualizar hash/size
+        assert_eq!(saved2.id, entry1.id);
+        assert_eq!(saved2.hash, "hash_updated");
+        assert_eq!(saved2.size_bytes, 200);
+
+        let list = files_repo.list_by_location(loc.id).unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn backups_unique_constraint_on_file_and_version() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+        let backups_repo = BackupsRepo::new(&db.conn);
+
+        let game = Game::new(
+            "Unique Backup Game",
+            Platform::Steam,
+            None,
+            Confidence::High,
+        );
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(game.id, r"C:\Saves\UniqueTest", SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        let file = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: PathBuf::from(r"C:\Saves\UniqueTest\save.dat"),
+            hash: "hash1".into(),
+            size_bytes: 50,
+            modified_at: Utc::now(),
+        };
+        files_repo.upsert(&file).unwrap();
+
+        let b1 = Backup {
+            id: Uuid::new_v4(),
+            file_id: file.id,
+            version: 1,
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
+        };
+        backups_repo.insert(&b1).unwrap();
+
+        let b2 = Backup {
+            id: Uuid::new_v4(),
+            file_id: file.id,
+            version: 1, // Mesma versão
+            cloud_path: None,
+            drive_file_id: None,
+            sync_status: SyncStatus::Pending,
+            created_at: Utc::now(),
+        };
+        // Deve falhar por violação de constraint única (idx_backups_file_version)
+        assert!(backups_repo.insert(&b2).is_err());
+    }
+
+    #[test]
+    fn test_migration_007_composite_platform_id() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+
+        // Dois jogos em lojas diferentes com exatamente o mesmo platform_id numérico
+        let steam_game = Game::new(
+            "Game on Steam",
+            Platform::Steam,
+            Some("105600".to_string()),
+            Confidence::High,
+        );
+        let gog_game = Game::new(
+            "Different Game on GOG",
+            Platform::Gog,
+            Some("105600".to_string()),
+            Confidence::High,
+        );
+
+        // Ambas as inserções devem suceder sem colisão de chave única global
+        assert!(games_repo.insert(&steam_game).is_ok());
+        assert!(games_repo.insert(&gog_game).is_ok());
+
+        let retrieved_steam = games_repo
+            .find_by_platform_id(&Platform::Steam, "105600")
+            .unwrap();
+        let retrieved_gog = games_repo
+            .find_by_platform_id(&Platform::Gog, "105600")
+            .unwrap();
+
+        assert!(retrieved_steam.is_some());
+        assert!(retrieved_gog.is_some());
+        assert_eq!(retrieved_steam.unwrap().name, "Game on Steam");
+        assert_eq!(retrieved_gog.unwrap().name, "Different Game on GOG");
+    }
+
+    #[test]
+    fn test_migration_009_remapping_fields_and_persistence() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("RemapGame", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let loc = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"),
+            SaveLocationType::Directory,
+        )
+        .with_mapping(
+            PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"),
+            MappingStatus::NeedsUserMapping,
+            MappingSource::Original,
+            Some("Original path not found on this machine".into()),
+        );
+
+        loc_repo.insert(&loc).unwrap();
+
+        let fetched = loc_repo.find_by_id(loc.id).unwrap().unwrap();
+        assert_eq!(fetched.mapping_status, MappingStatus::NeedsUserMapping);
+        assert_eq!(fetched.mapping_source, MappingSource::Original);
+        assert_eq!(
+            fetched.original_path,
+            Some(PathBuf::from(r"C:\Users\Alice\Saved Games\RemapGame"))
+        );
+        assert_eq!(
+            fetched.resolution_reason.as_deref(),
+            Some("Original path not found on this machine")
+        );
+    }
+
+    #[test]
+    fn test_save_locations_update_mapping_and_cascade_to_files() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+        let files_repo = FilesRepo::new(&db.conn);
+
+        let game = Game::new("RemapCascade", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let old_dir = PathBuf::from(r"C:\Users\Alice\Saved Games\RemapCascade");
+        let loc = SaveLocation::new(game.id, old_dir.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                old_dir.clone(),
+                MappingStatus::NeedsUserMapping,
+                MappingSource::Original,
+                Some("Missing path".into()),
+            );
+        loc_repo.insert(&loc).unwrap();
+
+        let file_old_path = old_dir.join(r"slot1\save.dat");
+        let file_entry = FileEntry {
+            id: Uuid::new_v4(),
+            save_location_id: loc.id,
+            path: file_old_path.clone(),
+            hash: "blake3_hash_123".into(),
+            size_bytes: 4096,
+            modified_at: Utc::now(),
+        };
+        files_repo.upsert(&file_entry).unwrap();
+
+        // Agora o usuário escolhe a pasta na Máquina B: C:\Users\Bob\Saved Games\RemapCascade
+        let new_dir = PathBuf::from(r"C:\Users\Bob\Saved Games\RemapCascade");
+        let updated_loc = loc_repo
+            .update_mapping(
+                loc.id,
+                &new_dir,
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(updated_loc.path, new_dir);
+        assert_eq!(updated_loc.mapping_status, MappingStatus::UserMapped);
+        assert_eq!(updated_loc.mapping_source, MappingSource::User);
+        assert_eq!(updated_loc.original_path, Some(old_dir));
+
+        // Verifica que o arquivo associado também foi atualizado para apontar para o novo caminho
+        let updated_file = files_repo.find_by_id(file_entry.id).unwrap().unwrap();
+        let expected_file_path = new_dir.join(r"slot1\save.dat");
+        assert_eq!(updated_file.path, expected_file_path);
+    }
+
+    #[test]
+    fn test_save_locations_list_pending_remappings() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("PendingList", Platform::Generic, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        // 1 location resolvida
+        let loc_ok = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Valid\Path"),
+            SaveLocationType::Directory,
+        );
+        loc_repo.insert(&loc_ok).unwrap();
+
+        // 1 location pendente
+        let loc_pending = SaveLocation::new(
+            game.id,
+            PathBuf::from(r"C:\Missing\Path"),
+            SaveLocationType::Directory,
+        )
+        .with_mapping(
+            PathBuf::from(r"C:\Missing\Path"),
+            MappingStatus::NeedsUserMapping,
+            MappingSource::Original,
+            Some("Not found".into()),
+        );
+        loc_repo.insert(&loc_pending).unwrap();
+
+        let pending = loc_repo.list_pending_remappings().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, loc_pending.id);
+        assert_eq!(pending[0].mapping_status, MappingStatus::NeedsUserMapping);
+    }
+
+    #[test]
+    fn test_save_locations_upsert_preserves_user_mapped() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new(
+            "PreserveUserMapped",
+            Platform::Steam,
+            None,
+            Confidence::High,
+        );
+        games_repo.insert(&game).unwrap();
+
+        let user_path = PathBuf::from(r"D:\MyCustomSaves\Game");
+        let loc = SaveLocation::new(game.id, user_path.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                PathBuf::from(r"C:\Users\Alice\Saved Games\Game"),
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            );
+        loc_repo.insert(&loc).unwrap();
+
+        // Uma nova descoberta tenta dar upsert com status 'resolved' e source 'original'
+        let incoming = SaveLocation::new(game.id, user_path.clone(), SaveLocationType::Directory)
+            .with_mapping(
+                PathBuf::from(r"C:\Users\Alice\Saved Games\Game"),
+                MappingStatus::Resolved,
+                MappingSource::Original,
+                None,
+            );
+        let after_upsert = loc_repo.upsert(&incoming).unwrap();
+
+        // O status deve permanecer UserMapped!
+        assert_eq!(after_upsert.mapping_status, MappingStatus::UserMapped);
+        assert_eq!(after_upsert.mapping_source, MappingSource::User);
+    }
+
+    #[test]
+    fn test_save_locations_reset_mapping() {
+        let db = open_test_db();
+        let games_repo = GamesRepo::new(&db.conn);
+        let loc_repo = SaveLocationsRepo::new(&db.conn);
+
+        let game = Game::new("ResetTest", Platform::Steam, None, Confidence::High);
+        games_repo.insert(&game).unwrap();
+
+        let orig_path = PathBuf::from(r"C:\NonExistent\Alice\Saves");
+        let loc = SaveLocation::new(game.id, orig_path.clone(), SaveLocationType::Directory);
+        loc_repo.insert(&loc).unwrap();
+
+        // Usuário mapeia para outro caminho
+        let new_path = PathBuf::from(r"D:\Temp\Saves");
+        loc_repo
+            .update_mapping(
+                loc.id,
+                &new_path,
+                MappingStatus::UserMapped,
+                MappingSource::User,
+                None,
+            )
+            .unwrap();
+
+        let mapped = loc_repo.find_by_id(loc.id).unwrap().unwrap();
+        assert_eq!(mapped.path, new_path);
+
+        // Usuário reseta o mapeamento
+        let reset = loc_repo.reset_mapping(loc.id).unwrap();
+        assert_eq!(reset.path, orig_path);
+        // Como orig_path não existe no disco deste teste, volta para needs_user_mapping
+        assert_eq!(reset.mapping_status, MappingStatus::NeedsUserMapping);
+    }
 }
-
-

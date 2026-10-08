@@ -3,7 +3,7 @@
 //! Desacopla a camada visual das operações do backend, expondo uma API limpa
 //! e testável sem dependência de rendering para consumo pela interface gráfica e testes.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -16,7 +16,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo};
+use savevault_core::models::{
+    Confidence, Game, GameMetadata, MetadataSource, Platform, SaveLocation, SaveLocationType,
+};
+use savevault_db::repositories::{
+    FilesRepo, GameMetadataRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
+};
 use savevault_monitor::scanner::SaveScanner;
 
 use crate::reconciler::{Reconciler, ReconciliationError, ReconciliationReport};
@@ -74,6 +79,8 @@ pub struct LocationView {
     pub exists_on_disk: bool,
     pub monitored_files_count: usize,
     pub last_check: String,
+    #[serde(default)]
+    pub cover_url: Option<String>,
 }
 
 /// Arquivo físico descoberto durante varredura manual.
@@ -164,15 +171,104 @@ pub struct RestoreApiResponse {
     pub details: Option<String>,
 }
 
+/// Estado e visão do Assistente de Primeiro Acesso (Setup Wizard e Onboarding).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupStatusView {
+    pub setup_completed: bool,
+    pub cloud_provider: String,
+    pub local_sync_path: Option<String>,
+    pub detected_cloud_folders: Vec<savevault_cloud::DetectedCloudFolder>,
+    pub games_count: usize,
+    pub autostart_enabled: bool,
+    pub notifications_enabled: bool,
+    #[serde(default)]
+    pub interface_mode: savevault_core::config::InterfaceMode,
+    #[serde(default)]
+    pub selected_libraries: Vec<String>,
+}
+
+/// Visão de uma biblioteca ou plataforma disponível para detecção no onboarding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedLibraryView {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub detected: bool,
+    pub path: Option<String>,
+    pub category: String,
+    pub default_selected: bool,
+}
+
+/// Payload completo do onboarding inicial do SaveVault.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnboardingRequest {
+    #[serde(default)]
+    pub selected_libraries: Vec<String>,
+    #[serde(default)]
+    pub detect_emulators: Option<bool>,
+    #[serde(default)]
+    pub detect_generic_games: Option<bool>,
+    #[serde(default = "default_onboarding_storage_mode")]
+    pub storage_mode: String,
+    #[serde(default, alias = "storage_path")]
+    pub custom_storage_path: Option<String>,
+    #[serde(default, alias = "startup_enabled")]
+    pub autostart: bool,
+    #[serde(default)]
+    pub interface_mode: savevault_core::config::InterfaceMode,
+}
+
+fn default_onboarding_storage_mode() -> String {
+    "automatic".into()
+}
+
+/// Configurações detalhadas da nuvem para a UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudConfigView {
+    pub provider: String,
+    pub local_sync_path: String,
+    pub enabled: bool,
+    pub detected_folders: Vec<savevault_cloud::DetectedCloudFolder>,
+}
+
+/// Jogo descoberto durante o scan do assistente.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredGameView {
+    pub name: String,
+    pub platform: String,
+    pub save_path: String,
+    #[serde(default)]
+    pub cover_url: Option<String>,
+}
+
+/// Resultado da otimização preventiva e limpeza do banco SQLite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationResult {
+    pub purged_sync_items: usize,
+    pub db_size_bytes: u64,
+    pub db_size_formatted: String,
+}
+
+/// Resultado da exportação do pacote de backup em arquivo .ZIP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub export_path: String,
+    pub file_size_bytes: u64,
+    pub file_size_formatted: String,
+}
+
 /// Estado compartilhado e thread-safe da DEV-UI.
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
     pub db_path: PathBuf,
     pub backup_root: PathBuf,
+    pub config_path: Option<PathBuf>,
     pub reconciler: Option<Arc<Reconciler>>,
+    pub sync_worker: Option<Arc<crate::sync_worker::SyncWorker>>,
     pub reconciliation_interval: Duration,
     pub watcher_active: AtomicBool,
     pub reconciler_active: AtomicBool,
+    pub metadata_resolver: Arc<crate::metadata::GameMetadataResolver>,
     event_counter: AtomicU64,
     recent_events: Mutex<VecDeque<DevUiEvent>>,
     last_error: Mutex<Option<String>>,
@@ -192,15 +288,53 @@ impl DevUiState {
             db,
             db_path,
             backup_root,
+            config_path: None,
             reconciler,
+            sync_worker: None,
             reconciliation_interval,
             watcher_active: AtomicBool::new(true),
             reconciler_active: AtomicBool::new(true),
+            metadata_resolver: Arc::new(crate::metadata::GameMetadataResolver::new()),
             event_counter: AtomicU64::new(1),
             recent_events: Mutex::new(VecDeque::with_capacity(100)),
             last_error: Mutex::new(None),
             last_reconciliation_report: Mutex::new(None),
             last_reconcile_time: Mutex::new(None),
+        }
+    }
+
+    /// Define o caminho do arquivo de configuração para o estado da UI e carrega o catálogo se disponível.
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        if let Some(parent) = path.parent() {
+            self.metadata_resolver = Arc::new(
+                crate::metadata::GameMetadataResolver::from_cache_dir(parent),
+            );
+        }
+        self.config_path = Some(path);
+        self
+    }
+
+    /// Configura explicitamente um resolvedor de metadados para o estado da UI.
+    pub fn with_metadata_resolver(
+        mut self,
+        resolver: Arc<crate::metadata::GameMetadataResolver>,
+    ) -> Self {
+        self.metadata_resolver = resolver;
+        self
+    }
+
+    /// Anexa o SyncWorker de background para controle e disparo via UI.
+    pub fn with_sync_worker(mut self, worker: Option<Arc<crate::sync_worker::SyncWorker>>) -> Self {
+        self.sync_worker = worker;
+        self
+    }
+
+    /// Dispara o processamento imediato da fila de sincronização pelo SyncWorker ativo.
+    pub async fn trigger_sync(&self) -> Result<usize> {
+        if let Some(ref worker) = self.sync_worker {
+            worker.process_batch().await
+        } else {
+            Ok(0)
         }
     }
 
@@ -245,17 +379,14 @@ impl DevUiState {
         let (locations_count, monitored_files_count, snapshots_count, sync_pending_count) = {
             let conn = self.db.lock().await;
             let loc_repo = SaveLocationsRepo::new(&conn);
-            let files_repo = FilesRepo::new(&conn);
             let queue_repo = SyncQueueRepo::new(&conn);
 
             let locations = loc_repo.list_all().unwrap_or_default();
             let locations_count = locations.len();
 
-            let mut monitored_files_count = 0usize;
-            for loc in &locations {
-                let files = files_repo.list_by_location(loc.id).unwrap_or_default();
-                monitored_files_count += files.len();
-            }
+            let monitored_files_count: usize = conn
+                .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+                .unwrap_or(0);
 
             let snapshots_count: usize = conn
                 .query_row("SELECT COUNT(*) FROM backups", [], |r| r.get(0))
@@ -333,28 +464,86 @@ impl DevUiState {
     }
 
     /// Retorna a lista de SaveLocations para a aba de Localizações.
+    /// Utiliza consultas em lote para eliminar padrões N+1 de queries.
     pub async fn get_locations(&self) -> Result<Vec<LocationView>> {
         let conn = self.db.lock().await;
         let loc_repo = SaveLocationsRepo::new(&conn);
         let games_repo = GamesRepo::new(&conn);
         let files_repo = FilesRepo::new(&conn);
+        let meta_repo = GameMetadataRepo::new(&conn);
 
+        // 1. Carregamento em lote
         let locations = loc_repo.list_all().unwrap_or_default();
-        let mut views = Vec::new();
+        let games = games_repo.list_all().unwrap_or_default();
+        let game_map: HashMap<Uuid, Game> = games.into_iter().map(|g| (g.id, g)).collect();
+
+        let metadata_list = meta_repo.list_all().unwrap_or_default();
+        let mut meta_map: HashMap<Uuid, GameMetadata> =
+            metadata_list.into_iter().map(|m| (m.game_id, m)).collect();
+
+        let file_counts = files_repo.count_by_all_locations().unwrap_or_default();
+
+        let now_str = Utc::now().format("%H:%M:%S").to_string();
+        let mut views = Vec::with_capacity(locations.len());
 
         for loc in locations {
-            let game = games_repo.find_by_id(loc.game_id).unwrap_or(None);
+            let game = game_map.get(&loc.game_id);
             let game_name = game
-                .as_ref()
                 .map(|g| g.name.clone())
                 .unwrap_or_else(|| "Desconhecido".into());
             let platform = game
-                .as_ref()
                 .map(|g| format!("{:?}", g.platform))
                 .unwrap_or_else(|| "Generic".into());
 
             let exists_on_disk = loc.path.exists();
-            let files = files_repo.list_by_location(loc.id).unwrap_or_default();
+            let count = file_counts.get(&loc.id).copied().unwrap_or(0);
+
+            let cover_url = if let Some(g) = game {
+                let cached_entry = meta_map.get(&g.id);
+                let is_stale = if let Some(m) = cached_entry {
+                    if m.source == MetadataSource::Manual {
+                        false
+                    } else if g.platform == Platform::Steam {
+                        let current_id = g
+                            .platform_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| crate::metadata::is_valid_steam_app_id(s));
+                        m.steam_app_id.as_deref() != current_id
+                    } else {
+                        m.source == MetadataSource::Steam
+                    }
+                } else {
+                    true
+                };
+
+                if !is_stale {
+                    if let Some(m) = cached_entry {
+                        if let Some(ref url) = m.cover_url {
+                            if crate::metadata::is_valid_steam_cover_url(url) {
+                                Some(url.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    self.metadata_resolver
+                        .resolve_or_get_cached(&conn, g)
+                        .ok()
+                        .and_then(|meta| {
+                            let c = meta.cover_url.clone();
+                            meta_map.insert(g.id, meta);
+                            c
+                        })
+                }
+            } else {
+                None
+            };
 
             views.push(LocationView {
                 id: loc.id,
@@ -364,8 +553,9 @@ impl DevUiState {
                 path: loc.path.to_string_lossy().to_string(),
                 location_type: format!("{:?}", loc.location_type),
                 exists_on_disk,
-                monitored_files_count: files.len(),
-                last_check: Utc::now().format("%H:%M:%S").to_string(),
+                monitored_files_count: count as usize,
+                last_check: now_str.clone(),
+                cover_url,
             });
         }
 
@@ -788,6 +978,728 @@ impl DevUiState {
             }
         }
     }
+
+    /// Resolve o caminho efetivo do arquivo de configuração config.toml.
+    pub fn resolve_config_path(&self) -> PathBuf {
+        if let Some(ref p) = self.config_path {
+            p.clone()
+        } else {
+            let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+            PathBuf::from(appdata).join("SaveVault").join("config.toml")
+        }
+    }
+
+    /// Carrega a configuração atual a partir do caminho resolvido.
+    pub fn get_config(&self) -> savevault_core::config::Config {
+        let config_path = self.resolve_config_path();
+        savevault_core::config::Config::load(&config_path).unwrap_or_default()
+    }
+
+    /// Salva a configuração fornecida no caminho resolvido.
+    pub fn save_config(&self, config: &savevault_core::config::Config) -> Result<()> {
+        let config_path = self.resolve_config_path();
+        config.save(&config_path)
+    }
+
+    /// Obtém o status do Assistente de Primeiro Acesso (Setup Wizard).
+    pub async fn get_setup_status(&self) -> Result<SetupStatusView> {
+        let config = self.get_config();
+
+        let detected_cloud_folders = savevault_cloud::detect_cloud_folders();
+        let local_sync_path = config
+            .cloud
+            .local_sync_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .or_else(|| {
+                detected_cloud_folders
+                    .first()
+                    .map(|d| d.savevault_folder.to_string_lossy().to_string())
+            });
+
+        let games_count = {
+            let conn = self.db.lock().await;
+            let repo = GamesRepo::new(&conn);
+            repo.list_all().map(|g| g.len()).unwrap_or(0)
+        };
+
+        let autostart_enabled =
+            savevault_core::autostart::is_enabled().unwrap_or(config.general.autostart);
+
+        Ok(SetupStatusView {
+            setup_completed: config.general.setup_completed,
+            cloud_provider: config.cloud.provider,
+            local_sync_path,
+            detected_cloud_folders,
+            games_count,
+            autostart_enabled,
+            notifications_enabled: config.notifications.enabled,
+            interface_mode: config.general.interface_mode,
+            selected_libraries: config.general.selected_libraries,
+        })
+    }
+
+    /// Retorna a lista de bibliotecas suportadas e seus respectivos status de detecção no sistema.
+    pub fn get_available_libraries(&self) -> Result<Vec<DetectedLibraryView>> {
+        let mut libraries = Vec::new();
+
+        // 1. Steam
+        let steam_root = savevault_discovery::steam::find_steam_root();
+        let steam_detected = steam_root.is_some();
+        let steam_path = steam_root.map(|p| p.display().to_string());
+        libraries.push(DetectedLibraryView {
+            id: "steam".into(),
+            name: "Steam".into(),
+            description: "Jogos e saves instalados via Steam".into(),
+            detected: steam_detected,
+            path: steam_path,
+            category: "commercial".into(),
+            default_selected: true,
+        });
+
+        // 2. GOG Galaxy
+        let gog_root = savevault_discovery::gog::find_gog_root();
+        let gog_detected = gog_root.is_some();
+        let gog_path = gog_root.map(|p| p.display().to_string());
+        libraries.push(DetectedLibraryView {
+            id: "gog".into(),
+            name: "GOG Galaxy".into(),
+            description: "Jogos instalados pelo GOG Galaxy ou DRM-free".into(),
+            detected: gog_detected,
+            path: gog_path,
+            category: "commercial".into(),
+            default_selected: true,
+        });
+
+        // 3. Emuladores
+        let emus = savevault_discovery::emulators::find_installed_emulators();
+        let emus_detected = !emus.is_empty();
+        let emus_path = if emus_detected {
+            let names: Vec<String> = emus.iter().map(|(n, _)| n.clone()).collect();
+            Some(format!("Detectados: {}", names.join(", ")))
+        } else {
+            None
+        };
+        libraries.push(DetectedLibraryView {
+            id: "emulators".into(),
+            name: "Emuladores".into(),
+            description: "Procure saves de emuladores instalados ou configurados posteriormente."
+                .into(),
+            detected: emus_detected,
+            path: emus_path,
+            category: "emulators".into(),
+            default_selected: emus_detected,
+        });
+
+        // 4. Jogos genéricos / outros
+        libraries.push(DetectedLibraryView {
+            id: "generic".into(),
+            name: "Jogos genéricos".into(),
+            description: "Para jogos que não pertencem a uma biblioteca conhecida.".into(),
+            detected: true,
+            path: Some("Pastas padrão do usuário (%USERPROFILE%)".into()),
+            category: "generic".into(),
+            default_selected: true,
+        });
+
+        Ok(libraries)
+    }
+
+    /// Abre diálogo nativo do sistema para escolha de pasta de armazenamento.
+    /// Retorna `Some(path)` se o usuário selecionou uma pasta, ou `None` se cancelou.
+    pub async fn pick_folder_dialog(&self) -> Result<Option<String>> {
+        #[cfg(windows)]
+        {
+            tokio::task::spawn_blocking(|| {
+                let output = std::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-STA",
+                        "-Command",
+                        "[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null; $f = New-Object Windows.Forms.FolderBrowserDialog; $f.ShowNewFolderButton = $true; $f.Description = 'Selecione a pasta para os backups do SaveVault'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }",
+                    ])
+                    .output();
+                match output {
+                    Ok(out) if out.status.success() => {
+                        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if path.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(path))
+                        }
+                    }
+                    _ => Ok(None),
+                }
+            })
+            .await?
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(None)
+        }
+    }
+
+    /// Pula o onboarding marcando setup_completed = true e preservando integralmente
+    /// qualquer configuração prévia existente sem destruí-la.
+    pub async fn skip_onboarding(&self) -> Result<SetupStatusView> {
+        let config_path = self.resolve_config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        config.general.setup_completed = true;
+        config.save(&config_path)?;
+        self.get_setup_status().await
+    }
+
+    /// Conclui o onboarding inicial persistindo atomicamente as configurações selecionadas.
+    pub async fn complete_onboarding(&self, req: OnboardingRequest) -> Result<SetupStatusView> {
+        let config_path = self.resolve_config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        // 1. Armazenamento com validação de segurança
+        match req.storage_mode.as_str() {
+            "automatic" => {
+                // Princípio de segurança: NÃO cria pastas no disco. Apenas registra intenção.
+                config.cloud.provider = "none".into();
+                config.cloud.local_sync_path = None;
+            }
+            "onedrive" | "custom" => {
+                if let Some(ref raw_path) = req.custom_storage_path {
+                    let trimmed = raw_path.trim();
+                    if trimmed.is_empty() {
+                        config.cloud.provider = "none".into();
+                        config.cloud.local_sync_path = None;
+                    } else {
+                        let path = std::path::Path::new(trimmed);
+                        let val_res = crate::remapping::validate_candidate_path(path);
+                        if !val_res.valid {
+                            let reason = val_res
+                                .reason
+                                .unwrap_or_else(|| "Caminho não seguro ou inválido".into());
+                            anyhow::bail!(
+                                "Caminho de armazenamento inválido ou não seguro: {}",
+                                reason
+                            );
+                        }
+                        if let Err(e) = std::fs::create_dir_all(path) {
+                            anyhow::bail!(
+                                "Não foi possível acessar ou criar a pasta de armazenamento: {}. Verifique permissões.",
+                                e
+                            );
+                        }
+                        config.cloud.provider = "local_folder".into();
+                        config.cloud.local_sync_path = Some(path.to_path_buf());
+                    }
+                } else {
+                    config.cloud.provider = "none".into();
+                    config.cloud.local_sync_path = None;
+                }
+            }
+            _ => {
+                config.cloud.provider = "none".into();
+                config.cloud.local_sync_path = None;
+            }
+        }
+
+        // 2. Inicialização com o sistema (Autostart)
+        if req.autostart {
+            let _ = savevault_core::autostart::enable(None);
+        } else {
+            let _ = savevault_core::autostart::disable();
+        }
+        config.general.autostart = savevault_core::autostart::is_enabled().unwrap_or(req.autostart);
+
+        // 3. Modo de Interface
+        config.general.interface_mode = req.interface_mode;
+
+        // 4. Bibliotecas Selecionadas
+        config.general.selected_libraries = if req.selected_libraries.is_empty() {
+            vec![
+                "steam".into(),
+                "gog".into(),
+                "emulators".into(),
+                "generic".into(),
+            ]
+        } else {
+            req.selected_libraries.clone()
+        };
+
+        // 5. Marca setup_completed e persiste atomicamente
+        config.general.setup_completed = true;
+        config.save(&config_path)?;
+
+        // 6. Atualiza worker de sincronização
+        if let Some(ref worker) = self.sync_worker {
+            worker
+                .update_config(crate::sync_worker::SyncWorkerConfig {
+                    provider: config.cloud.provider.clone(),
+                    local_sync_path: config.cloud.local_sync_path.clone(),
+                    reconciliation_interval: Duration::from_secs(60),
+                    max_attempts: 5,
+                    base_backoff_ms: 2000,
+                })
+                .await;
+            worker.notify_new_item();
+        }
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            "Onboarding inicial concluído com sucesso!",
+            Some(format!(
+                "Modo: {:?}, Armazenamento: {}, Autostart: {}, Bibliotecas: {:?}",
+                config.general.interface_mode,
+                config.cloud.provider,
+                config.general.autostart,
+                config.general.selected_libraries
+            )),
+        )
+        .await;
+
+        self.get_setup_status().await
+    }
+
+    /// Executa o scan inicial de jogos durante o assistente de primeiro acesso.
+    pub async fn run_setup_discovery(&self) -> Result<Vec<DiscoveredGameView>> {
+        let config = self.get_config();
+        self.run_setup_discovery_filtered(Some(config.general.selected_libraries))
+            .await
+    }
+
+    /// Executa o scan de jogos filtrando pelas bibliotecas especificadas.
+    pub async fn run_setup_discovery_filtered(
+        &self,
+        libraries: Option<Vec<String>>,
+    ) -> Result<Vec<DiscoveredGameView>> {
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Assistente de Configuração: iniciando detecção de jogos e saves...",
+            None,
+        )
+        .await;
+
+        let config_path = self.resolve_config_path();
+        let config_dir = config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        let selected = libraries.unwrap_or_else(|| {
+            vec![
+                "steam".into(),
+                "gog".into(),
+                "emulators".into(),
+                "generic".into(),
+            ]
+        });
+
+        let result = savevault_discovery::run_filtered(config_dir, &selected).await?;
+
+        let _report = {
+            let conn = self.db.lock().await;
+            crate::orchestrator::persist_discovery_result(&conn, &result)?
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Detecção concluída: {} jogos e {} locais mapeados.",
+                result.games.len(),
+                result.save_locations.len()
+            ),
+            None,
+        )
+        .await;
+
+        let conn = self.db.lock().await;
+        let games_repo = GamesRepo::new(&conn);
+        let locs_repo = SaveLocationsRepo::new(&conn);
+        let games = games_repo.list_all()?;
+        let mut views = Vec::new();
+        for g in games {
+            let cover_url = self
+                .metadata_resolver
+                .resolve_or_get_cached(&conn, &g)
+                .ok()
+                .and_then(|m| m.cover_url);
+
+            if let Ok(locs) = locs_repo.list_by_game(g.id) {
+                for loc in locs {
+                    views.push(DiscoveredGameView {
+                        name: g.name.clone(),
+                        platform: format!("{:?}", g.platform),
+                        save_path: loc.path.display().to_string(),
+                        cover_url: cover_url.clone(),
+                    });
+                }
+            }
+        }
+        Ok(views)
+    }
+
+    /// Conclui o assistente de primeiro acesso e persiste as preferências no config.toml.
+    pub async fn complete_setup(
+        &self,
+        provider: Option<String>,
+        autostart: Option<bool>,
+        notifications: Option<bool>,
+        local_sync_path: Option<String>,
+    ) -> Result<SetupStatusView> {
+        let config_path = self.resolve_config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        if let Some(p) = provider {
+            config.cloud.provider = p;
+        }
+        if let Some(ref lsp) = local_sync_path {
+            let trimmed = lsp.trim();
+            if !trimmed.is_empty() {
+                let p = PathBuf::from(trimmed);
+                let _ = std::fs::create_dir_all(&p);
+                config.cloud.local_sync_path = Some(p);
+            }
+        }
+        if let Some(a) = autostart {
+            config.general.autostart = a;
+            if a {
+                let _ = savevault_core::autostart::enable(None);
+            } else {
+                let _ = savevault_core::autostart::disable();
+            }
+        }
+        if let Some(n) = notifications {
+            config.notifications.enabled = n;
+        }
+        config.general.setup_completed = true;
+        config.save(&config_path)?;
+
+        if let Some(ref worker) = self.sync_worker {
+            worker
+                .update_config(crate::sync_worker::SyncWorkerConfig {
+                    provider: config.cloud.provider.clone(),
+                    local_sync_path: config.cloud.local_sync_path.clone(),
+                    reconciliation_interval: Duration::from_secs(60),
+                    max_attempts: 5,
+                    base_backoff_ms: 2000,
+                })
+                .await;
+            worker.notify_new_item();
+        }
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            "Assistente de Primeiro Acesso concluído com sucesso!",
+            Some(format!(
+                "Provedor ativo: {}, Iniciar com Windows: {}, Notificações: {}",
+                config.cloud.provider, config.general.autostart, config.notifications.enabled
+            )),
+        )
+        .await;
+
+        self.get_setup_status().await
+    }
+
+    /// Cadastra um jogo e local de save manualmente através da UI.
+    pub async fn add_game(&self, name: &str, path_str: &str) -> Result<LocationView> {
+        let raw_path = PathBuf::from(path_str);
+        let location_type = if raw_path.is_file() {
+            SaveLocationType::File
+        } else {
+            SaveLocationType::Directory
+        };
+
+        let (game_id, loc, cover_url) = {
+            let conn = self.db.lock().await;
+            let games_repo = GamesRepo::new(&conn);
+            let locations_repo = SaveLocationsRepo::new(&conn);
+
+            let (game_id, game) = if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(name, &Platform::Generic)
+            {
+                (existing.id, existing)
+            } else {
+                let game = Game::new(name, Platform::Generic, None, Confidence::High);
+                games_repo.insert(&game)?;
+                (game.id, game)
+            };
+
+            let loc = SaveLocation::new(game_id, raw_path.clone(), location_type);
+            locations_repo.upsert(&loc)?;
+
+            let cover_url = self
+                .metadata_resolver
+                .resolve_or_get_cached(&conn, &game)
+                .ok()
+                .and_then(|meta| meta.cover_url);
+
+            (game_id, loc, cover_url)
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!("Jogo manual '{}' cadastrado com sucesso", name),
+            Some(raw_path.display().to_string()),
+        )
+        .await;
+
+        Ok(LocationView {
+            id: loc.id,
+            game_id,
+            game_name: name.to_string(),
+            platform: "Generic".to_string(),
+            path: raw_path.display().to_string(),
+            location_type: format!("{:?}", loc.location_type),
+            exists_on_disk: raw_path.exists(),
+            monitored_files_count: 0,
+            last_check: Utc::now().format("%H:%M:%S").to_string(),
+            cover_url,
+        })
+    }
+
+    /// Retorna as configurações atuais de nuvem.
+    pub async fn get_cloud_config(&self) -> Result<CloudConfigView> {
+        let config = self.get_config();
+        let detected = savevault_cloud::detect_cloud_folders();
+        let local_path = config
+            .cloud
+            .local_sync_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+
+        let enabled = config.cloud.provider != "none" && !local_path.is_empty();
+
+        Ok(CloudConfigView {
+            provider: config.cloud.provider,
+            local_sync_path: local_path,
+            enabled,
+            detected_folders: detected,
+        })
+    }
+
+    /// Atualiza as configurações de nuvem.
+    pub async fn update_cloud_config(
+        &self,
+        provider: Option<String>,
+        local_sync_path: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<CloudConfigView> {
+        let mut config = self.get_config();
+        let config_path = self.resolve_config_path();
+
+        if let Some(p) = provider {
+            config.cloud.provider = p;
+        }
+
+        if let Some(lsp) = local_sync_path {
+            let trimmed = lsp.trim();
+            if !trimmed.is_empty() {
+                let pb = PathBuf::from(trimmed);
+                let _ = std::fs::create_dir_all(&pb);
+                config.cloud.local_sync_path = Some(pb);
+            }
+        }
+
+        if let Some(en) = enabled {
+            if !en {
+                config.cloud.provider = "none".to_string();
+            } else if config.cloud.provider == "none" {
+                config.cloud.provider = "local_folder".to_string();
+            }
+        }
+
+        config.save(&config_path)?;
+
+        if let Some(ref worker) = self.sync_worker {
+            worker
+                .update_config(crate::sync_worker::SyncWorkerConfig {
+                    provider: config.cloud.provider.clone(),
+                    local_sync_path: config.cloud.local_sync_path.clone(),
+                    reconciliation_interval: Duration::from_secs(60),
+                    max_attempts: 5,
+                    base_backoff_ms: 2000,
+                })
+                .await;
+            worker.notify_new_item();
+        }
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Configurações de nuvem atualizadas".to_string(),
+            Some(format!(
+                "Provedor: {}, Pasta: {:?}",
+                config.cloud.provider, config.cloud.local_sync_path
+            )),
+        )
+        .await;
+
+        self.get_cloud_config().await
+    }
+
+    /// Executa manutenção preventiva no banco de dados SQLite (pruning de sync_queue antigas e VACUUM).
+    pub async fn optimize_database(&self) -> anyhow::Result<OptimizationResult> {
+        let mut purged = 0;
+        {
+            let db = self.db.lock().await;
+            let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+            let deleted = db.execute(
+                "DELETE FROM sync_queue WHERE status = 'synced' OR (attempts >= 5 AND created_at < ?1)",
+                rusqlite::params![cutoff.to_rfc3339()],
+            )?;
+            purged += deleted;
+            db.execute("VACUUM", [])?;
+        }
+
+        let config = self.get_config();
+        let db_path = &config.paths.database_path;
+        let size = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Otimização do banco concluída. {} itens antigos limpos. Tamanho atual: {}",
+                purged, size_formatted
+            ),
+            None,
+        )
+        .await;
+
+        Ok(OptimizationResult {
+            purged_sync_items: purged,
+            db_size_bytes: size,
+            db_size_formatted: size_formatted,
+        })
+    }
+
+    /// Cria um backup completo compactado (.ZIP) de todos os saves monitorados e snapshots.
+    pub async fn export_backup_zip(&self) -> anyhow::Result<ExportResult> {
+        let config = self.get_config();
+        let backup_dir = &config.paths.backup_dir;
+
+        if !backup_dir.exists() {
+            anyhow::bail!("O diretório de backups ainda não foi criado ou não contém dados.");
+        }
+
+        // Determina destino padrão (Downloads do usuário ou diretório corrente)
+        let downloads_dir = std::env::var("USERPROFILE")
+            .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+
+        if !downloads_dir.exists() {
+            let _ = std::fs::create_dir_all(&downloads_dir);
+        }
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let zip_file_name = format!("checkpoint_backup_{}.zip", timestamp);
+        let target_zip = downloads_dir.join(&zip_file_name);
+
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        backup_dir.display(),
+                        target_zip.display()
+                    ),
+                ])
+                .output()?;
+
+            if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Falha ao gerar arquivo ZIP: {}", err);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let output = std::process::Command::new("zip")
+                .args([
+                    "-r",
+                    target_zip.to_str().unwrap(),
+                    backup_dir.to_str().unwrap(),
+                ])
+                .output()?;
+            if !output.status.success() {
+                anyhow::bail!("Falha ao compactar arquivo no Linux/macOS");
+            }
+        }
+
+        let size = std::fs::metadata(&target_zip).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Backup manual exportado com sucesso: {} ({})",
+                zip_file_name, size_formatted
+            ),
+            Some(target_zip.display().to_string()),
+        )
+        .await;
+
+        Ok(ExportResult {
+            export_path: target_zip.display().to_string(),
+            file_size_bytes: size,
+            file_size_formatted: size_formatted,
+        })
+    }
+
+    /// Lista os locais de save que necessitam de remapeamento interativo (AUD-03).
+    pub async fn get_pending_remappings(
+        &self,
+    ) -> Result<Vec<crate::remapping::PendingMappingView>> {
+        let conn = self.db.lock().await;
+        crate::remapping::list_pending_remappings(&conn)
+    }
+
+    /// Valida um caminho candidato para remapeamento (AUD-03).
+    pub async fn validate_remapping_path(
+        &self,
+        candidate_path: &str,
+    ) -> crate::remapping::ValidationResult {
+        crate::remapping::validate_candidate_path(std::path::Path::new(candidate_path))
+    }
+
+    /// Aplica e persiste o remapeamento de um local de save (AUD-03).
+    pub async fn apply_remapping(&self, location_id: Uuid, new_path: &str) -> Result<()> {
+        let conn = self.db.lock().await;
+        crate::remapping::apply_remapping(&conn, location_id, std::path::Path::new(new_path))
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Reseta/cancela o remapeamento de um local de save (AUD-03).
+    pub async fn reset_remapping(&self, location_id: Uuid) -> Result<()> {
+        let conn = self.db.lock().await;
+        crate::remapping::reset_remapping(&conn, location_id)
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
+/// Abre uma pasta ou arquivo no Windows Explorer (ou gerenciador nativo).
+pub fn open_path_in_explorer(path_str: &str) -> anyhow::Result<()> {
+    let p = std::path::Path::new(path_str);
+    let target = if p.is_file() {
+        p.parent().unwrap_or(p)
+    } else {
+        p
+    };
+
+    if !target.exists() {
+        let _ = std::fs::create_dir_all(target);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer").arg(target).spawn()?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+    }
+    Ok(())
 }
 
 /// Formata bytes de forma legível.

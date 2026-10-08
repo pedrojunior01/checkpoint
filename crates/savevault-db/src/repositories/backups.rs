@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
 use savevault_core::models::{Backup, SyncStatus};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub struct BackupsRepo<'a> {
     pub conn: &'a Connection,
@@ -33,18 +33,20 @@ impl<'a> BackupsRepo<'a> {
     pub fn list_by_file(&self, file_id: Uuid) -> Result<Vec<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE file_id = ?1 ORDER BY version DESC"
+             FROM backups WHERE file_id = ?1 ORDER BY version DESC",
         )?;
-        let backups = stmt.query_map(params![file_id.to_string()], row_to_backup)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map(params![file_id.to_string()], row_to_backup)?;
+        let mut backups = Vec::new();
+        for r in rows {
+            backups.push(r?);
+        }
         Ok(backups)
     }
 
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE id = ?1"
+             FROM backups WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id.to_string()], row_to_backup)?;
         Ok(rows.next().transpose()?)
@@ -58,7 +60,6 @@ impl<'a> BackupsRepo<'a> {
         )?;
         Ok(deleted)
     }
-
 
     pub fn update_sync_status(&self, id: Uuid, status: &SyncStatus) -> Result<()> {
         self.conn.execute(
@@ -84,10 +85,8 @@ impl<'a> BackupsRepo<'a> {
 
     /// Remove um backup específico pelo ID.
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM backups WHERE id = ?1",
-            params![id.to_string()],
-        )?;
+        self.conn
+            .execute("DELETE FROM backups WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 
@@ -115,10 +114,11 @@ impl<'a> BackupsRepo<'a> {
                  SELECT id FROM backups WHERE file_id = ?1 ORDER BY version DESC LIMIT ?2
              )",
         )?;
-        let old_backups: Vec<Backup> = stmt
-            .query_map(params![file_id.to_string(), keep as i64], row_to_backup)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map(params![file_id.to_string(), keep as i64], row_to_backup)?;
+        let mut old_backups = Vec::new();
+        for r in rows {
+            old_backups.push(r?);
+        }
 
         let tx = self.conn.unchecked_transaction()?;
 
@@ -129,7 +129,8 @@ impl<'a> BackupsRepo<'a> {
                 let mut check_stmt = tx.prepare(
                     "SELECT COUNT(*) FROM sync_queue WHERE backup_id = ?1 AND operation = 'delete'",
                 )?;
-                let count: i64 = check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
+                let count: i64 =
+                    check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
                 if count == 0 {
                     // Cancela qualquer upload pendente deste backup antigo para não enviar versão já podada
                     tx.execute(
@@ -161,21 +162,32 @@ impl<'a> BackupsRepo<'a> {
 }
 
 fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<Backup> {
-    let id: String = row.get(0)?;
-    let file_id: String = row.get(1)?;
+    let id_str: String = row.get(0)?;
+    let file_id_str: String = row.get(1)?;
     let version: i64 = row.get(2)?;
     let cloud_path: Option<String> = row.get(3)?;
     let drive_file_id: Option<String> = row.get(4)?;
     let status_str: String = row.get(5)?;
     let created_str: String = row.get(6)?;
+
+    let id = Uuid::parse_str(&id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let file_id = Uuid::parse_str(&file_id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let created_at = created_str.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
     Ok(Backup {
-        id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
-        file_id: Uuid::parse_str(&file_id).unwrap_or_else(|_| Uuid::new_v4()),
+        id,
+        file_id,
         version: version as u32,
         cloud_path,
         drive_file_id,
         sync_status: str_to_sync_status(&status_str),
-        created_at: created_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at,
     })
 }
 

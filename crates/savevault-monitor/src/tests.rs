@@ -80,10 +80,7 @@ impl MockFileAccess {
     }
 
     fn set_fail_readable_with(&self, path: PathBuf, err: MockFailureKind) {
-        self.fail_readable_with
-            .lock()
-            .unwrap()
-            .insert(path, err);
+        self.fail_readable_with.lock().unwrap().insert(path, err);
     }
 
     fn set_metadata_sequence(
@@ -105,7 +102,8 @@ impl MockFileAccess {
 impl FileAccess for MockFileAccess {
     fn metadata(&self, path: &Path) -> Result<FileMetadata, FileAccessError> {
         let current = self.active_concurrent_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        self.peak_concurrent_calls.fetch_max(current, Ordering::SeqCst);
+        self.peak_concurrent_calls
+            .fetch_max(current, Ordering::SeqCst);
 
         if let Some(delay) = *self.artificial_delay.lock().unwrap() {
             std::thread::sleep(delay);
@@ -168,11 +166,7 @@ fn test_01_scanner_existing_file() {
         f.write_all(b"dados_de_save_12345").unwrap();
     }
 
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        file_path.clone(),
-        SaveLocationType::File,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), file_path.clone(), SaveLocationType::File);
 
     let scanner = SaveScanner::default();
     let files = scanner.scan(&loc).unwrap();
@@ -186,16 +180,15 @@ fn test_01_scanner_existing_file() {
 #[test]
 fn test_02_scanner_non_existing_file_returns_empty_without_panic() {
     let non_existent = PathBuf::from(r"C:\savevault_fake_test_dir_9999\missing_save.dat");
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        non_existent,
-        SaveLocationType::File,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), non_existent, SaveLocationType::File);
 
     let scanner = SaveScanner::default();
     let files = scanner.scan(&loc).unwrap();
 
-    assert!(files.is_empty(), "Arquivo inexistente deve retornar vetor vazio sem erro fatal");
+    assert!(
+        files.is_empty(),
+        "Arquivo inexistente deve retornar vetor vazio sem erro fatal"
+    );
 }
 
 #[test]
@@ -236,11 +229,7 @@ fn test_04_scanner_glob_matches_pattern() {
     File::create(&other).unwrap().write_all(b"txt").unwrap();
 
     let glob_path = dir.path().join("*.sav");
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        glob_path,
-        SaveLocationType::Glob,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), glob_path, SaveLocationType::Glob);
 
     let scanner = SaveScanner::default();
     let files = scanner.scan(&loc).unwrap();
@@ -249,7 +238,10 @@ fn test_04_scanner_glob_matches_pattern() {
     let paths: Vec<PathBuf> = files.into_iter().map(|f| f.path).collect();
     assert!(paths.contains(&sav1));
     assert!(paths.contains(&sav2));
-    assert!(!paths.contains(&other), "Arquivo .txt não deve corresponder ao glob *.sav");
+    assert!(
+        !paths.contains(&other),
+        "Arquivo .txt não deve corresponder ao glob *.sav"
+    );
 }
 
 #[test]
@@ -259,11 +251,7 @@ fn test_05_scanner_glob_no_match() {
     File::create(&txt).unwrap().write_all(b"info").unwrap();
 
     let glob_path = dir.path().join("*.sav");
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        glob_path,
-        SaveLocationType::Glob,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), glob_path, SaveLocationType::Glob);
 
     let scanner = SaveScanner::default();
     let files = scanner.scan(&loc).unwrap();
@@ -276,15 +264,14 @@ fn test_13_scanner_glob_multiple_files() {
     let dir = tempdir().unwrap();
     for i in 1..=5 {
         let fpath = dir.path().join(format!("slot_{}.sav", i));
-        File::create(&fpath).unwrap().write_all(format!("content {}", i).as_bytes()).unwrap();
+        File::create(&fpath)
+            .unwrap()
+            .write_all(format!("content {}", i).as_bytes())
+            .unwrap();
     }
 
     let glob_path = dir.path().join("slot_*.sav");
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        glob_path,
-        SaveLocationType::Glob,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), glob_path, SaveLocationType::Glob);
 
     let scanner = SaveScanner::default();
     let files = scanner.scan(&loc).unwrap();
@@ -332,7 +319,10 @@ async fn test_06_debounce_multiple_writes_coalesced_into_single_event() {
 
     // Garantir que NENHUM outro evento seja emitido para as 5 escritas
     let extra = tokio::time::timeout(Duration::from_millis(50), out_rx.recv()).await;
-    assert!(extra.is_err(), "Apenas 1 evento deve ser emitido após debounce");
+    assert!(
+        extra.is_err(),
+        "Apenas 1 evento deve ser emitido após debounce"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
@@ -488,7 +478,10 @@ async fn test_10_sharing_violation_retry_with_backoff_and_recovery() {
         StabilityResult::Stable(meta) => {
             assert_eq!(meta.size_bytes, 2048);
         }
-        other => panic!("Esperava estabilizar após retries de sharing violation, obteve: {:?}", other),
+        other => panic!(
+            "Esperava estabilizar após retries de sharing violation, obteve: {:?}",
+            other
+        ),
     }
 }
 
@@ -620,11 +613,8 @@ async fn test_14_atomic_save_rename_sequence_handles_cleanly() {
     let config = SaveWatcherConfig::fast_for_tests();
     let final_path = PathBuf::from(r"C:\Games\Example\save.dat");
 
-    let mut location = SaveLocation::new(
-        Uuid::new_v4(),
-        final_path.clone(),
-        SaveLocationType::File,
-    );
+    let mut location =
+        SaveLocation::new(Uuid::new_v4(), final_path.clone(), SaveLocationType::File);
     location.id = loc_id;
 
     let (service, raw_tx, mut stable_rx) =
@@ -685,7 +675,11 @@ fn test_resolve_watch_directories_deduplicates_same_parent() {
     );
 
     let dirs = resolve_watch_directories(&[loc1, loc2]);
-    assert_eq!(dirs.len(), 1, "Ambos os arquivos devem compartilhar o mesmo diretório pai");
+    assert_eq!(
+        dirs.len(),
+        1,
+        "Ambos os arquivos devem compartilhar o mesmo diretório pai"
+    );
     assert!(dirs.contains_key(&PathBuf::from(r"C:\Games\Example")));
 }
 
@@ -733,7 +727,8 @@ fn test_split_glob_base_and_pattern() {
     assert_eq!(base, PathBuf::from(r"C:\Games\Example"));
     assert_eq!(pat, "*.sav");
 
-    let (base2, pat2) = split_glob_base_and_pattern(Path::new(r"C:\Games\slot_?\save.dat")).unwrap();
+    let (base2, pat2) =
+        split_glob_base_and_pattern(Path::new(r"C:\Games\slot_?\save.dat")).unwrap();
     assert_eq!(base2, PathBuf::from(r"C:\Games"));
     assert_eq!(pat2, r"slot_?\save.dat");
 }
@@ -751,12 +746,9 @@ async fn test_14_atomic_save_rename_real_filesystem() {
     );
 
     let config = SaveWatcherConfig::fast_for_tests();
-    let (service, mut stable_rx) = SaveWatcherService::start(
-        config,
-        vec![loc.clone()],
-        Arc::new(OsFileAccess),
-    )
-    .expect("Falha ao iniciar watcher");
+    let (service, mut stable_rx) =
+        SaveWatcherService::start(config, vec![loc.clone()], Arc::new(OsFileAccess))
+            .expect("Falha ao iniciar watcher");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -777,7 +769,9 @@ async fn test_14_atomic_save_rename_real_filesystem() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
 
     while tokio::time::Instant::now() < deadline {
-        if let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(500), stable_rx.recv()).await {
+        if let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(500), stable_rx.recv()).await
+        {
             if event.path.file_name() == final_save_path.file_name() {
                 assert_eq!(event.size_bytes, 24);
                 assert_eq!(event.save_location_id, loc.id);
@@ -787,7 +781,10 @@ async fn test_14_atomic_save_rename_real_filesystem() {
         }
     }
 
-    assert!(detected_final, "O arquivo final após rename atômico deve ser detectado e estabilizado");
+    assert!(
+        detected_final,
+        "O arquivo final após rename atômico deve ser detectado e estabilizado"
+    );
     service.shutdown().await;
 }
 
@@ -809,7 +806,11 @@ fn test_glob_subdirectory_and_traversal_matching() {
         SaveLocationType::Glob,
     );
 
-    let locations = vec![loc_sub.clone(), loc_multi.clone(), loc_wildcard_name.clone()];
+    let locations = vec![
+        loc_sub.clone(),
+        loc_multi.clone(),
+        loc_wildcard_name.clone(),
+    ];
 
     // 1. C:\Saves\*\*.sav -> C:\Saves\GameA\slot1.sav
     let m1 = match_path_to_locations(Path::new(r"c:\saves\gamea\slot1.sav"), &locations);
@@ -820,10 +821,16 @@ fn test_glob_subdirectory_and_traversal_matching() {
     assert_eq!(m2, Some((loc_multi.id, SaveLocationType::Glob)));
 
     // 3. C:\Saves\Game*\*.sav -> C:\Saves\Game1\slot1.sav (e não-match com Other)
-    let m3 = match_path_to_locations(Path::new(r"C:\Saves\Game1\slot1.sav"), std::slice::from_ref(&loc_wildcard_name));
+    let m3 = match_path_to_locations(
+        Path::new(r"C:\Saves\Game1\slot1.sav"),
+        std::slice::from_ref(&loc_wildcard_name),
+    );
     assert_eq!(m3, Some((loc_wildcard_name.id, SaveLocationType::Glob)));
 
-    let m3_nomatch = match_path_to_locations(Path::new(r"C:\Saves\Other\slot1.sav"), std::slice::from_ref(&loc_wildcard_name));
+    let m3_nomatch = match_path_to_locations(
+        Path::new(r"C:\Saves\Other\slot1.sav"),
+        std::slice::from_ref(&loc_wildcard_name),
+    );
     assert_eq!(m3_nomatch, None);
 
     // 4. Não correspondente: C:\Saves\GameA\save.txt
@@ -838,7 +845,10 @@ fn test_glob_subdirectory_and_traversal_matching() {
     );
     let scanner = SaveScanner::default();
     let res = scanner.scan(&loc_traversal);
-    assert!(matches!(res, Err(crate::scanner::ScanError::PathTraversal(_))));
+    assert!(matches!(
+        res,
+        Err(crate::scanner::ScanError::PathTraversal(_))
+    ));
 }
 
 #[tokio::test]
@@ -857,12 +867,9 @@ async fn test_dynamic_directory_created_after_startup() {
     );
 
     let config = SaveWatcherConfig::fast_for_tests();
-    let (service, mut stable_rx) = SaveWatcherService::start(
-        config,
-        vec![loc.clone()],
-        Arc::new(OsFileAccess),
-    )
-    .expect("Falha ao iniciar watcher");
+    let (service, mut stable_rx) =
+        SaveWatcherService::start(config, vec![loc.clone()], Arc::new(OsFileAccess))
+            .expect("Falha ao iniciar watcher");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -904,12 +911,9 @@ async fn test_directory_removal_not_emitted_as_file_removal() {
     );
 
     let config = SaveWatcherConfig::fast_for_tests();
-    let (service, mut stable_rx) = SaveWatcherService::start(
-        config,
-        vec![loc],
-        Arc::new(OsFileAccess),
-    )
-    .expect("Falha ao iniciar watcher");
+    let (service, mut stable_rx) =
+        SaveWatcherService::start(config, vec![loc], Arc::new(OsFileAccess))
+            .expect("Falha ao iniciar watcher");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -933,11 +937,7 @@ async fn test_race_condition_debounce_and_stability_generation() {
 
     let file_path = PathBuf::from(r"C:\Games\Saves\race_test.dat");
     let loc_id = Uuid::new_v4();
-    let mut location = SaveLocation::new(
-        Uuid::new_v4(),
-        file_path.clone(),
-        SaveLocationType::File,
-    );
+    let mut location = SaveLocation::new(Uuid::new_v4(), file_path.clone(), SaveLocationType::File);
     location.id = loc_id;
 
     let config = SaveWatcherConfig::fast_for_tests();
@@ -945,21 +945,27 @@ async fn test_race_condition_debounce_and_stability_generation() {
         SaveWatcherService::start_pipeline(config, vec![location], mock.clone());
 
     // Dispara primeiro evento (geração 1)
-    raw_tx.send(RawFileEvent {
-        path: file_path.clone(),
-        save_location_id: loc_id,
-        kind: RawFileEventKind::Created,
-    }).await.unwrap();
+    raw_tx
+        .send(RawFileEvent {
+            path: file_path.clone(),
+            save_location_id: loc_id,
+            kind: RawFileEventKind::Created,
+        })
+        .await
+        .unwrap();
 
     // Aguarda o debounce disparar e a verificação de estabilidade #1 iniciar
     tokio::time::sleep(Duration::from_millis(30)).await;
 
     // Dispara segundo evento para o mesmo caminho (geração 2)
-    raw_tx.send(RawFileEvent {
-        path: file_path.clone(),
-        save_location_id: loc_id,
-        kind: RawFileEventKind::Modified,
-    }).await.unwrap();
+    raw_tx
+        .send(RawFileEvent {
+            path: file_path.clone(),
+            save_location_id: loc_id,
+            kind: RawFileEventKind::Modified,
+        })
+        .await
+        .unwrap();
 
     // Espera receber o evento estável da geração 2
     let received = tokio::time::timeout(Duration::from_millis(800), stable_rx.recv())
@@ -971,7 +977,10 @@ async fn test_race_condition_debounce_and_stability_generation() {
 
     // Garante que NÃO haja um segundo evento duplicado da geração 1
     let duplicate = tokio::time::timeout(Duration::from_millis(150), stable_rx.recv()).await;
-    assert!(duplicate.is_err(), "A geração antiga não pode produzir evento obsoleto/duplicado");
+    assert!(
+        duplicate.is_err(),
+        "A geração antiga não pode produzir evento obsoleto/duplicado"
+    );
 
     service.shutdown().await;
 }
@@ -992,11 +1001,14 @@ async fn test_debouncer_memory_limit_and_overflow_observability() {
     // Enviar 10 caminhos distintos
     let loc_id = Uuid::new_v4();
     for i in 0..10 {
-        raw_tx.send(RawFileEvent {
-            path: PathBuf::from(format!(r"C:\Saves\file_{}.dat", i)),
-            save_location_id: loc_id,
-            kind: RawFileEventKind::Created,
-        }).await.unwrap();
+        raw_tx
+            .send(RawFileEvent {
+                path: PathBuf::from(format!(r"C:\Saves\file_{}.dat", i)),
+                save_location_id: loc_id,
+                kind: RawFileEventKind::Created,
+            })
+            .await
+            .unwrap();
     }
 
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -1017,21 +1029,20 @@ async fn test_shutdown_cancels_and_awaits_all_stability_tasks() {
     let file_path = PathBuf::from(r"C:\Games\Saves\slow_save.dat");
     // Configura lock temporário com backoff para manter a verificação ativa aguardando
     mock.set_readable_failures(file_path.clone(), 10);
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        file_path.clone(),
-        SaveLocationType::File,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), file_path.clone(), SaveLocationType::File);
 
     let config = SaveWatcherConfig::fast_for_tests();
     let (service, raw_tx, mut stable_rx) =
         SaveWatcherService::start_pipeline(config, vec![loc], mock.clone());
 
-    raw_tx.send(RawFileEvent {
-        path: file_path.clone(),
-        save_location_id: Uuid::new_v4(),
-        kind: RawFileEventKind::Created,
-    }).await.unwrap();
+    raw_tx
+        .send(RawFileEvent {
+            path: file_path.clone(),
+            save_location_id: Uuid::new_v4(),
+            kind: RawFileEventKind::Created,
+        })
+        .await
+        .unwrap();
 
     // Aguarda entrar no stability check
     tokio::time::sleep(Duration::from_millis(35)).await;
@@ -1042,12 +1053,18 @@ async fn test_shutdown_cancels_and_awaits_all_stability_tasks() {
     let elapsed = start_shutdown.elapsed();
 
     // Shutdown deve completar prontamente através do cancelamento
-    assert!(elapsed < Duration::from_millis(300), "Shutdown deve cancelar e aguardar tasks sem travar");
+    assert!(
+        elapsed < Duration::from_millis(300),
+        "Shutdown deve cancelar e aguardar tasks sem travar"
+    );
 
     // Nenhuma mensagem deve ter sido publicada antes ou após shutdown
     let res = tokio::time::timeout(Duration::from_millis(100), stable_rx.recv()).await;
     match res {
-        Ok(Some(ev)) => panic!("Nenhum evento deveria ter sido publicado, mas recebeu: {:?}", ev),
+        Ok(Some(ev)) => panic!(
+            "Nenhum evento deveria ter sido publicado, mas recebeu: {:?}",
+            ev
+        ),
         Ok(None) | Err(_) => {
             // Sucesso: canal fechou ou está vazio sem mensagens
         }
@@ -1067,7 +1084,9 @@ async fn test_distinguishes_sharing_violation_from_permission_denied() {
         PathBuf::from(r"C:\Saves\acl_blocked.dat"),
         MockFailureKind::PermissionDenied,
     );
-    let res_denied = checker.check_stability(Path::new(r"C:\Saves\acl_blocked.dat"), &*mock_denied).await;
+    let res_denied = checker
+        .check_stability(Path::new(r"C:\Saves\acl_blocked.dat"), &*mock_denied)
+        .await;
     assert_eq!(
         res_denied,
         StabilityResult::PermissionDenied,
@@ -1077,7 +1096,9 @@ async fn test_distinguishes_sharing_violation_from_permission_denied() {
     // 2. Simula SharingViolation (Win32 erro 32/33) que resolve após 2 retries
     let mock_sharing = Arc::new(MockFileAccess::new());
     mock_sharing.set_readable_failures(PathBuf::from(r"C:\Saves\locked.dat"), 2);
-    let res_sharing = checker.check_stability(Path::new(r"C:\Saves\locked.dat"), &*mock_sharing).await;
+    let res_sharing = checker
+        .check_stability(Path::new(r"C:\Saves\locked.dat"), &*mock_sharing)
+        .await;
     assert!(
         matches!(res_sharing, StabilityResult::Stable(_)),
         "SharingViolation deve retentar com backoff e alcançar sucesso se o lock for liberado"
@@ -1117,19 +1138,12 @@ async fn test_15_filesystem_watcher_integration_with_notify() {
     let dir = tempdir().unwrap();
     let save_path = dir.path().join("live_save.dat");
 
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        save_path.clone(),
-        SaveLocationType::File,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), save_path.clone(), SaveLocationType::File);
 
     let config = SaveWatcherConfig::fast_for_tests();
-    let (service, mut stable_rx) = SaveWatcherService::start(
-        config,
-        vec![loc.clone()],
-        Arc::new(OsFileAccess),
-    )
-    .expect("Falha ao iniciar watcher com notify real");
+    let (service, mut stable_rx) =
+        SaveWatcherService::start(config, vec![loc.clone()], Arc::new(OsFileAccess))
+            .expect("Falha ao iniciar watcher com notify real");
 
     // Pequeno delay para garantir que o SO registrou o watcher na pasta
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1162,22 +1176,17 @@ async fn test_16_clean_shutdown_terminates_all_tasks() {
     let dir = tempdir().unwrap();
     let save_path = dir.path().join("shutdown_test.dat");
 
-    let loc = SaveLocation::new(
-        Uuid::new_v4(),
-        save_path.clone(),
-        SaveLocationType::File,
-    );
+    let loc = SaveLocation::new(Uuid::new_v4(), save_path.clone(), SaveLocationType::File);
 
     let config = SaveWatcherConfig::fast_for_tests();
-    let (service, _stable_rx) = SaveWatcherService::start(
-        config,
-        vec![loc],
-        Arc::new(OsFileAccess),
-    )
-    .unwrap();
+    let (service, _stable_rx) =
+        SaveWatcherService::start(config, vec![loc], Arc::new(OsFileAccess)).unwrap();
 
     // Chamar shutdown e verificar que completa prontamente sem travar
-    let shutdown_result = tokio::time::timeout(Duration::from_millis(500), service.shutdown()).await;
-    assert!(shutdown_result.is_ok(), "Shutdown deve completar prontamente sem travar");
+    let shutdown_result =
+        tokio::time::timeout(Duration::from_millis(500), service.shutdown()).await;
+    assert!(
+        shutdown_result.is_ok(),
+        "Shutdown deve completar prontamente sem travar"
+    );
 }
-

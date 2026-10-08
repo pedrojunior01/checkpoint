@@ -104,7 +104,8 @@ async fn test_upload_success() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"id":"uploaded-drive-id-999","name":"save.dat","size":"1234"}"#.to_string(),
+                body: r#"{"id":"uploaded-drive-id-999","name":"save.dat","size":"1234"}"#
+                    .to_string(),
             }
         } else {
             MockResponse {
@@ -114,7 +115,8 @@ async fn test_upload_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-bearer-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -126,22 +128,27 @@ async fn test_upload_success() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save game binary payload").unwrap();
 
-    let res = provider.upload(tmp.path(), "game_uuid_1/file_uuid_2/save.dat").await;
-    assert!(res.is_ok(), "Upload deve ter sucesso contra mock HTTP: {:?}", res);
+    let res = provider
+        .upload(tmp.path(), "game_uuid_1/file_uuid_2/save.dat")
+        .await;
+    assert!(
+        res.is_ok(),
+        "Upload deve ter sucesso contra mock HTTP: {:?}",
+        res
+    );
     let drive_file_id = res.unwrap();
     assert_eq!(drive_file_id, "uploaded-drive-id-999");
 }
 
 #[tokio::test]
 async fn test_upload_401_unauthorized() {
-    let server = MockHttpServer::spawn(|_, _, _| {
-        MockResponse {
-            status: 401,
-            status_text: "Unauthorized",
-            content_type: "application/json",
-            body: r#"{"error":{"code":401,"message":"Invalid Credentials"}}"#.to_string(),
-        }
-    }).await;
+    let server = MockHttpServer::spawn(|_, _, _| MockResponse {
+        status: 401,
+        status_text: "Unauthorized",
+        content_type: "application/json",
+        body: r#"{"error":{"code":401,"message":"Invalid Credentials"}}"#.to_string(),
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("expired-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -153,10 +160,21 @@ async fn test_upload_401_unauthorized() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("401"), "Erro deve reportar código 401: {}", err_str);
-    assert!(err_str.contains("Invalid Credentials"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("401"),
+        "Erro deve reportar código 401: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Invalid Credentials"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -184,7 +202,8 @@ async fn test_upload_403_forbidden() {
                 body: r#"{"error":{"code":403,"message":"Insufficient Permission"}}"#.to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -196,10 +215,21 @@ async fn test_upload_403_forbidden() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("403"), "Erro deve reportar 403: {}", err_str);
-    assert!(err_str.contains("Insufficient Permission"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("403"),
+        "Erro deve reportar 403: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Insufficient Permission"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -227,7 +257,8 @@ async fn test_upload_429_rate_limited() {
                 body: r#"{"error":{"code":429,"message":"Rate Limit Exceeded"}}"#.to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -239,10 +270,21 @@ async fn test_upload_429_rate_limited() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("429"), "Erro deve reportar 429: {}", err_str);
-    assert!(err_str.contains("Rate Limit Exceeded"), "Erro deve reportar mensagem: {}", err_str);
+    assert!(
+        err_str.contains("429"),
+        "Erro deve reportar 429: {}",
+        err_str
+    );
+    assert!(
+        err_str.contains("Rate Limit Exceeded"),
+        "Erro deve reportar mensagem: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -270,7 +312,8 @@ async fn test_upload_500_server_error() {
                 body: "<html>500 Internal Server Error</html>".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -282,9 +325,16 @@ async fn test_upload_500_server_error() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
-    assert!(err_str.contains("500"), "Erro deve reportar 500 mesmo com body HTML: {}", err_str);
+    assert!(
+        err_str.contains("500"),
+        "Erro deve reportar 500 mesmo com body HTML: {}",
+        err_str
+    );
 }
 
 #[tokio::test]
@@ -305,7 +355,8 @@ async fn test_download_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -319,7 +370,10 @@ async fn test_download_success() {
 
     let res = provider.download("drive-file-abc", &dest).await;
     assert!(res.is_ok(), "Download deve ter sucesso: {:?}", res);
-    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "downloaded cloud save content");
+    assert_eq!(
+        std::fs::read_to_string(&dest).unwrap(),
+        "downloaded cloud save content"
+    );
 }
 
 #[tokio::test]
@@ -340,7 +394,8 @@ async fn test_delete_success() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -350,23 +405,30 @@ async fn test_delete_success() {
     );
 
     let res = provider.delete("drive-to-delete-123").await;
-    assert!(res.is_ok(), "Delete deve retornar Ok para status 204: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Delete deve retornar Ok para status 204: {:?}",
+        res
+    );
 
     // 404 também deve ser tolerado
     let res_404 = provider.delete("nonexistent-file").await;
-    assert!(res_404.is_ok(), "Delete deve tolerar 404 (já deletado): {:?}", res_404);
+    assert!(
+        res_404.is_ok(),
+        "Delete deve tolerar 404 (já deletado): {:?}",
+        res_404
+    );
 }
 
 #[tokio::test]
 async fn test_invalid_json_response_handling() {
-    let server = MockHttpServer::spawn(|_, _, _| {
-        MockResponse {
-            status: 200,
-            status_text: "OK",
-            content_type: "application/json",
-            body: "BROKEN_JSON_NOT_VALID".to_string(),
-        }
-    }).await;
+    let server = MockHttpServer::spawn(|_, _, _| MockResponse {
+        status: 200,
+        status_text: "OK",
+        content_type: "application/json",
+        body: "BROKEN_JSON_NOT_VALID".to_string(),
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -378,11 +440,15 @@ async fn test_invalid_json_response_handling() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"data").unwrap();
 
-    let err = provider.upload(tmp.path(), "game/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "game/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("JSON inválida") || err_str.contains("BROKEN_JSON"),
-        "Deve reportar erro de JSON inválido: {}", err_str
+        "Deve reportar erro de JSON inválido: {}",
+        err_str
     );
 }
 
@@ -396,7 +462,8 @@ async fn test_token_refresh_flow() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"access_token":"fresh_access_token_xyz987","expires_in":3600}"#.to_string(),
+                body: r#"{"access_token":"fresh_access_token_xyz987","expires_in":3600}"#
+                    .to_string(),
             }
         } else {
             MockResponse {
@@ -406,7 +473,8 @@ async fn test_token_refresh_flow() {
                 body: "Bad Request".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let token_endpoint = format!("{}/oauth2/token", server.base_url);
     let auth = AuthService::with_mock_refresh(
@@ -417,7 +485,10 @@ async fn test_token_refresh_flow() {
     );
 
     let token = auth.get_fresh_access_token().await.unwrap();
-    assert_eq!(token, "fresh_access_token_xyz987", "Token renovado com sucesso");
+    assert_eq!(
+        token, "fresh_access_token_xyz987",
+        "Token renovado com sucesso"
+    );
 }
 
 #[tokio::test]
@@ -452,7 +523,8 @@ async fn test_case_a_upload_returns_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -464,10 +536,15 @@ async fn test_case_a_upload_returns_file_id() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save content").unwrap();
 
-    let res = provider.upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat").await;
+    let res = provider
+        .upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat")
+        .await;
     assert!(res.is_ok(), "Upload deve ter sucesso: {:?}", res);
     let drive_file_id = res.unwrap();
-    assert_eq!(drive_file_id, "drive-file-123", "Upload DEVE retornar o File ID retornado pelo Google Drive");
+    assert_eq!(
+        drive_file_id, "drive-file-123",
+        "Upload DEVE retornar o File ID retornado pelo Google Drive"
+    );
 }
 
 #[tokio::test]
@@ -488,7 +565,8 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -501,7 +579,10 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
     let dest = dir.path().join("downloaded.dat");
 
     // 1. Tentar passar um cloud_path (com barras) DEVE falhar imediatamente sem fazer chamada HTTP
-    let err = provider.download("location_uuid/file_uuid/v1_save.dat", &dest).await.unwrap_err();
+    let err = provider
+        .download("location_uuid/file_uuid/v1_save.dat", &dest)
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("Identificador remoto inválido"),
         "Download com cloud_path deve falhar com erro de rejeição semântica: {}",
@@ -510,7 +591,11 @@ async fn test_case_b_download_rejects_cloud_path_and_uses_file_id() {
 
     // 2. Passar o drive_file_id real DEVE funcionar
     let ok = provider.download("drive-file-123", &dest).await;
-    assert!(ok.is_ok(), "Download com File ID real deve ter sucesso: {:?}", ok);
+    assert!(
+        ok.is_ok(),
+        "Download com File ID real deve ter sucesso: {:?}",
+        ok
+    );
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "binary payload");
 }
 
@@ -532,7 +617,8 @@ async fn test_case_c_delete_rejects_cloud_path_and_uses_file_id() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -542,7 +628,10 @@ async fn test_case_c_delete_rejects_cloud_path_and_uses_file_id() {
     );
 
     // 1. Tentar deletar passando cloud_path DEVE falhar
-    let err = provider.delete("location_uuid/file_uuid/v1_save.dat").await.unwrap_err();
+    let err = provider
+        .delete("location_uuid/file_uuid/v1_save.dat")
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("Identificador remoto inválido"),
         "Delete com cloud_path deve falhar com rejeição semântica: {}",
@@ -603,7 +692,8 @@ async fn test_case_e_retry_after_transient_error_429() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -616,12 +706,23 @@ async fn test_case_e_retry_after_transient_error_429() {
     std::fs::write(tmp.path(), b"save content").unwrap();
 
     // Primeira tentativa falha com 429
-    let err1 = provider.upload(tmp.path(), "loc/file/save.dat").await.unwrap_err();
-    assert!(err1.to_string().contains("429"), "Primeira tentativa deve falhar com 429: {}", err1);
+    let err1 = provider
+        .upload(tmp.path(), "loc/file/save.dat")
+        .await
+        .unwrap_err();
+    assert!(
+        err1.to_string().contains("429"),
+        "Primeira tentativa deve falhar com 429: {}",
+        err1
+    );
 
     // Segunda tentativa (retry) sucede com 200 + drive_file_id
     let res2 = provider.upload(tmp.path(), "loc/file/save.dat").await;
-    assert!(res2.is_ok(), "Segunda tentativa deve ter sucesso: {:?}", res2);
+    assert!(
+        res2.is_ok(),
+        "Segunda tentativa deve ter sucesso: {:?}",
+        res2
+    );
     assert_eq!(res2.unwrap(), "drive-file-retry-success");
 }
 
@@ -641,7 +742,8 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
                 status: 200,
                 status_text: "OK",
                 content_type: "application/json",
-                body: r#"{"files":[{"id":"existing-remote-drive-id-888","name":"v1_save.dat"}]}"#.to_string(),
+                body: r#"{"files":[{"id":"existing-remote-drive-id-888","name":"v1_save.dat"}]}"#
+                    .to_string(),
             }
         } else if method == "POST" {
             // Se chamar POST, falha o teste! A idempotência deve reutilizar o arquivo sem re-upload!
@@ -659,7 +761,8 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -671,8 +774,14 @@ async fn test_case_f_upload_idempotency_reuses_remote_file_if_already_exists() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"save binary payload").unwrap();
 
-    let res = provider.upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat").await;
-    assert!(res.is_ok(), "Upload idempotente deve reutilizar o arquivo: {:?}", res);
+    let res = provider
+        .upload(tmp.path(), "location_uuid/file_uuid/v1_save.dat")
+        .await;
+    assert!(
+        res.is_ok(),
+        "Upload idempotente deve reutilizar o arquivo: {:?}",
+        res
+    );
     assert_eq!(
         res.unwrap(),
         "existing-remote-drive-id-888",
@@ -713,7 +822,8 @@ async fn test_case_g_file_id_missing_in_response_fails_explicitly() {
                 body: "Not Found".to_string(),
             }
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -725,7 +835,10 @@ async fn test_case_g_file_id_missing_in_response_fails_explicitly() {
     let tmp = NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"payload").unwrap();
 
-    let err = provider.upload(tmp.path(), "loc/file/save.dat").await.unwrap_err();
+    let err = provider
+        .upload(tmp.path(), "loc/file/save.dat")
+        .await
+        .unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("missing field `id`") || err_str.contains("Resposta JSON inválida"),
@@ -747,7 +860,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
             content_type: "application/json",
             body: "{}".to_string(),
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -780,7 +894,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
         assert!(
             err_dl_str.contains("Identificador remoto inválido") || err_dl_str.contains("vazio"),
             "Download com ID '{}' deve ser rejeitado sem enviar requisição: {}",
-            invalid_id, err_dl_str
+            invalid_id,
+            err_dl_str
         );
 
         // Testa delete
@@ -789,7 +904,8 @@ async fn test_case_sec_01_opaque_drive_file_id_adversarial_rejection() {
         assert!(
             err_del_str.contains("Identificador remoto inválido") || err_del_str.contains("vazio"),
             "Delete com ID '{}' deve ser rejeitado sem enviar requisição: {}",
-            invalid_id, err_del_str
+            invalid_id,
+            err_del_str
         );
     }
 
@@ -814,7 +930,8 @@ async fn test_case_sec_02_valid_opaque_id_accepted() {
             content_type: "application/octet-stream",
             body: "file content".to_string(),
         }
-    }).await;
+    })
+    .await;
 
     let auth = AuthService::with_fixed_token("mock-token".to_string());
     let provider = GoogleDriveProvider::with_custom_endpoints(
@@ -825,11 +942,7 @@ async fn test_case_sec_02_valid_opaque_id_accepted() {
 
     let tmp = NamedTempFile::new().unwrap();
 
-    let valid_ids = [
-        "1a2B3c-4D5_E",
-        "1-a_B.c~",
-        "ABCDEF1234567890",
-    ];
+    let valid_ids = ["1a2B3c-4D5_E", "1-a_B.c~", "ABCDEF1234567890"];
 
     for valid_id in valid_ids {
         provider.download(valid_id, tmp.path()).await.unwrap();
@@ -854,7 +967,9 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
             let mut buf = vec![0u8; 1024];
             let _ = socket.read(&mut buf).await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await;
         }
     });
 
@@ -864,31 +979,303 @@ async fn test_case_net_01_http_timeout_triggers_error_and_does_not_hang() {
         .build()
         .unwrap();
 
-    let provider = GoogleDriveProvider::with_custom_endpoints(
-        auth,
-        base_url.clone(),
-        base_url,
-    ).with_client(timeout_client);
+    let provider = GoogleDriveProvider::with_custom_endpoints(auth, base_url.clone(), base_url)
+        .with_client(timeout_client);
 
     let start = std::time::Instant::now();
     let res = provider.delete("file_123").await;
     let elapsed = start.elapsed();
 
-    assert!(res.is_err(), "Operação com timeout estourado deve retornar erro");
+    assert!(
+        res.is_err(),
+        "Operação com timeout estourado deve retornar erro"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(400),
         "Timeout de 50ms deve retornar rapidamente, levou {:?}",
         elapsed
     );
     let err = res.unwrap_err();
-    let is_timeout = err
-        .downcast_ref::<reqwest::Error>()
-        .map(|e| e.is_timeout())
-        .unwrap_or(false)
+    let is_timeout = matches!(err, savevault_cloud::CloudError::Network(_))
         || format!("{:#}", err).to_lowercase().contains("time");
+    assert!(is_timeout, "Erro deve indicar timeout HTTP: {:#}", err);
+}
+
+#[tokio::test]
+async fn test_opt_01_folder_caching_eliminates_redundant_folder_queries() {
+    let folder_queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let q_clone = folder_queries.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, _| {
+        if method == "GET" && path.contains("mimeType") {
+            q_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[{"id":"cached-folder-id","name":"mock"}]}"#.to_string(),
+            }
+        } else if method == "GET" && path.contains("/files?q=") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[]}"#.to_string(),
+            }
+        } else if method == "POST" && path.contains("uploadType=multipart") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"drive-id-123","name":"save.dat","size":"100"}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: "Not Found".to_string(),
+            }
+        }
+    })
+    .await;
+
+    let auth = AuthService::with_fixed_token("mock-token".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        server.base_url.clone(),
+        server.base_url.clone(),
+    );
+
+    let tmp = NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), b"save content").unwrap();
+
+    // Primeiro upload: consulta 3 pastas (root, game, file)
+    let res1 = provider
+        .upload(tmp.path(), "game_uuid/file_uuid/v1_save.dat")
+        .await;
+    assert!(res1.is_ok());
+    let queries_first = folder_queries.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        queries_first, 3,
+        "Primeiro upload deve consultar as 3 pastas"
+    );
+
+    // Segundo upload na mesma hierarquia: deve usar o cache sem novas queries de pasta!
+    let res2 = provider
+        .upload(tmp.path(), "game_uuid/file_uuid/v2_save.dat")
+        .await;
+    assert!(res2.is_ok());
+    let queries_second = folder_queries.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        queries_second, 3,
+        "Segundo upload DEVE reutilizar o cache de pastas em memória sem novas requisições de pasta HTTP"
+    );
+}
+
+#[tokio::test]
+async fn test_opt_02_access_token_caching_eliminates_redundant_token_refreshes() {
+    let refresh_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_clone = refresh_calls.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, req| {
+        if method == "POST" && path == "/oauth2/token" {
+            calls_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(req.contains("grant_type=refresh_token"));
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"access_token":"cached_token_abc123","expires_in":3600}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: "Not Found".to_string(),
+            }
+        }
+    })
+    .await;
+
+    let token_endpoint = format!("{}/oauth2/token", server.base_url);
+    let auth = AuthService::with_mock_refresh(
+        "test-client-id".to_string(),
+        "test-client-secret".to_string(),
+        token_endpoint,
+        "refresh_token_xyz".to_string(),
+    );
+
+    // 1ª chamada: busca da rede
+    let t1 = auth.get_fresh_access_token().await.unwrap();
+    assert_eq!(t1, "cached_token_abc123");
+
+    // 2ª e 3ª chamadas subsequentes: devem usar cache sem chamada HTTP
+    let t2 = auth.get_fresh_access_token().await.unwrap();
+    let t3 = auth.get_fresh_access_token().await.unwrap();
+    assert_eq!(t2, "cached_token_abc123");
+    assert_eq!(t3, "cached_token_abc123");
+
+    assert_eq!(
+        refresh_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "O endpoint de token deve ser chamado apenas UMA vez para múltiplos acessos dentro da validade"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_drive_rejects_manifest_filename_as_file_id() {
+    let auth = AuthService::with_fixed_token("fixed_token_123".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        "http://127.0.0.1:9".to_string(),
+        "http://127.0.0.1:9".to_string(),
+    );
+
+    let tmp = NamedTempFile::new().unwrap();
+    let res = provider
+        .download("savevault_manifest.json", tmp.path())
+        .await;
+
     assert!(
-        is_timeout,
-        "Erro deve indicar timeout HTTP: {:#}",
-        err
+        matches!(res, Err(savevault_cloud::CloudError::InvalidRemoteId(_))),
+        "download() com nome de arquivo '.json' deve ser rejeitado estritamente como InvalidRemoteId, obtido: {:?}",
+        res
+    );
+}
+
+#[tokio::test]
+async fn test_contract_drive_manifest_lifecycle_and_in_place_update() {
+    let manifest_content = Arc::new(std::sync::Mutex::new(None::<String>));
+    let manifest_content_clone = manifest_content.clone();
+    let patch_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let patch_clone = patch_called.clone();
+
+    let server = MockHttpServer::spawn(move |method, path, req| {
+        // 1. Busca da pasta raiz "SaveVault"
+        if method == "GET" && path.contains("SaveVault") {
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"files":[{"id":"root_folder_savevault","name":"SaveVault"}]}"#.to_string(),
+            }
+        }
+        // 2. Busca do manifesto pelo nome
+        else if method == "GET" && path.contains("savevault_manifest.json") {
+            let cur = manifest_content_clone.lock().unwrap().clone();
+            if cur.is_some() {
+                MockResponse {
+                    status: 200,
+                    status_text: "OK",
+                    content_type: "application/json",
+                    body: r#"{"files":[{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json","size":"256"}]}"#.to_string(),
+                }
+            } else {
+                MockResponse {
+                    status: 200,
+                    status_text: "OK",
+                    content_type: "application/json",
+                    body: r#"{"files":[]}"#.to_string(),
+                }
+            }
+        }
+        // 3. Upload inicial (POST multipart)
+        else if method == "POST" && path.contains("uploadType=multipart") {
+            *manifest_content_clone.lock().unwrap() = Some(req.to_string());
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json"}"#.to_string(),
+            }
+        }
+        // 4. Download pelo real File ID (GET /files/gdrive_manifest_id_001?alt=media)
+        else if method == "GET" && path.contains("/files/gdrive_manifest_id_001") {
+            let manifest_json = serde_json::json!({
+                "schema_version": 1,
+                "updated_at": "2026-10-02T12:00:00Z",
+                "entries": [
+                    {
+                        "game_name": "Elden Ring",
+                        "platform": "steam",
+                        "save_location_path": "C:\\Saves",
+                        "relative_file_path": "ER0000.sl2",
+                        "file_hash": "hash123",
+                        "version": 1,
+                        "cloud_file_id": "drive_snap_001",
+                        "cloud_path": "loc/file/v1_ER0000.sl2",
+                        "created_at": "2026-10-02T12:00:00Z"
+                    }
+                ]
+            });
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: manifest_json.to_string(),
+            }
+        }
+        // 5. Atualização in-place (PATCH)
+        else if method == "PATCH" && path.contains("/files/gdrive_manifest_id_001") {
+            patch_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            MockResponse {
+                status: 200,
+                status_text: "OK",
+                content_type: "application/json",
+                body: r#"{"id":"gdrive_manifest_id_001","name":"savevault_manifest.json"}"#.to_string(),
+            }
+        } else {
+            MockResponse {
+                status: 404,
+                status_text: "Not Found",
+                content_type: "text/plain",
+                body: format!("Not Found: {} {}", method, path),
+            }
+        }
+    })
+    .await;
+
+    let auth = AuthService::with_fixed_token("fixed_token_123".to_string());
+    let provider = GoogleDriveProvider::with_custom_endpoints(
+        auth,
+        server.base_url.clone(),
+        server.base_url.clone(),
+    );
+
+    // 1. Antes de salvar, manifesto não existe
+    let initial = provider.get_manifest().await.unwrap();
+    assert_eq!(initial, None);
+
+    // 2. Salva manifesto inicial
+    let mut manifest = savevault_cloud::CloudCatalogManifest {
+        schema_version: 1,
+        updated_at: "2026-10-02T12:00:00Z".to_string(),
+        entries: vec![],
+    };
+    provider
+        .save_manifest(&manifest)
+        .await
+        .expect("save_manifest deve criar no Drive");
+
+    // 3. Busca manifesto e faz download via real File ID
+    let downloaded = provider
+        .get_manifest()
+        .await
+        .unwrap()
+        .expect("Manifest deve ser encontrado");
+    assert_eq!(downloaded.entries.len(), 1);
+    assert_eq!(downloaded.entries[0].game_name, "Elden Ring");
+
+    // 4. Salva novamente para validar atualização in-place via PATCH
+    manifest.schema_version = 2;
+    provider
+        .save_manifest(&manifest)
+        .await
+        .expect("save_manifest deve atualizar in-place");
+    assert!(
+        patch_called.load(std::sync::atomic::Ordering::SeqCst),
+        "Atualização deve ser feita via PATCH in-place"
     );
 }

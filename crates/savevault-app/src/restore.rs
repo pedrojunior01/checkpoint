@@ -33,6 +33,11 @@ pub enum RestoreError {
     #[error("Local de save (ID '{0}') associado ao arquivo não foi encontrado")]
     SaveLocationNotFound(Uuid),
 
+    #[error(
+        "Local de save (ID '{0}', caminho '{1}') requer remapeamento antes da restauração: {2}"
+    )]
+    SaveLocationNeedsMapping(Uuid, PathBuf, String),
+
     #[error("Arquivo físico do snapshot não encontrado em '{0}'")]
     PhysicalSnapshotMissing(PathBuf),
 
@@ -54,6 +59,9 @@ pub enum RestoreError {
     #[error("Falha na escrita atômica do arquivo em '{0}': {1}")]
     AtomicWriteFailed(PathBuf, String),
 
+    #[error("Falha na recuperação de snapshot da nuvem: {0}")]
+    CloudRecoveryFailed(String),
+
     #[error("Erro de banco de dados SQLite: {0}")]
     DatabaseError(#[from] rusqlite::Error),
 
@@ -71,6 +79,12 @@ pub struct RestoreRequest {
     pub snapshot_id: Uuid,
     /// Hash BLAKE3 esperado opcional para validação antecipada de integridade.
     pub expected_hash: Option<String>,
+    /// Permite baixar automaticamente da nuvem caso o snapshot físico esteja ausente no disco local.
+    pub allow_cloud_download: bool,
+    /// Força o download do snapshot da nuvem mesmo se já existir localmente.
+    pub force_cloud_download: bool,
+    /// Provedor preferencial de nuvem ("google_drive", "onedrive").
+    pub cloud_provider: Option<String>,
 }
 
 impl RestoreRequest {
@@ -78,6 +92,9 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: None,
+            allow_cloud_download: true,
+            force_cloud_download: false,
+            cloud_provider: None,
         }
     }
 
@@ -85,7 +102,22 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: Some(expected_hash.into()),
+            allow_cloud_download: true,
+            force_cloud_download: false,
+            cloud_provider: None,
         }
+    }
+
+    pub fn with_cloud_options(
+        mut self,
+        allow_cloud: bool,
+        force_cloud: bool,
+        provider: Option<String>,
+    ) -> Self {
+        self.allow_cloud_download = allow_cloud;
+        self.force_cloud_download = force_cloud;
+        self.cloud_provider = provider;
+        self
     }
 }
 
@@ -149,20 +181,55 @@ pub fn validate_destination_security(
         )));
     }
 
-    // Bloquear pastas de sistema protegidas do Windows a menos que o SaveLocation esteja expressamente lá
-    if lower_dest.starts_with(r"c:\windows")
-        || lower_dest.starts_with(r"c:\program files")
-        || lower_dest.starts_with(r"c:\program files (x86)")
+    // Bloquear pastas de sistema protegidas do sistema operacional a menos que o SaveLocation esteja expressamente lá
+    if savevault_core::path::is_system_protected_path(dest_path)
+        && !savevault_core::path::is_system_protected_path(&save_location.path)
     {
-        let loc_str = norm_loc.to_string_lossy().to_lowercase();
-        if !loc_str.starts_with(r"c:\windows")
-            && !loc_str.starts_with(r"c:\program files")
-            && !loc_str.starts_with(r"c:\program files (x86)")
-        {
+        return Err(RestoreError::PathSecurityViolation(format!(
+            "Destino aponta para diretório de sistema protegido: '{}'",
+            dest_path.display()
+        )));
+    }
+
+    // Se o arquivo de destino já existe no disco, verificar se é um symlink não autorizado
+    if let Ok(meta) = std::fs::symlink_metadata(dest_path) {
+        if meta.file_type().is_symlink() {
             return Err(RestoreError::PathSecurityViolation(format!(
-                "Destino aponta para diretório de sistema protegido: '{}'",
+                "Caminho de destino é um symlink não autorizado: '{}'",
                 dest_path.display()
             )));
+        }
+    }
+
+    // Se o diretório pai do destino existe fisicamente, garantir que não é um link para diretório protegido ou fora do SaveLocation
+    if let Some(dest_parent) = dest_path.parent() {
+        if dest_parent.exists() {
+            if let Ok(canon_parent) = std::fs::canonicalize(dest_parent) {
+                if savevault_core::path::is_system_protected_path(&canon_parent)
+                    && !savevault_core::path::is_system_protected_path(&save_location.path)
+                {
+                    return Err(RestoreError::PathSecurityViolation(format!(
+                        "Destino físico resolvido aponta para diretório de sistema protegido: '{}'",
+                        canon_parent.display()
+                    )));
+                }
+
+                if save_location.path.exists()
+                    && matches!(
+                        save_location.location_type,
+                        SaveLocationType::Directory | SaveLocationType::Glob
+                    )
+                {
+                    if let Ok(canon_loc) = std::fs::canonicalize(&save_location.path) {
+                        if !canon_parent.starts_with(&canon_loc) && canon_parent != canon_loc {
+                            return Err(RestoreError::PathSecurityViolation(format!(
+                                "Caminho de destino '{}' escapa fisicamente do SaveLocation autorizado via links ou junções",
+                                dest_path.display()
+                            )));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -251,27 +318,84 @@ pub fn validate_destination_security(
 pub fn validate_snapshot_security(
     backup_root: &Path,
     game_name: &str,
-    _version: u32,
-    filename: &str,
+    version: u32,
+    rel_path: &Path,
 ) -> Result<PathBuf, RestoreError> {
-    if filename.is_empty()
-        || filename.contains('/')
-        || filename.contains('\\')
-        || filename.contains("..")
-        || filename.contains('\0')
-    {
-        return Err(RestoreError::PathSecurityViolation(format!(
-            "Nome de arquivo de snapshot inseguro: '{}'",
-            filename
-        )));
+    if rel_path.as_os_str().is_empty() {
+        return Err(RestoreError::PathSecurityViolation(
+            "Caminho relativo de snapshot vazio".into(),
+        ));
+    }
+
+    for component in rel_path.components() {
+        match component {
+            Component::Normal(seg) => {
+                let s = seg.to_string_lossy();
+                if s.contains('\0') {
+                    return Err(RestoreError::PathSecurityViolation(format!(
+                        "Segmento de caminho de snapshot contém byte nulo: '{}'",
+                        s
+                    )));
+                }
+            }
+            _ => {
+                return Err(RestoreError::PathSecurityViolation(format!(
+                    "Segmento de caminho de snapshot inseguro: '{:?}'",
+                    component
+                )));
+            }
+        }
     }
 
     let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
 
-    let version_dir = backup_root
+    let version_path = backup_root
         .join(&safe_game_name)
-        .join("latest");
-    let source_path = version_dir.join(filename);
+        .join(format!("v{}", version))
+        .join(rel_path);
+
+    let latest_path = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(rel_path);
+
+    let daily_path = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(rel_path);
+
+    // Fallbacks para arquivos achatados legados
+    let filename = rel_path.file_name().unwrap_or(rel_path.as_os_str());
+    let flat_version_path = backup_root
+        .join(&safe_game_name)
+        .join(format!("v{}", version))
+        .join(filename);
+
+    let flat_latest_path = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    let flat_daily_path = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(filename);
+
+    let source_path = if version_path.exists() {
+        version_path
+    } else if flat_version_path.exists() {
+        flat_version_path
+    } else if version == 1 && daily_path.exists() {
+        daily_path
+    } else if version == 1 && flat_daily_path.exists() {
+        flat_daily_path
+    } else if version == 1 && latest_path.exists() {
+        latest_path
+    } else if version == 1 && flat_latest_path.exists() {
+        flat_latest_path
+    } else {
+        version_path
+    };
 
     if !source_path.starts_with(backup_root) {
         return Err(RestoreError::PathSecurityViolation(format!(
@@ -368,6 +492,21 @@ pub async fn execute_restore_filesystem(
     metadata: &RestoreMetadata,
     request: &RestoreRequest,
 ) -> Result<RestoreReport, RestoreError> {
+    // 0. AUD-03: Verificar se o SaveLocation necessita de remapeamento
+    if metadata.save_location.needs_remapping() {
+        return Err(RestoreError::SaveLocationNeedsMapping(
+            metadata.save_location.id,
+            metadata.save_location.path.clone(),
+            metadata
+                .save_location
+                .resolution_reason
+                .clone()
+                .unwrap_or_else(|| {
+                    "Localização de save precisa ser remapeada antes de restaurar".to_string()
+                }),
+        ));
+    }
+
     let dest_path = &metadata.file_entry.path;
 
     // 4. Validação de segurança contra path traversal
@@ -383,14 +522,39 @@ pub async fn execute_restore_filesystem(
             ))
         })?;
 
+    let rel_path =
+        savevault_core::path::compute_relative_path(dest_path, &metadata.save_location.path);
+
     let source_path = validate_snapshot_security(
         backup_root,
         metadata.game.name.as_str(),
         metadata.backup.version,
-        filename,
+        &rel_path,
     )?;
 
-    // 5. Validação da existência do snapshot físico no disco
+    // 5. Validação da existência do snapshot físico no disco (com recuperação automática da nuvem)
+    if request.force_cloud_download || !source_path.exists() {
+        if request.allow_cloud_download {
+            if let Some(ref drive_file_id) = metadata.backup.drive_file_id {
+                tracing::info!(
+                    "Snapshot '{}' ausente localmente ou solicitação da nuvem. Baixando da nuvem (remote ID: '{}')...",
+                    source_path.display(),
+                    drive_file_id
+                );
+                download_snapshot_from_cloud(
+                    drive_file_id,
+                    &source_path,
+                    request.cloud_provider.as_deref(),
+                )
+                .await?;
+            } else if !source_path.exists() {
+                return Err(RestoreError::PhysicalSnapshotMissing(source_path));
+            }
+        } else if !source_path.exists() {
+            return Err(RestoreError::PhysicalSnapshotMissing(source_path));
+        }
+    }
+
     if !source_path.exists() {
         return Err(RestoreError::PhysicalSnapshotMissing(source_path));
     }
@@ -529,7 +693,85 @@ pub async fn execute_restore_filesystem(
         report.restored_hash
     );
 
+    crate::notifications::notify_restore_success(&metadata.game.name, metadata.backup.version);
+
     Ok(report)
+}
+
+/// Faz o download de um snapshot diretamente da nuvem para o disco local de backups.
+///
+/// Tenta o provedor preferencial (ex.: "onedrive" ou "google_drive") e, caso não
+/// esteja autenticado ou falhe, tenta o outro provedor suportado.
+pub async fn download_snapshot_from_cloud(
+    drive_file_id: &str,
+    target_path: &Path,
+    preferred_provider: Option<&str>,
+) -> Result<(), RestoreError> {
+    use savevault_cloud::{CloudProvider, GoogleDriveProvider, OneDriveProvider};
+
+    let target_provider = preferred_provider
+        .map(|p| p.to_lowercase())
+        .unwrap_or_else(|| "auto".to_string());
+
+    let try_google = async {
+        if let Some(provider) = GoogleDriveProvider::from_env() {
+            if provider.is_authenticated() {
+                if let Err(e) = provider.download(drive_file_id, target_path).await {
+                    tracing::debug!("Download via Google Drive falhou: {}", e);
+                    return false;
+                }
+                return true;
+            }
+        }
+        false
+    };
+
+    let try_onedrive = async {
+        if let Some(provider) = OneDriveProvider::from_env() {
+            if provider.is_authenticated() {
+                if let Err(e) = provider.download(drive_file_id, target_path).await {
+                    tracing::debug!("Download via OneDrive falhou: {}", e);
+                    return false;
+                }
+                return true;
+            }
+        }
+        false
+    };
+
+    let try_local = async {
+        let backup_root = target_path.parent().unwrap_or(target_path);
+        let provider = savevault_sync::resolve_active_cloud_provider("local_folder", backup_root);
+        match provider.download(drive_file_id, target_path).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!("Download via LocalFolder falhou: {}", e);
+                false
+            }
+        }
+    };
+
+    let success = match target_provider.as_str() {
+        "onedrive" => try_onedrive.await || try_google.await || try_local.await,
+        "google_drive" | "google" | "drive" => {
+            try_google.await || try_onedrive.await || try_local.await
+        }
+        "local_folder" | "local" => try_local.await || try_google.await || try_onedrive.await,
+        _ => try_google.await || try_onedrive.await || try_local.await,
+    };
+
+    if success {
+        tracing::info!(
+            "Snapshot baixado da nuvem com sucesso para '{}'",
+            target_path.display()
+        );
+        Ok(())
+    } else {
+        Err(RestoreError::CloudRecoveryFailed(format!(
+            "Não foi possível baixar o snapshot remoto (ID: '{}') da nuvem. Verifique suas credenciais em 'savevault auth status'.",
+            drive_file_id
+        )))
+    }
 }
 
 /// Restaura um snapshot para o local de save original de forma segura e atômica.
@@ -632,7 +874,9 @@ mod tests {
         files_repo.upsert(&file_entry).unwrap();
 
         // Cria snapshot v1 no disco
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("player.sav");
         std::fs::write(&v1_file, "save_conteudo_original_v1").unwrap();
@@ -714,7 +958,9 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("lost_save.dat");
         std::fs::write(&v1_file, "conteudo_recuperado").unwrap();
@@ -848,7 +1094,9 @@ mod tests {
         };
         files_repo.upsert(&file_entry).unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         let v1_file = v1_dir.join("save.dat");
         std::fs::write(&v1_file, "conteudo_corrompido_ou_alterado").unwrap();
@@ -886,7 +1134,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_restore_consecutive_restores_create_distinct_safety_backups() {
         let conn = setup_test_db();
         let dir = tempdir().unwrap();
@@ -919,7 +1166,9 @@ mod tests {
             .unwrap();
 
         // Snapshots v1 e v2
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("v1");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "dados_versao_1").unwrap();
         let b1 = Backup {
@@ -933,7 +1182,9 @@ mod tests {
         };
         backups_repo.insert(&b1).unwrap();
 
-        let v2_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v2_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("v2");
         std::fs::create_dir_all(&v2_dir).unwrap();
         std::fs::write(v2_dir.join("save.dat"), "dados_versao_2").unwrap();
         let b2 = Backup {
@@ -1006,7 +1257,9 @@ mod tests {
             })
             .unwrap();
 
-        let v1_dir = backup_root.join(savevault_backup::snapshot::sanitize_name(&game.name)).join("latest");
+        let v1_dir = backup_root
+            .join(savevault_backup::snapshot::sanitize_name(&game.name))
+            .join("latest");
         std::fs::create_dir_all(&v1_dir).unwrap();
         std::fs::write(v1_dir.join("save.dat"), "conteudo_v1").unwrap();
 

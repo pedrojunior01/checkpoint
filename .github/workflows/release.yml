@@ -1,0 +1,82 @@
+name: SaveVault Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc.exe
+  CARGO_TARGET_X86_64_PC_WINDOWS_GNU_AR: ar.exe
+
+jobs:
+  build-release:
+    name: Build & Package Windows x64 Binary
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 MinGW
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: mingw-w64-x86_64-gcc
+
+      - name: Configure Windows Environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\svt"
+          $msys = "${{ steps.msys2.outputs.msys2-location }}"
+          if ($msys -and (Test-Path "$msys\mingw64")) {
+            New-Item -ItemType Directory -Force -Path "C:\msys64"
+            if (!(Test-Path "C:\msys64\mingw64")) {
+              cmd /c mklink /J "C:\msys64\mingw64" "$msys\mingw64"
+            }
+          }
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          targets: x86_64-pc-windows-gnu
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-release-cargo-gnu
+
+      - name: Build Release Binary
+        run: cargo build --release --bin savevault
+
+      - name: Package Release Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release_pkg -Force
+          Copy-Item -Path "target/release/savevault.exe" -Destination "release_pkg/savevault.exe" -ErrorAction SilentlyContinue
+          # Fallback para custom target-dir caso configurado
+          if (!(Test-Path "release_pkg/savevault.exe")) {
+            Copy-Item -Path "C:/svt/release/savevault.exe" -Destination "release_pkg/savevault.exe"
+          }
+          Copy-Item -Path "README.md" -Destination "release_pkg/README.md"
+          Copy-Item -Path ".env.example" -Destination "release_pkg/.env.example"
+          Compress-Archive -Path "release_pkg/*" -DestinationPath "savevault-windows-x64.zip" -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: savevault-windows-x64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+

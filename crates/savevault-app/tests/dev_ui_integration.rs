@@ -53,8 +53,9 @@ async fn http_post(addr: SocketAddr, path: &str, json_body: &str) -> (u16, Strin
         .await
         .expect("Falha ao conectar no servidor DEV-UI");
     let req = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "POST {} HTTP/1.1\r\nHost: {}\r\nOrigin: http://{}\r\nX-SaveVault-Request: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         path,
+        addr,
         addr,
         json_body.len(),
         json_body
@@ -374,6 +375,18 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
     assert!(!restore_resp.success);
     assert!(restore_resp.error.unwrap().contains("não encontrado"));
 
+    // 7.1 Testa GET /api/autostart
+    let (status, autostart_body) = http_get(addr, "/api/autostart").await;
+    assert_eq!(status, 200);
+    assert!(autostart_body.contains("enabled"));
+
+    // 7.2 Testa POST /api/autostart/toggle
+    let (status, toggle_body) = http_post(addr, "/api/autostart/toggle", "{}").await;
+    assert_eq!(status, 200);
+    assert!(toggle_body.contains("enabled"));
+    // Reverte o toggle para manter o estado limpo
+    let _ = http_post(addr, "/api/autostart/toggle", "{}").await;
+
     // 8. Testa rota 404
     let (status, _) = http_get(addr, "/api/rota_inexistente").await;
     assert_eq!(status, 404);
@@ -382,4 +395,162 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
     let _ = shutdown_tx.send(true);
     let server_res = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
     assert!(server_res.is_ok(), "Servidor demorou para encerrar");
+}
+
+#[tokio::test]
+async fn test_dev_ui_cors_origin_protection() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
+
+    let db_mutex = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(DevUiState::new(
+        db_mutex,
+        db_path,
+        backup_dir,
+        None,
+        Duration::from_secs(30),
+    ));
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (addr, server_handle) = start_dev_ui_server(state.clone(), 0, shutdown_rx)
+        .await
+        .expect("Falha ao iniciar servidor DEV-UI");
+
+    async fn send_raw_origin(addr: SocketAddr, origin: &str) -> u16 {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /api/dashboard HTTP/1.1\r\nHost: {}\r\nOrigin: {}\r\nConnection: close\r\n\r\n",
+            addr, origin
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).await.unwrap();
+        resp.lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap()
+    }
+
+    // 1. Origens permitidas
+    assert_eq!(send_raw_origin(addr, "http://127.0.0.1").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://localhost").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://127.0.0.1:4040").await, 200);
+    assert_eq!(send_raw_origin(addr, "http://localhost:3000").await, 200);
+
+    // 2. Origens maliciosas bloqueadas (403 Forbidden)
+    assert_eq!(
+        send_raw_origin(addr, "http://127.0.0.1.attacker.com").await,
+        403
+    );
+    assert_eq!(
+        send_raw_origin(addr, "http://localhost.evil.com").await,
+        403
+    );
+    assert_eq!(send_raw_origin(addr, "http://evil.com").await, 403);
+    assert_eq!(send_raw_origin(addr, "https://127.0.0.1").await, 403);
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+}
+
+#[tokio::test]
+async fn test_dev_ui_setup_wizard_flow() {
+    let temp_root = tempdir().expect("Falha ao criar tempdir");
+    let db_path = temp_root.path().join("vault.db");
+    let db = Database::open(&db_path).expect("Falha ao abrir banco");
+    let backup_dir = temp_root.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+
+    let config_path = temp_root.path().join("config.toml");
+    let mut initial_config = savevault_core::config::Config::default();
+    initial_config.general.setup_completed = false;
+    initial_config.cloud.provider = "local_folder".to_string();
+    initial_config.general.autostart = false;
+    initial_config.notifications.enabled = true;
+    initial_config.save(&config_path).unwrap();
+
+    let db_mutex = Arc::new(Mutex::new(db.conn));
+    let state = Arc::new(
+        DevUiState::new(db_mutex, db_path, backup_dir, None, Duration::from_secs(30))
+            .with_config_path(config_path.clone()),
+    );
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (addr, server_handle) = start_dev_ui_server(state.clone(), 0, shutdown_rx)
+        .await
+        .expect("Falha ao iniciar servidor DEV-UI");
+
+    // 1. GET /api/setup/status -> inicial é false
+    let (status_code, body) = http_get(addr, "/api/setup/status").await;
+    assert_eq!(status_code, 200);
+    let json_val: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json_val["setup_completed"].as_bool(), Some(false));
+    assert_eq!(json_val["cloud_provider"].as_str(), Some("local_folder"));
+
+    // 2. POST /api/setup/scan -> executa detecção
+    let (status_code, scan_body) = http_post(addr, "/api/setup/scan", "{}").await;
+    assert_eq!(status_code, 200);
+    let scan_val: serde_json::Value = serde_json::from_str(&scan_body).unwrap();
+    assert_eq!(scan_val["success"].as_bool(), Some(true));
+
+    // 3. GET /api/setup/cloud-folders -> lista pastas sincronizadas detectadas
+    let (status_code, folders_body) = http_get(addr, "/api/setup/cloud-folders").await;
+    assert_eq!(status_code, 200);
+    let folders_val: serde_json::Value = serde_json::from_str(&folders_body).unwrap();
+    assert!(folders_val.is_array());
+
+    // 4. POST /api/setup/login-cloud com local_folder (Sincronização via Pasta Local)
+    let sync_folder = temp_root.path().join("OneDrive_Sync");
+    let local_folder_payload = format!(
+        r#"{{"provider":"local_folder","local_sync_path":"{}"}}"#,
+        sync_folder.display().to_string().replace('\\', "\\\\")
+    );
+    let (status_code, local_login_body) =
+        http_post(addr, "/api/setup/login-cloud", &local_folder_payload).await;
+    assert_eq!(status_code, 200);
+    let local_login_val: serde_json::Value = serde_json::from_str(&local_login_body).unwrap();
+    assert_eq!(local_login_val["success"].as_bool(), Some(true));
+    assert_eq!(local_login_val["provider"].as_str(), Some("local_folder"));
+
+    // 4. POST /api/setup/complete -> finaliza assistente e salva configuração
+    let complete_payload = format!(
+        r#"{{
+            "provider": "local_folder",
+            "local_sync_path": "{}",
+            "autostart": false,
+            "notifications": true
+        }}"#,
+        sync_folder.display().to_string().replace('\\', "\\\\")
+    );
+    let (status_code, complete_body) =
+        http_post(addr, "/api/setup/complete", &complete_payload).await;
+    assert_eq!(status_code, 200);
+    let complete_val: serde_json::Value = serde_json::from_str(&complete_body).unwrap();
+    assert_eq!(complete_val["setup_completed"].as_bool(), Some(true));
+    assert_eq!(
+        complete_val["cloud_provider"].as_str(),
+        Some("local_folder")
+    );
+
+    // 5. Verifica se o arquivo config.toml no disco foi atualizado
+    let reloaded_config = savevault_core::config::Config::load(&config_path).unwrap();
+    assert!(reloaded_config.general.setup_completed);
+    assert_eq!(reloaded_config.cloud.provider, "local_folder");
+    assert!(reloaded_config.cloud.local_sync_path.is_some());
+
+    // 6. Novo GET /api/setup/status confirma setup concluído
+    let (status_code, final_status_body) = http_get(addr, "/api/setup/status").await;
+    assert_eq!(status_code, 200);
+    let final_val: serde_json::Value = serde_json::from_str(&final_status_body).unwrap();
+    assert_eq!(final_val["setup_completed"].as_bool(), Some(true));
+    assert_eq!(final_val["cloud_provider"].as_str(), Some("local_folder"));
+
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
 }

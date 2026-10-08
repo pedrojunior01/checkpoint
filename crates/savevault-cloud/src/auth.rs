@@ -13,9 +13,11 @@ use anyhow::{anyhow, Result};
 use keyring::Entry;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 /// Timeout padrão para handshake de conexão OAuth.
@@ -32,7 +34,7 @@ fn build_auth_http_client() -> reqwest::Client {
 }
 
 /// Nome do serviço registrado no Windows Credential Manager.
-const KEYRING_SERVICE: &str = "SaveVault";
+pub(crate) const KEYRING_SERVICE: &str = "SaveVault";
 /// Chave do refresh token do Google Drive.
 const KEYRING_GOOGLE_REFRESH: &str = "google_drive_refresh_token";
 /// Escopo de acesso: apenas arquivos criados pelo próprio SaveVault.
@@ -52,6 +54,12 @@ struct TokenResponse {
     expires_in: u64,
 }
 
+#[derive(Clone, Debug)]
+struct CachedAccessToken {
+    token: String,
+    expires_at: std::time::Instant,
+}
+
 // ---------------------------------------------------------------------------
 // AuthService
 // ---------------------------------------------------------------------------
@@ -65,6 +73,7 @@ pub struct AuthService {
     token_url: String,
     fixed_token: Option<String>,
     mock_refresh_token: Option<String>,
+    cached_token: Arc<RwLock<Option<CachedAccessToken>>>,
 }
 
 impl AuthService {
@@ -77,6 +86,7 @@ impl AuthService {
             token_url: "https://oauth2.googleapis.com/token".to_string(),
             fixed_token: None,
             mock_refresh_token: None,
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -90,6 +100,7 @@ impl AuthService {
             token_url: "https://oauth2.googleapis.com/token".to_string(),
             fixed_token: Some(token),
             mock_refresh_token: None,
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -108,6 +119,7 @@ impl AuthService {
             token_url,
             fixed_token: None,
             mock_refresh_token: Some(refresh_token),
+            cached_token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -146,63 +158,107 @@ impl AuthService {
         // Inicia o listener antes de abrir o navegador para não perder o callback
         let listener = TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT))
             .await
-            .map_err(|e| anyhow!(
-                "Falha ao abrir porta {}. Verifique se está em uso: {}",
-                REDIRECT_PORT, e
-            ))?;
+            .map_err(|e| {
+                anyhow!(
+                    "Falha ao abrir porta {}. Verifique se está em uso: {}",
+                    REDIRECT_PORT,
+                    e
+                )
+            })?;
 
         info!("Aguardando callback do Google na porta {}", REDIRECT_PORT);
         println!("\nAbrindo navegador para autenticação no Google Drive...");
-        println!("Caso o navegador não abra, acesse manualmente:\n{}\n", auth_url);
+        println!(
+            "Caso o navegador não abra, acesse manualmente:\n{}\n",
+            auth_url
+        );
 
         // Abre a URL no navegador padrão do Windows
         open_url_windows(&auth_url);
 
-        // Aguarda a conexão do navegador com o callback
-        let (mut socket, addr) = listener.accept().await?;
-        debug!("Conexão recebida de {}", addr);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        let mut auth_code = None;
 
-        let mut buffer = vec![0u8; 4096];
-        let n = socket.read(&mut buffer).await?;
-        let request = String::from_utf8_lossy(&buffer[..n]);
+        while tokio::time::Instant::now() < deadline {
+            let accept_res = tokio::time::timeout_at(deadline, listener.accept()).await;
+            let (mut socket, addr) = match accept_res {
+                Ok(Ok(pair)) => pair,
+                Ok(Err(e)) => return Err(anyhow!("Erro de I/O no listener OAuth: {}", e)),
+                Err(_) => {
+                    return Err(anyhow!(
+                        "Tempo limite de autenticação OAuth esgotado (timeout de 3 minutos)."
+                    ))
+                }
+            };
+            debug!("Conexão recebida de {}", addr);
 
-        // Valida o parâmetro state para prevenir ataques CSRF
-        let received_state = extract_query_param(&request, "state");
-        if received_state.as_deref() != Some(&oauth_state) {
-            let error_html = concat!(
-                "HTTP/1.1 400 Bad Request\r\n",
-                "Content-Type: text/html; charset=utf-8\r\n",
-                "Connection: close\r\n\r\n",
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
-                "<h2>❌ Falha de segurança na autenticação</h2>",
-                "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
-                "</body></html>",
-            );
-            let _ = socket.write_all(error_html.as_bytes()).await;
-            return Err(anyhow!("Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"));
-        }
+            let mut buffer = vec![0u8; 4096];
+            let n = match socket.read(&mut buffer).await {
+                Ok(n) if n > 0 => n,
+                _ => continue,
+            };
+            let request = String::from_utf8_lossy(&buffer[..n]);
 
-        // Extrai o parâmetro `code` ou `error` do request HTTP
-        let code = extract_query_param(&request, "code")
-            .ok_or_else(|| {
+            // Se for requisição de favicon ou asset irrelevante, responde 204 e continua aguardando o callback real
+            if request.contains("GET /favicon.ico") {
+                let _ = socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await;
+                continue;
+            }
+
+            if !request.contains("/oauth/callback") {
+                let _ = socket
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")
+                    .await;
+                continue;
+            }
+
+            // Valida o parâmetro state para prevenir ataques CSRF
+            let received_state = extract_query_param(&request, "state");
+            if received_state.as_deref() != Some(&oauth_state) {
+                let error_html = concat!(
+                    "HTTP/1.1 400 Bad Request\r\n",
+                    "Content-Type: text/html; charset=utf-8\r\n",
+                    "Connection: close\r\n\r\n",
+                    "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+                    "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                    "<h2>❌ Falha de segurança na autenticação</h2>",
+                    "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
+                    "</body></html>",
+                );
+                let _ = socket.write_all(error_html.as_bytes()).await;
+                return Err(anyhow!(
+                    "Callback OAuth inválido: 'state' diverge ou ausente (possível CSRF)"
+                ));
+            }
+
+            // Extrai o parâmetro `code` ou `error` do request HTTP
+            let code = extract_query_param(&request, "code").ok_or_else(|| {
                 let error = extract_query_param(&request, "error")
                     .unwrap_or_else(|| "desconhecido".to_string());
                 anyhow!("Autorização recusada pelo Google: {}", error)
             })?;
 
-        // Resposta visual na aba do navegador
-        let html = concat!(
-            "HTTP/1.1 200 OK\r\n",
-            "Content-Type: text/html; charset=utf-8\r\n",
-            "Connection: close\r\n\r\n",
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-            "<title>SaveVault</title></head><body style='font-family:sans-serif;padding:2rem'>",
-            "<h2>✅ SaveVault autenticado com sucesso!</h2>",
-            "<p>Você pode fechar esta aba e voltar para o SaveVault.</p>",
-            "</body></html>",
-        );
-        let _ = socket.write_all(html.as_bytes()).await;
+            // Resposta visual na aba do navegador
+            let html = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/html; charset=utf-8\r\n",
+                "Connection: close\r\n\r\n",
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+                "<title>SaveVault</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                "<h2>✅ SaveVault autenticado com sucesso!</h2>",
+                "<p>Você pode fechar esta aba e voltar para o SaveVault.</p>",
+                "</body></html>",
+            );
+            let _ = socket.write_all(html.as_bytes()).await;
+            auth_code = Some(code);
+            break;
+        }
+
+        let code = auth_code.ok_or_else(|| {
+            anyhow!("Nenhum código de autorização foi recebido dentro do tempo limite.")
+        })?;
 
         // Troca o código pelos tokens
         self.exchange_code_for_tokens(&code, &redirect_uri).await?;
@@ -262,9 +318,22 @@ impl AuthService {
 
     /// Obtém um access_token válido renovando via refresh_token armazenado.
     /// Deve ser chamado antes de qualquer operação na API do Google Drive.
+    ///
+    /// Otimização: reutiliza tokens em cache válidos para evitar chamadas de rede redundantes.
     pub async fn get_fresh_access_token(&self) -> Result<String> {
         if let Some(ref fixed) = self.fixed_token {
             return Ok(fixed.clone());
+        }
+
+        // 1. Verifica se temos um token em cache ainda válido (com margem de segurança de 60s)
+        {
+            let cache = self.cached_token.read().await;
+            if let Some(ref cached) = *cache {
+                if std::time::Instant::now() + Duration::from_secs(60) < cached.expires_at {
+                    debug!("Reutilizando access token em cache válido.");
+                    return Ok(cached.token.clone());
+                }
+            }
         }
 
         let refresh_token = if let Some(ref rt) = self.mock_refresh_token {
@@ -287,12 +356,7 @@ impl AuthService {
         params.insert("refresh_token", refresh_token.as_str());
         params.insert("grant_type", "refresh_token");
 
-        let res = self
-            .http
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await?;
+        let res = self.http.post(&self.token_url).form(&params).send().await?;
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -300,12 +364,33 @@ impl AuthService {
         }
 
         let token_resp: TokenResponse = res.json().await?;
-        debug!("Access token renovado com sucesso.");
+        let expires_in_secs = if token_resp.expires_in > 0 {
+            token_resp.expires_in
+        } else {
+            3600
+        };
+        let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
+
+        {
+            let mut cache = self.cached_token.write().await;
+            *cache = Some(CachedAccessToken {
+                token: token_resp.access_token.clone(),
+                expires_at,
+            });
+        }
+
+        debug!(
+            "Access token renovado com sucesso e armazenado em cache (válido por {}s).",
+            expires_in_secs
+        );
         Ok(token_resp.access_token)
     }
 
-    /// Remove o refresh token salvo (logout).
+    /// Remove o refresh token salvo (logout) e invalida tokens em cache.
     pub fn logout(&self) -> Result<()> {
+        if let Ok(mut cache) = self.cached_token.try_write() {
+            *cache = None;
+        }
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
             .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
         entry
@@ -321,7 +406,7 @@ impl AuthService {
 // ---------------------------------------------------------------------------
 
 /// Abre uma URL no navegador padrão do Windows.
-fn open_url_windows(url: &str) {
+pub(crate) fn open_url_windows(url: &str) {
     let _ = std::process::Command::new("cmd")
         .args(["/C", "start", "", url])
         .spawn();
@@ -329,7 +414,7 @@ fn open_url_windows(url: &str) {
 
 /// Extrai o valor de um parâmetro de query string de um request HTTP cru.
 /// Ex: extrai "abc" de "GET /oauth/callback?code=abc&state=... HTTP/1.1"
-fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
+pub(crate) fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
     let first_line = raw_request.lines().next()?;
     let path = first_line.split_whitespace().nth(1)?;
     let query = path.split('?').nth(1)?;
@@ -347,19 +432,25 @@ fn extract_query_param(raw_request: &str, param: &str) -> Option<String> {
 }
 
 /// Encoding mínimo de URL (apenas os caracteres que a RFC exige para query params).
-fn urlencoding_simple(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ':' => "%3A".to_string(),
-            '/' => "%2F".to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+/// Otimizado com buffer único pré-alocado para evitar alocações por caractere.
+pub(crate) fn urlencoding_simple(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
+            ':' => result.push_str("%3A"),
+            '/' => result.push_str("%2F"),
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(result, "%{:02X}", c as u32);
+            }
+        }
+    }
+    result
 }
 
 /// Decodificação simples de percent-encoding (%XX → char).
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -389,14 +480,21 @@ mod tests {
 
     #[test]
     fn extract_code_from_get_request() {
-        let request = "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "code"), Some("abc123".to_string()));
+        let request =
+            "GET /oauth/callback?code=abc123&scope=drive HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        assert_eq!(
+            extract_query_param(request, "code"),
+            Some("abc123".to_string())
+        );
     }
 
     #[test]
     fn extract_error_from_get_request() {
         let request = "GET /oauth/callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        assert_eq!(extract_query_param(request, "error"), Some("access_denied".to_string()));
+        assert_eq!(
+            extract_query_param(request, "error"),
+            Some("access_denied".to_string())
+        );
     }
 
     #[test]

@@ -17,7 +17,7 @@ use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocat
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
 
 // Chaves de registro onde o GOG armazena seus jogos instalados
 const GOG_REGISTRY_PATHS: &[&str] = &[
@@ -71,13 +71,19 @@ impl GogDetector {
         // Tenta ler o Registro primeiro (método principal)
         let from_registry = read_gog_games_from_registry();
         if !from_registry.is_empty() {
-            info!("GOG: {} jogo(s) detectado(s) via Registro do Windows.", from_registry.len());
+            info!(
+                "GOG: {} jogo(s) detectado(s) via Registro do Windows.",
+                from_registry.len()
+            );
             return Ok(from_registry);
         }
 
         // Fallback: varre a pasta de instalação do GOG Galaxy
         if let Some(ref root) = self.gog_root {
-            debug!("GOG: Registro não encontrado, varrendo pasta: {}", root.display());
+            debug!(
+                "GOG: Registro não encontrado, varrendo pasta: {}",
+                root.display()
+            );
             results.extend(scan_gog_games_folder(root));
         } else {
             warn!("GOG Galaxy não encontrado no sistema (Registry vazio e pasta ausente).");
@@ -155,7 +161,12 @@ fn read_gog_games_from_registry() -> Vec<GogGameInfo> {
                 name, product_id, install_path
             );
 
-            let game = Game::new(name.trim().to_string(), Platform::Gog, product_id, Confidence::High);
+            let game = Game::new(
+                name.trim().to_string(),
+                Platform::Gog,
+                product_id,
+                Confidence::High,
+            );
 
             // Tenta detectar saves associados via registry (campo `WORKINGDIR` ou `SAVEPATH`)
             let save_paths = detect_save_paths_from_registry(&game_key, game.id, &install_path);
@@ -190,12 +201,7 @@ fn detect_save_paths_from_registry(
         if let Ok(raw_path) = game_key.get_value::<String, _>(field) {
             let p = PathBuf::from(&raw_path);
             if p.exists() && p.is_dir() {
-                paths.push(SaveLocation {
-                    id: Uuid::new_v4(),
-                    game_id,
-                    path: p,
-                    location_type: SaveLocationType::Directory,
-                });
+                paths.push(SaveLocation::new(game_id, p, SaveLocationType::Directory));
             }
         }
     }
@@ -206,12 +212,11 @@ fn detect_save_paths_from_registry(
             for subfolder in &["saves", "save", "Saves", "Save", "savegames", "SaveGames"] {
                 let candidate = base.join(subfolder);
                 if candidate.exists() {
-                    paths.push(SaveLocation {
-                        id: Uuid::new_v4(),
+                    paths.push(SaveLocation::new(
                         game_id,
-                        path: candidate,
-                        location_type: SaveLocationType::Directory,
-                    });
+                        candidate,
+                        SaveLocationType::Directory,
+                    ));
                     break;
                 }
             }
@@ -250,9 +255,7 @@ fn scan_gog_games_folder(root: &PathBuf) -> Vec<GogGameInfo> {
             .to_string();
 
         // Ignora pastas do próprio GOG Galaxy (não são jogos)
-        if name.to_lowercase().contains("gog galaxy")
-            || name.to_lowercase().contains("redist")
-        {
+        if name.to_lowercase().contains("gog galaxy") || name.to_lowercase().contains("redist") {
             continue;
         }
 
@@ -278,12 +281,11 @@ fn detect_save_paths_in_folder(game_id: Uuid, base: &Path) -> Vec<SaveLocation> 
     for subfolder in &["saves", "save", "Saves", "Save", "savegames", "SaveGames"] {
         let candidate = base.join(subfolder);
         if candidate.exists() {
-            paths.push(SaveLocation {
-                id: Uuid::new_v4(),
+            paths.push(SaveLocation::new(
                 game_id,
-                path: candidate,
-                location_type: SaveLocationType::Directory,
-            });
+                candidate,
+                SaveLocationType::Directory,
+            ));
             break;
         }
     }
@@ -294,7 +296,7 @@ fn detect_save_paths_in_folder(game_id: Uuid, base: &Path) -> Vec<SaveLocation> 
 // Detecção da pasta raiz do GOG Galaxy
 // ---------------------------------------------------------------------------
 
-fn find_gog_root() -> Option<PathBuf> {
+pub fn find_gog_root() -> Option<PathBuf> {
     // Primeiro tenta extrair do registro a pasta de instalação do Galaxy
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     for reg_path in &[
@@ -335,7 +337,10 @@ mod tests {
         // Não importa se o GOG está instalado ou não — nunca deve panicar
         let detector = GogDetector::new();
         let result = detector.detect().await;
-        assert!(result.is_ok(), "GogDetector::detect() não deve retornar Err");
+        assert!(
+            result.is_ok(),
+            "GogDetector::detect() não deve retornar Err"
+        );
     }
 
     #[tokio::test]

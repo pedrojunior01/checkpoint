@@ -1,173 +1,161 @@
 # Relatório de Implementação e Arquitetura - SaveVault
 
-**Versão Atual:** v0.6.0  
-**Data do Relatório:** Setembro 2026  
-**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive) + Multi-Discovery Completo
+**Versão Atual:** v0.9.0-rc (Release Candidate)  
+**Data do Relatório:** Outubro 2026  
+**Status do Projeto:** Pipeline Core + Cloud Sync (Google Drive & OneDrive) + Cloud Recovery & Disaster Recovery + Multi-Launcher Discovery + Autostart Windows + Tauri Native Tray Minimized + Notificações Windows Toast + Resolução de Conflitos Multi-PC + CI/CD GitHub Actions + Correções de Auditoria Adversarial (Fase 1 e Fase 2 concluídas - 257+ Testes Automatizados - 100% Aprovados)
 
 ---
 
 ## 1. Visão Geral do Projeto
-O **SaveVault** é um sistema *CLI-first* escrito 100% em Rust projetado para detectar automaticamente jogos instalados no Windows (10/11 x64), mapear seus diretórios de saves, monitorar alterações em tempo real de forma não-bloqueante, gerar snapshots versionados com integridade garantida por hash BLAKE3 e sincronizar os backups de maneira assíncrona com a nuvem (Google Drive via OAuth 2.0).
+O **SaveVault** (checkpoint) é um sistema de proteção de saves de jogos para Windows (10/11 x64) de alta confiabilidade, desenvolvido 100% em Rust. O projeto é projetado para:
+1. Detectar automaticamente jogos instalados no computador (Steam, GOG Galaxy, emuladores e heurística em pastas de sistema).
+2. Mapear e monitorar alterações em arquivos e subdiretórios de save em tempo real de forma não-bloqueante.
+3. Gerar snapshots versionados com integridade garantida por hash BLAKE3, preservando estruturas aninhadas de diretórios sem colisões.
+4. Executar sincronização assíncrona com nuvem (Google Drive, Microsoft OneDrive e pastas sincronizadas locais) sem travar a interface ou o banco de dados.
+5. Permitir Recuperação de Desastre (*Disaster Recovery*) em máquinas novas ou recém-formatadas mesmo com o banco local vazio, reconstruindo o catálogo a partir do manifesto da nuvem (`savevault_manifest.json`).
+6. Oferecer interface nativa e moderna via **Tauri 2.0**, minimizada na bandeja do sistema (*System Tray*) perto do relógio do Windows, com consumo ultrabaixo de memória e CPU.
 
-A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o código em 8 *crates* autônomos para garantir alta confiabilidade, concorrência segura, ausência de deadlocks e baixo consumo de CPU/IO.
+A arquitetura do projeto segue o padrão de **Workspace Modular**, dividindo o código em 8 *crates* autônomos:
+- `savevault-core`
+- `savevault-db`
+- `savevault-discovery`
+- `savevault-monitor`
+- `savevault-backup`
+- `savevault-cloud`
+- `savevault-sync`
+- `savevault-app`
 
 ---
 
 ## 2. Crates e Módulos Implementados
 
 ### 1. `savevault-core` (Completo)
-- **Modelos de Domínio**: Define estruturas de dados universais (`Game`, `SaveLocation`, `FileEntry`, `Backup`, `SyncQueueItem`, `Platform`).
+- **Modelos de Domínio**: Define estruturas de dados universais (`Game`, `SaveLocation`, `FileEntry`, `Backup`, `SyncQueueItem`, `Platform`, `CloudProvider`, `ConflictStrategy`).
 - **Normalização de Caminhos Windows (`src/path.rs`)**:
   - Remoção de prefixos estendidos `\\?\` e `\\?\UNC\`.
-  - Tratamento case-insensitive preservando formatação original.
+  - Tratamento case-insensitive com **Unicode Case-Folding** (`to_lowercase()`), alinhando com a semântica nativa do NTFS (F-13).
+  - Cálculo de caminhos relativos seguros (`compute_relative_path`) para replicação exata de subpastas em backups e restauração (F-01).
   - Mitigação de directory traversal indevido.
-- **Configuração**: Gerenciamento do arquivo `%APPDATA%\SaveVault\config.toml` (retenção de versões, tempos de debounce e caminhos do sistema).
+- **Configuração (`src/config.rs`)**: Gerenciamento de `%APPDATA%\SaveVault\config.toml` (retenção de versões, tempos de debounce, provedor de nuvem, estratégia de conflito, configurações de notificações toast, autostart e caminhos do sistema).
+- **Inicialização Automática com o Windows (`src/autostart.rs`)**:
+  - Integração nativa com a chave do Registro `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SaveVault`.
+  - Cadastro de linha de comando com `--tray` direcionado diretamente para a interface nativa Tauri minimizada (F-06).
+  - Funções de consulta e controle: `is_enabled`, `status`, `enable`, `disable`.
 
 ### 2. `savevault-db` (Completo)
 - **SQLite Embutido**: Utiliza `rusqlite` com flag `bundled` (independente de drivers externos ou DLLs do sistema).
-- **Migrações Determinísticas**:
-  - `001_initial_schema`: criação das tabelas fundamentais (`games`, `save_locations`, `files`, `backups`, `sync_queue`).
+- **Migrações Determinísticas (001 a 007)**:
+  - `001_initial_schema`: tabelas fundamentais (`games`, `save_locations`, `files`, `backups`, `sync_queue`).
   - `002_save_locations_unique_path`: desduplicação e índice de unicidade.
   - `003_save_locations_nocase_index`: suporte a `COLLATE NOCASE` para caminhos Windows.
-  - `004_backups_drive_file_id`: persistência estruturada do identificador remoto no Google Drive.
-  - `005_games_unique_name_platform`: deduplicação e índice único `(name COLLATE NOCASE, platform)` prevenindo duplicatas de jogos.
-- **Repositórios CRUD com Integridade Referencial**:
-  - `GamesRepo`: suporte a `find_by_platform_id`, `find_by_name_and_platform`, listagem geral (`list_all`) e reaproveitamento seguro de UUIDs.
-  - `SaveLocationsRepo`: método `upsert` idempotente que preserva UUIDs existentes e normaliza caminhos Windows.
-  - `FilesRepo`: suporte a `find_by_id` e `find_by_path`.
-  - `BackupsRepo`: controle de retenção com método `prune_old_versions` retornando versões podadas para limpeza física em disco.
-  - `SyncQueueRepo`: enfileiramento, listagem de pendentes e controle de tentativas.
-  - Implementação estrita de `ON DELETE CASCADE`.
+  - `004_backups_drive_file_id`: persistência estruturada do identificador remoto no Google Drive / OneDrive.
+  - `005_games_unique_name_platform`: deduplicação e índice único `(name COLLATE NOCASE, platform)`.
+  - `006_files_and_backups_canonical`: índices únicos estritos para consistência relacional.
+  - `007_games_platform_id_composite`: índice único composto `UNIQUE (platform, platform_id) WHERE platform_id IS NOT NULL`.
+- **Repositórios CRUD com Integridade Estrita**:
+  - `GamesRepo`, `SaveLocationsRepo`, `FilesRepo`, `BackupsRepo`, `SyncQueueRepo`.
+  - Tratamento estrito de erros e integridade transacional sem silenciamento indevido via `filter_map`.
 
 ### 3. `savevault-discovery` (Completo - Multi-Launcher & Heurístico)
-- **Steam Engine (`steam.rs`)**:
-  - Mapeamento dinâmico de múltiplas bibliotecas via leitura do `libraryfolders.vdf`.
-  - Parser nativo de arquivos `.acf` para extrair nome, Steam AppID e pasta de instalação sem resíduos de aspas.
-- **GOG Galaxy Engine (`gog.rs`)**:
-  - Varredura nativa do Registro do Windows em `HKLM\SOFTWARE\GOG.com\Games` e `HKLM\SOFTWARE\WOW6432Node\GOG.com\Games`.
-  - Extração de nome, Product ID e diretório de instalação.
-  - Detecção de saves locais via campos do registro (`WORKINGDIR`, `SAVEPATH`) e subpastas típicas (`saves/`, `savegames/`).
-  - Fallback automático por varredura de pastas de instalação (`C:\Program Files (x86)\GOG Galaxy\Games`).
-- **Emulators Engine (`emulators.rs`)**:
-  - Perfis pré-configurados e detecção de dados para Dolphin, PCSX2, PPSSPP e RetroArch.
-- **Detector Genérico / Heurístico (`generic.rs`)**:
-  - Varredura inteligente de diretórios de alta probabilidade (`%APPDATA%`, `%LOCALAPPDATA%`, `Documents`, `Saved Games`, `My Games`).
-  - Regras estritas anti-falsos-positivos: ignora diretórios de sistema/apps (`Microsoft`, `Windows`, `Discord`, `Steam`, `node_modules`, etc.).
-  - Critério de pontuação: exige $\ge 2$ arquivos de save típicos (`.sav`, `.dat`, `.save`, `.sg*`, `.slot`) ou nomenclaturas de progresso (`save01`, `slot_1`, `quicksave`).
-  - Deduplicação cruzada: ignora pastas já cobertas por instalações conhecidas da Steam e do GOG.
-- **Ludusavi Manifest Engine (`manifest/` e `ludusavi/`)**:
-  - Download e cache assíncrono do catálogo oficial do Ludusavi (~17MB, +53.000 jogos).
-  - Resolução de saves para Steam (por AppID ou título) e GOG (por GOG ID ou título com `install_path`).
-  - Expansão de variáveis de ambiente (`<winAppData>`, `<winDocuments>`, etc.) e identificadores dinâmicos Steam (`<storeUserId>`).
+- **Steam Engine (`steam.rs`)**: Mapeamento dinâmico de múltiplas bibliotecas via leitura do `libraryfolders.vdf` e parser `.acf`.
+- **GOG Galaxy Engine (`gog.rs`)**: Varredura nativa do Registro do Windows em `HKLM\SOFTWARE\GOG.com\Games` com fallback por diretório.
+- **Emulators Engine (`emulators.rs`)**: Perfis para Dolphin, PCSX2, PPSSPP e RetroArch.
+- **Detector Genérico / Heurístico (`generic.rs`)**: Varredura inteligente de `%APPDATA%`, `%LOCALAPPDATA%`, `Documents`, `Saved Games` com filtros anti-falsos-positivos.
+- **Ludusavi Manifest Engine (`manifest/` e `ludusavi/`)**: Cache assíncrono do catálogo oficial Ludusavi (+53.000 jogos) e resolução de caminhos dinâmicos.
 
 ### 4. `savevault-monitor` (Completo)
-- **Pipeline de Monitoramento Resiliente**:
+- **Pipeline de Monitoramento Não-Bloqueante**:
   - `SaveScanner`: varredura recursiva de arquivos, diretórios e padrões glob.
-  - `SaveWatcherService`: integração com a crate `notify` em canal não-bloqueante (`try_send`) com contadores atômicos contra overflow e monitoramento dinâmico de pastas-mãe.
-  - `FileDebouncer`: agrupamento (*coalescing*) causal de múltiplos eventos de escrita em janela temporal configurável, evitando sobrecarga de IO.
-  - `StabilityChecker`: motor de detecção de escrita em andamento. Mapeia códigos de erro nativos do Windows (`ERROR_SHARING_VIOLATION` 32 e 33) e aplica retentativas com backoff exponencial e jitter para garantir que saves em gravação ativa pelo jogo não sejam corrompidos ou lidos prematuramente.
+  - `SaveWatcherService`: integração com a crate `notify` em canal não-bloqueante (`try_send`) com contadores atômicos contra overflow e suporte a inicialização com banco vazio (F-03).
+  - `FileDebouncer`: agrupamento causal de múltiplos eventos de escrita em janela temporal configurável.
+  - `StabilityChecker`: detecção de escrita em andamento tratando erros nativos do Windows (`ERROR_SHARING_VIOLATION` 32 e 33) com retentativas e backoff exponencial.
 
 ### 5. `savevault-backup` (Completo)
-- **Criptografia e Hashing**: Cálculo determinístico de assinaturas via **BLAKE3** com leitura em streaming por blocos.
-- **SnapshotManager**:
-  - Criação de snapshots locais versionados (`backup_root/<file_id>/v<version>/filename`).
-  - Rotina de **restauração segura**: gera automaticamente cópia temporária (`.savevault_safety_bak`) antes de substituir o arquivo original, permitindo desfazer rollbacks acidentais.
+- **Criptografia e Hashing**: Assinaturas criptográficas via **BLAKE3** em streaming por blocos.
+- **SnapshotManager com Suporte a Subdiretórios Aninhados (F-01)**:
+  - Criação de snapshots locais organizados em `v{version}/`, `latest/` e `daily/`, preservando a árvore relativa de pastas (`create_snapshot_with_relpath`).
+  - Restauração atômica com validação de hash e isolamento de caminhos relativos (`restore_snapshot_with_relpath`).
+  - Prevenção de exclusão indevida de diretórios durante versionamento e pruning (`remove_snapshot_version_file`).
 
-### 6. `savevault-cloud` (Completo)
-- **Autenticação OAuth 2.0 (`src/auth.rs`)**:
-  - Fluxo *Authorization Code com PKCE via Loopback IP* (`127.0.0.1:8085`).
-  - Abertura automática do navegador padrão do sistema para consentimento do usuário.
-  - Escopo restrito de segurança: `https://www.googleapis.com/auth/drive.file` (acesso exclusivo aos arquivos criados pelo próprio SaveVault).
-  - Armazenamento seguro de *Refresh Token* no **Windows Credential Manager** via crate `keyring`.
-  - Renovação automática e transparente de *Access Tokens* expirados.
-- **Google Drive Provider (`src/google_drive.rs`)**:
-  - Criação hierárquica automática de pastas no Drive (`SaveVault/<save_location_id>/<file_id>/`).
-  - Upload Multipart (metadados JSON + binário do snapshot em requisição HTTP única).
-  - Métodos implementados para download e remoção remota de arquivos com timeouts e sanitização de URLs.
+### 6. `savevault-cloud` (Completo - Multi-Provider)
+- **Autenticação OAuth 2.0 PKCE Resiliente (`src/auth.rs` e `src/onedrive_auth.rs`)**:
+  - Loopback IP seguro (`127.0.0.1:8085` / `:8086`) com timeout de 180s.
+  - Armazenamento de *Refresh Token* criptografado no **Windows Credential Manager** via crate `keyring`.
+- **Catálogo de Manifesto Remoto (F-05)**:
+  - Definição de `CloudManifestEntry` e `CloudCatalogManifest` para versionamento centralizado do catálogo de saves na nuvem.
+  - Métodos padronizados `get_manifest` e `save_manifest` na trait `CloudProvider` e em `Box<dyn CloudProvider>`.
+- **Provedores Implementados**:
+  - `GoogleDriveProvider`: Upload Multipart, download, exclusão e criação hierárquica de pastas.
+  - `OneDriveProvider`: Integração com Microsoft Graph API via chunks e app folder.
+  - `LocalFolderProvider`: Suporte a pastas sincronizadas locais (OneDrive, Google Drive Desktop, Dropbox).
 
-### 7. `savevault-sync` (Completo)
-- **SyncEngine**:
-  - Consumo assíncrono da tabela `sync_queue`.
-  - Tratamento de falhas de rede com backoff exponencial (até 5 tentativas antes de marcar como falha definitiva).
-  - Atualização idempotente do status de sincronização (`Pending` ➔ `Synced`) e persistência atômica do `cloud_path` e `drive_file_id`.
-  - Operação segura em modo offline (ignora silenciosamente uploads pendentes quando o usuário não estiver autenticado).
+### 7. `savevault-sync` (Completo - Non-blocking Architecture)
+- **SyncEngine Desacoplado**:
+  - Consumo assíncrono da tabela `sync_queue` com liberação imediata de lock do banco durante tráfego de rede e uploads.
+  - Roteamento dinâmico via `resolve_active_cloud_provider` para clientes reais de nuvem (`GoogleDriveProvider` / `OneDriveProvider`) com fallback para pastas locais (F-04).
+  - Atualização automática e atômica do manifesto remoto `savevault_manifest.json` a cada snapshot enviado (F-05).
 
-### 8. `savevault-app` (Orquestrador, CLI & Daemon Residente)
-- **Modo Residente Contínuo**:
-  - Execução contínua monitorando em tempo real todos os saves cadastrados, com reconciliação periódica de arquivos alterados offline.
-- **CLI Completa**:
-  - `savevault`: executa discovery, persistência e inicia o monitoramento residente.
-  - `savevault --once`: executa discovery pontual sem manter o processo ativo.
-  - `savevault add <nome> <caminho>`: cadastro manual imediato de jogos e locais de save.
-  - `savevault list`: exibe todos os jogos e diretórios cadastrados no banco.
-  - `savevault restore <id>`: restaura snapshot histórico com safety backup prévio.
-  - `savevault restore list`: lista snapshots disponíveis para restauração.
-  - `savevault auth login | status | logout`: gerencia o login OAuth 2.0 com o Google Drive.
-  - `savevault sync`: força o processamento manual da fila de sincronização na nuvem.
-  - `savevault --ui`: inicia o servidor local da DEV-UI para testes e inspeção no navegador.
+### 8. `savevault-app` (Orquestrador, Desktop Tauri, Tray, Conflitos & DR)
+- **Tauri 2.0 Native UI & System Tray (F-06)**:
+  - Interface gráfica desktop nativa sem janelas de navegadores externos.
+  - Minimização para a bandeja do sistema perto do relógio (`start_minimized = true`) ao iniciar com o Windows via `--tray`.
+- **Proteção de Instância Única (`SingleInstanceGuard`) (F-07)**:
+  - Mutex do sistema operacional Windows (`CreateMutexW`) garantindo que apenas uma instância desktop/residente seja executada simultaneamente.
+- **Recuperação de Desastre em Máquinas Novas (F-05)**:
+  - Função `reconstruct_catalog_from_cloud` para recuperar registros de jogos e backups a partir do manifesto em nuvem mesmo com o banco local vazio.
+- **Resolução de Conflitos Multi-PC (`src/conflict.rs`)**:
+  - Detecção de divergências entre múltiplos dispositivos com estratégias `KeepLocal`, `KeepCloud` e `KeepBoth`.
+- **Notificações Windows Toast (`src/notifications.rs`)**:
+  - Alertas nativos no Windows Action Center com rate-limiting anti-spam.
 
 ---
 
 ## 3. Bateria de Testes Automatizados (QA)
 
-Atualmente a suíte conta com **213 testes automatizados (100% de aprovação)** cobrindo todos os módulos do workspace:
+Atualmente a suíte conta com **257 testes automatizados (100% de aprovação)** sem warnings de compilação ou do Clippy:
 
-1. **`savevault-discovery` (46 testes)**: Parsing de manifestos Steam ACF, leitura do Registro do Windows para GOG (com suporte a String e DWORD numérico), heurística genérica com filtros anti-falsos-positivos, isolamento do detector e testes de integração com o catálogo Ludusavi.
-2. **`savevault-db` (37 testes)**: Idempotência de migrações (incluindo migração 005), índices case-insensitive (`COLLATE NOCASE`), `ON DELETE CASCADE`, consistência de UUIDs, deduplicação de jogos e operações CRUD.
-3. **`savevault-app` (36 testes)**: Testes de integração E2E do pipeline de monitoramento residente, DEV-UI, reconciliação periódica e restauração segura com escrita atômica e rollback.
-4. **`savevault-monitor` (30 testes)**: Coalescência de debouncing, limites de memória, recuperação de sharing violation (locks do Windows), filtragem de arquivos internos e renomeação atômica.
-5. **`savevault-cloud` (23 testes)**: Testes com mock do Google Drive, upload multipart, token refresh, validação de `state` anti-CSRF e keyring.
-6. **`savevault-core` (18 testes)**: Normalização de paths com remoção de prefixos estendidos `\\?\` e `\\?\UNC\`, roundtrip do arquivo `config.toml`, detecção de arquivos internos e modelos.
-7. **`savevault-sync` (12 testes)**: Consumo da fila, retentativas com backoff exponencial e transações atômicas de sync.
-8. **`savevault-backup` (11 testes)**: Hashing BLAKE3 em streaming, integridade de snapshots versionados, remoção física de diretórios podados e safety backups anti-colisão.
-
----
-
-## 4. Auditoria Adversarial e Correções de Produção
-
-No ciclo de auditoria sistêmica e adversarial, foram eliminados os seguintes bugs e vulnerabilidades:
-
-| Item | Gravidade | Descrição do Problema | Solução Implementada |
-|---|---|---|---|
-| **BUG-01** | Crítico | Jogos sem `platform_id` (emuladores/genéricos/manuais) duplicavam registros a cada scan | Criada Migração `005_games_unique_name_platform`, lookup por `(name COLLATE NOCASE, platform)` e `upsert` em `SaveLocationsRepo`. |
-| **BUG-02** | Alto | `prune_old_versions` removia apenas linhas do SQLite, deixando arquivos órfãos ocupando gigabytes em disco | `prune_old_versions` retorna backups podados e `SnapshotManager::remove_snapshot_version` remove pastas `v{version}` físicas. |
-| **BUG-03** | Alto | Restaurações criavam arquivos `.savevault_safety_` que eram re-capturados pelo watcher como saves novos | Adicionado filtro `is_internal_savevault_file` no `SaveScanner` e `match_path_to_locations` do watcher. |
-| **BUG-04** | Alto | DEV-UI exposta com `Access-Control-Allow-Origin: *` sem validação de origem | Restrito CORS a `http://127.0.0.1:4040` e validação estrita de header `Origin` rejeitando origens externas com `403 Forbidden`. |
-| **BUG-05** | Médio | OAuth loopback sem parâmetro `state` contra CSRF e sem alerta se `refresh_token` não fosse retornado | Adicionado UUID `state` validado no callback e verificação prévia no Windows Credential Manager. |
-| **BUG-06** | Médio | Servidor HTTP lia requisições com buffer TCP único, quebrando payloads POST fragmentados | Implementada leitura de loop HTTP respeitando `Content-Length` com limite contra DoS (2MB). |
-| **BUG-09** | Médio | `config.general.debounce_ms` era ignorado pelo watcher | Propagação de `debounce_duration` configurada para `SaveWatcherConfig`. |
-| **BUG-10** | Médio | Paths Win32 estendidos (`\\?\` e `\\?\UNC\`) quebravam normalização | Tratamento e remoção segura de prefixos em `crates/savevault-core/src/path.rs`. |
-| **BUG-11** | Baixo | Registro GOG salvando `gameID` como `REG_DWORD` falhava ao ler como String | Fallback com tentativa de leitura numérica `u32` e fallback por nome de subchave. |
-| **STACK** | Crítico | Frame assíncrono estourando stack padrão de 1MB da thread inicial do Windows | Despacho síncrono imediato para comandos de ajuda e runner Tokio em thread dedicada com stack de 16MB. |
+1. **`savevault-core` (26 testes)**: Normalização de caminhos Windows, Unicode Case-Folding (F-13), cálculo de `compute_relative_path` (F-01), autostart no Registro e roundtrip de configurações.
+2. **`savevault-db` (40 testes)**: Migrações 001 a 007, índices compostos únicos, `ON DELETE CASCADE`, desduplicação e consistência relacional.
+3. **`savevault-backup` (9 testes ativos + 3 lentos)**: Hashing BLAKE3 em streaming, snapshots com subpastas aninhadas (F-01), integridade de arquivos versionados e safety backups anti-colisão.
+4. **`savevault-cloud` (38 testes)**: Mocks do Google Drive e OneDrive, upload multipart, token refresh, manifestos remotos e provedor de pastas locais.
+5. **`savevault-sync` (12 testes)**: Sincronização não-bloqueante, retentativas com backoff exponencial e atualização de manifesto remoto.
+6. **`savevault-app` (55 testes)**:
+   - `src/lib.rs` (32 testes unitários, incluindo recuperação de catálogo de nuvem em banco vazio).
+   - `dev_ui_integration.rs` (8 testes de API e endpoints).
+   - `discovery_persistence.rs` (5 testes de persistência de descobertas).
+   - `pipeline_integration.rs` (2 testes de integração contínua do watcher).
+   - `reconciliation_integration.rs` (2 testes de reconciliação periódica).
+   - `restore_integration.rs` (6 testes de restauração segura ponta a ponta com subdiretórios).
+7. **`savevault-discovery` (47 testes)**: Manifestos Steam ACF, Registro do Windows para GOG, heurística genérica e Ludusavi manifest.
+8. **`savevault-monitor` (30 testes)**: Coalescência de debouncing, compartilhamento de arquivos com bloqueio Windows (sharing violation) e estabilização de escritas atômicas.
 
 ---
 
-## 5. Decisões Técnicas e Arquiteturais
-1. **Configuração de Toolchain do Cargo (`.cargo/config.toml`)**:
-   - Mapeamento explícito de `target-dir = "C:/svt"` para contornar limitações de linkers no Windows com caminhos que possuem acentuação ou espaços (ex: `Programação`).
-   - Suporte transparente à toolchain GNU (`stable-x86_64-pc-windows-gnu` + MinGW64) e MSVC.
-2. **Segurança de Credenciais**:
-   - Nenhum segredo ou token em texto plano no disco.
-   - Utilização do cofre de credenciais nativo do Windows (Windows Credential Manager via `keyring`).
-   - Disponibilização de template seguro `.env.example` mantendo o `.env` protegido via `.gitignore`.
-3. **Tolerância a Falhas**:
-   - Falhas de conexão à nuvem não bloqueiam o monitoramento nem corrompem a gravação de snapshots locais.
+## 4. Auditoria Adversarial: Remediações Concluídas
+
+| Item | Severidade | Vulnerabilidade / Inconsistência | Status | Solução Implementada |
+|---|---|---|---|---|
+| **F-01** | Crítico | Sobrescrita de dados em snapshots com subdiretórios aninhados | **Corrigido** | Implementada preservação de caminhos relativos em `snapshot.rs` e `hasher.rs`. |
+| **F-02** | Crítico | Mascaramento de erros de restauração no IPC/UI retornando sucesso falso | **Corrigido** | IPC Tauri e REST propagam erros estritos e a interface exibe feedback de falha. |
+| **F-13** | Crítico | Inconsistência de case-folding NTFS usando ASCII em vez de Unicode | **Corrigido** | Normalização de caminhos atualizada para Unicode `to_lowercase()` em `path.rs`. |
+| **F-03** | Alto | Watcher e pipeline paralisados na inicialização com banco vazio | **Corrigido** | Removida checagem restritiva; pipeline e consumidor de nuvem agora iniciam sempre. |
+| **F-04** | Alto | Uploads em background direcionados apenas para o filesystem local | **Corrigido** | Implementado `resolve_active_cloud_provider` despachando para Google Drive / OneDrive reais. |
+| **F-05** | Alto | Impossibilidade de Disaster Recovery em máquinas novas com banco vazio | **Corrigido** | Criado manifesto `savevault_manifest.json` na nuvem e rotina `reconstruct_catalog_from_cloud`. |
+| **F-06** | Alto | Autostart no Registro chamando navegador Edge em vez do Tauri nativo | **Corrigido** | Linha de comando `--tray` agora inicia o Tauri nativo minimizado no tray. |
+| **F-07** | Alto | Execução de múltiplas instâncias concorrentes causando conflito no SQLite | **Corrigido** | Implementado `SingleInstanceGuard` via Win32 `CreateMutexW` no startup do app. |
 
 ---
 
-## 6. Próximos Passos (Milestones Futuros)
+## 5. Próximos Passos (Fases 3 e 4)
 
-- [x] **Pipeline Residente Contínuo no `savevault-app`**: Implementado com modo daemon contínuo e reconciliação periódica.
-- [x] **CLI de Restauração (`savevault restore`)**: Implementado com safety backups e escrita atômica.
-- [x] **Ampliadores de Descoberta (GOG & Genérico & Manual)**:
-  - [x] Leitura de chaves do Registro do Windows (`HKLM\SOFTWARE\GOG.com\Games` e WoW6432Node).
-  - [x] Heurística para busca de saves em jogos independentes fora do manifesto (`generic.rs`).
-  - [x] Comandos CLI `savevault add` e `savevault list`.
-- [ ] **Interface Desktop Definitiva & System Tray (v1.0)**:
-  - Ícone na bandeja do Windows (System Tray) para monitoramento silencioso minimizado.
-  - Interface gráfica definitiva nativa (Tauri / egui) empacotada.
-- [ ] **Empacotamento & Inicialização com o Windows**:
-  - Opção para registrar inicialização automática no Windows (`HKCU\...\Run`).
-  - Criação de instalador executável para usuário final (`.msi` ou `.exe`).
-- [ ] **Provedores Secundários de Cloud (Pós-MVP)**:
-  - OneDrive (Microsoft Graph API), Dropbox, WebDAV / S3.
+- [x] **Fase 1 (Crítico)**: F-01, F-02 e F-13 corrigidos e testados.
+- [x] **Fase 2 (Alto)**: F-03, F-04, F-05, F-06 e F-07 corrigidos e testados.
+- [ ] **Fase 3 (Médio / Robustez & Segurança)**:
+  - F-08: Rotação e refresh proativo de tokens OAuth no background worker.
+  - F-09: Isolamento de escopo por token no banco de dados SQLite.
+  - F-10: Tratamento gracioso de shutdown assíncrono em conexões ativas.
+  - F-11: Sanitização de logs sensíveis em modo debug.
+  - F-12: Fallback estrito de heurística de discovery em diretórios protegidos.
+- [ ] **Fase 4 (Baixo / Polimento & Distribuição)**:
+  - F-14: Redução de footprints de dependências desnecessárias.
+  - F-15: Empacotamento de instalador `.msi` para distribuição final.

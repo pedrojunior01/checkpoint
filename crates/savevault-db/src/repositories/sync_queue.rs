@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
-use savevault_core::models::{SyncQueueItem, SyncOperation, SyncStatus};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use savevault_core::models::{SyncOperation, SyncQueueItem, SyncStatus};
+use uuid::Uuid;
 
 pub struct SyncQueueRepo<'a> {
     pub conn: &'a Connection,
@@ -33,18 +33,20 @@ impl<'a> SyncQueueRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, backup_id, operation, status, attempts, created_at
              FROM sync_queue WHERE status = 'pending'
-             ORDER BY created_at ASC LIMIT 50"
+             ORDER BY created_at ASC LIMIT 50",
         )?;
-        let items = stmt.query_map([], row_to_item)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map([], row_to_item)?;
+        let mut items = Vec::new();
+        for r in rows {
+            items.push(r?);
+        }
         Ok(items)
     }
 
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<SyncQueueItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, backup_id, operation, status, attempts, created_at
-             FROM sync_queue WHERE id = ?1"
+             FROM sync_queue WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id.to_string()], row_to_item)?;
         Ok(rows.next().transpose()?)
@@ -71,27 +73,40 @@ impl<'a> SyncQueueRepo<'a> {
         Ok(deleted)
     }
 
-
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM sync_queue WHERE id = ?1", params![id.to_string()])?;
+        self.conn.execute(
+            "DELETE FROM sync_queue WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 }
 
 fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<SyncQueueItem> {
-    let id: String = row.get(0)?;
-    let backup_id: String = row.get(1)?;
+    let id_str: String = row.get(0)?;
+    let backup_id_str: String = row.get(1)?;
     let op_str: String = row.get(2)?;
     let status_str: String = row.get(3)?;
     let attempts: i64 = row.get(4)?;
     let created_str: String = row.get(5)?;
+
+    let id = Uuid::parse_str(&id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let backup_id = Uuid::parse_str(&backup_id_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let created_at = created_str.parse::<DateTime<Utc>>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
     Ok(SyncQueueItem {
-        id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
-        backup_id: Uuid::parse_str(&backup_id).unwrap_or_else(|_| Uuid::new_v4()),
+        id,
+        backup_id,
         operation: str_to_operation(&op_str),
         status: super::backups::str_to_sync_status(&status_str),
         attempts: attempts as u32,
-        created_at: created_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at,
     })
 }
 

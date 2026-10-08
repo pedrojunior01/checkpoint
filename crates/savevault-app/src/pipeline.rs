@@ -63,19 +63,22 @@ pub fn persist_snapshot_and_sync(
         size_bytes: event.size_bytes,
         modified_at: Utc::now(),
     };
-    files_repo.upsert(&file_entry)?;
+    let saved_file = files_repo.upsert(&file_entry)?;
+
+    let mut canonical_backup = backup.clone();
+    canonical_backup.file_id = saved_file.id;
 
     let backups_repo = BackupsRepo::new(conn);
-    backups_repo.insert(backup)?;
+    backups_repo.insert(&canonical_backup)?;
 
     let mut pruned_backups = Vec::new();
     if max_versions > 0 {
-        match backups_repo.prune_old_versions(file_id, max_versions) {
+        match backups_repo.prune_old_versions(saved_file.id, max_versions) {
             Ok(pruned) => pruned_backups = pruned,
             Err(e) => {
                 tracing::warn!(
                     "Falha ao podar versões antigas do arquivo {}: {}",
-                    file_id,
+                    saved_file.id,
                     e
                 );
             }
@@ -158,18 +161,51 @@ pub async fn handle_stable_event(
         None => return Ok(None),
     };
 
-    let game_name = get_game_name(conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
+    let (game_name, loc_path) = {
+        let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(conn);
+        let games_repo = savevault_db::repositories::GamesRepo::new(conn);
+        let loc = loc_repo.find_by_id(event.save_location_id)?;
+        let gname = if let Some(ref l) = loc {
+            if let Some(g) = games_repo.find_by_id(l.game_id)? {
+                g.name
+            } else {
+                "Desconhecido".to_string()
+            }
+        } else {
+            "Desconhecido".to_string()
+        };
+        let lpath = loc.map(|l| l.path);
+        (gname, lpath)
+    };
+
+    let rel_path = loc_path
+        .as_ref()
+        .map(|base| savevault_core::path::compute_relative_path(&event.path, base));
 
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &game_name, &event.path, next_version)
+        .create_snapshot_with_relpath(
+            file_id,
+            &game_name,
+            &event.path,
+            rel_path.as_deref(),
+            next_version,
+        )
         .await?;
 
     let (item, pruned_backups) =
         persist_snapshot_and_sync(conn, file_id, event, hash, &backup, max_versions)?;
 
     for pruned in pruned_backups {
-        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+        if let Err(e) = snapshot_manager
+            .remove_snapshot_version_file(
+                file_id,
+                &game_name,
+                rel_path.as_deref().unwrap_or_else(|| Path::new("")),
+                pruned.version,
+            )
+            .await
+        {
             tracing::warn!(
                 "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
                 pruned.version,
@@ -215,21 +251,43 @@ pub async fn process_file(
         }
     };
 
-    let (file_id, next_version, game_name) = {
+    let (file_id, next_version, game_name, loc_path) = {
         let conn = db.lock().await;
         let pair = check_existing_and_next_version(&conn, &event.path, &hash)?;
         match pair {
             Some((fid, ver)) => {
-                let gname = get_game_name(&conn, event.save_location_id).unwrap_or_else(|_| "Desconhecido".to_string());
-                (fid, ver, gname)
+                let loc_repo = savevault_db::repositories::SaveLocationsRepo::new(&conn);
+                let games_repo = savevault_db::repositories::GamesRepo::new(&conn);
+                let loc = loc_repo.find_by_id(event.save_location_id)?;
+                let gname = if let Some(ref l) = loc {
+                    if let Some(g) = games_repo.find_by_id(l.game_id)? {
+                        g.name
+                    } else {
+                        "Desconhecido".to_string()
+                    }
+                } else {
+                    "Desconhecido".to_string()
+                };
+                let lpath = loc.map(|l| l.path);
+                (fid, ver, gname, lpath)
             }
             None => return Ok(None),
         }
     };
 
+    let rel_path = loc_path
+        .as_ref()
+        .map(|base| savevault_core::path::compute_relative_path(&event.path, base));
+
     let snapshot_manager = SnapshotManager::new(backup_root.to_path_buf(), max_versions);
     let backup = snapshot_manager
-        .create_snapshot(file_id, &game_name, &event.path, next_version)
+        .create_snapshot_with_relpath(
+            file_id,
+            &game_name,
+            &event.path,
+            rel_path.as_deref(),
+            next_version,
+        )
         .await?;
 
     let (item, pruned_backups) = {
@@ -238,7 +296,15 @@ pub async fn process_file(
     };
 
     for pruned in pruned_backups {
-        if let Err(e) = snapshot_manager.remove_snapshot_version(file_id, &game_name, pruned.version).await {
+        if let Err(e) = snapshot_manager
+            .remove_snapshot_version_file(
+                file_id,
+                &game_name,
+                rel_path.as_deref().unwrap_or_else(|| Path::new("")),
+                pruned.version,
+            )
+            .await
+        {
             tracing::warn!(
                 "Falha ao remover arquivo de snapshot físico versão {} de {}: {}",
                 pruned.version,
@@ -248,25 +314,84 @@ pub async fn process_file(
         }
     }
 
+    crate::notifications::notify_save_protected(&game_name, backup.version);
+
     Ok(Some((backup, item)))
+}
+
+/// Helper para executar o sync e emitir notificação Toast caso itens sejam sincronizados.
+async fn trigger_cloud_sync_with_notify(
+    db: &Arc<tokio::sync::Mutex<Connection>>,
+    backup_root: PathBuf,
+    cloud_provider: &str,
+) {
+    match savevault_sync::process_queue_active_provider_unlocked(db, backup_root, cloud_provider)
+        .await
+    {
+        Ok(count) => {
+            if count > 0 {
+                crate::notifications::notify(
+                    "SaveVault — Sincronização Concluída",
+                    format!("{} save(s) sincronizado(s) com sucesso na nuvem.", count),
+                );
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Sync em nuvem ({}) falhou: {}", cloud_provider, e);
+        }
+    }
 }
 
 /// Loop residente de processamento de eventos estáveis da aplicação.
 /// Recebe conexão compartilhada via `Arc<Mutex<Connection>>` para concorrência segura com Tokio.
 pub async fn run_pipeline(
     db: Arc<tokio::sync::Mutex<Connection>>,
+    stable_rx: mpsc::Receiver<StableFileEvent>,
+    backup_root: PathBuf,
+    max_versions: u32,
+    shutdown_rx: watch::Receiver<bool>,
+    trigger_sync: bool,
+) -> Result<()> {
+    run_pipeline_with_provider(
+        db,
+        stable_rx,
+        backup_root,
+        max_versions,
+        shutdown_rx,
+        trigger_sync,
+        "google_drive",
+    )
+    .await
+}
+
+/// Loop residente de processamento de eventos estáveis permitindo especificar o provedor de nuvem ativo.
+pub async fn run_pipeline_with_provider(
+    db: Arc<tokio::sync::Mutex<Connection>>,
     mut stable_rx: mpsc::Receiver<StableFileEvent>,
     backup_root: PathBuf,
     max_versions: u32,
     mut shutdown_rx: watch::Receiver<bool>,
     trigger_sync: bool,
+    cloud_provider: &str,
 ) -> Result<()> {
+    // Drenagem inicial de itens pendentes de sincronização sem travar o banco
+    if trigger_sync {
+        trigger_cloud_sync_with_notify(&db, backup_root.clone(), cloud_provider).await;
+    }
+
+    let mut sync_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
                     tracing::info!("Shutdown recebido no processador de eventos do pipeline.");
                     break;
+                }
+            }
+            _ = sync_interval.tick() => {
+                if trigger_sync {
+                    trigger_cloud_sync_with_notify(&db, backup_root.clone(), cloud_provider).await;
                 }
             }
             event_opt = stable_rx.recv() => {
@@ -282,13 +407,11 @@ pub async fn run_pipeline(
                         match res {
                             Ok(Some((_backup, _queue_item))) => {
                                 if trigger_sync {
-                                    let conn = db.lock().await;
-                                    if let Err(e) = savevault_sync::process_queue_google_drive(
-                                        &conn,
+                                    trigger_cloud_sync_with_notify(
+                                        &db,
                                         backup_root.clone(),
-                                    ).await {
-                                        tracing::debug!("Sync em nuvem durante evento: {}", e);
-                                    }
+                                        cloud_provider,
+                                    ).await;
                                 }
                             }
                             Ok(None) => {}
@@ -313,6 +436,77 @@ pub async fn run_pipeline(
     // Drenagem final no encerramento limpo
     while let Ok(event) = stable_rx.try_recv() {
         let _ = process_file(&db, &event, &backup_root, max_versions).await;
+    }
+
+    if trigger_sync {
+        trigger_cloud_sync_with_notify(&db, backup_root, cloud_provider).await;
+    }
+
+    Ok(())
+}
+
+/// Loop de processamento de eventos estáveis integrado com o `SyncWorker`.
+/// Cria snapshots, persiste no banco e acorda o `SyncWorker` em segundo plano para upload imediato.
+pub async fn run_pipeline_with_worker(
+    db: Arc<tokio::sync::Mutex<Connection>>,
+    mut stable_rx: mpsc::Receiver<StableFileEvent>,
+    backup_root: PathBuf,
+    max_versions: u32,
+    mut shutdown_rx: watch::Receiver<bool>,
+    sync_worker: Option<Arc<crate::sync_worker::SyncWorker>>,
+) -> Result<()> {
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("Shutdown recebido no processador de eventos do pipeline.");
+                    break;
+                }
+            }
+            event_opt = stable_rx.recv() => {
+                match event_opt {
+                    Some(event) => {
+                        let res = process_file(
+                            &db,
+                            &event,
+                            &backup_root,
+                            max_versions,
+                        ).await;
+
+                        match res {
+                            Ok(Some((_backup, _queue_item))) => {
+                                if let Some(ref worker) = sync_worker {
+                                    worker.notify_new_item();
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::error!(
+                                    "Erro processando evento de {}: {}",
+                                    event.path.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::info!("Canal de eventos estáveis foi encerrado.");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Drenagem final no encerramento limpo
+    while let Ok(event) = stable_rx.try_recv() {
+        if let Ok(Some((_backup, _queue_item))) =
+            process_file(&db, &event, &backup_root, max_versions).await
+        {
+            if let Some(ref worker) = sync_worker {
+                worker.notify_new_item();
+            }
+        }
     }
 
     Ok(())

@@ -15,6 +15,12 @@ path = "src/main.rs"
 name = "scan_report"
 path = "src/bin/scan_report.rs"
 
+[features]
+# Feature 'desktop' habilita a GUI nativa via Tauri 2.
+# Sem essa feature, o binário funciona normalmente como CLI/headless.
+# Isso garante que 'cargo test --workspace' nunca precise do runtime gráfico.
+desktop = ["tauri", "tauri-build"]
+
 [dependencies]
 savevault-core = { path = "../savevault-core" }
 savevault-db = { path = "../savevault-db" }
@@ -37,8 +43,19 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 dotenvy = "0.15.7"
 
+[target.'cfg(windows)'.dependencies]
+tray-item = "0.10.0"
+windows-sys = { version = "0.52", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Foundation", "Win32_Security"] }
+winrt-notification = "0.5.1"
+
+# Tauri — só incluída quando a feature 'desktop' está ativa
+tauri = { workspace = true, optional = true }
+
+[build-dependencies]
+# tauri-build só compila quando 'desktop' está ativa
+tauri-build = { workspace = true, optional = true }
+winres = "0.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }
 async-trait = "0.1"
-

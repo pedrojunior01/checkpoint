@@ -2,9 +2,15 @@
 //! Verifica as pastas padrão de dados de cada emulador.
 
 use anyhow::Result;
-use savevault_core::models::{Confidence, Game, Platform};
+use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use std::path::PathBuf;
 use tracing::debug;
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredEmulator {
+    pub game: Game,
+    pub save_locations: Vec<SaveLocation>,
+}
 
 #[derive(Default)]
 pub struct EmulatorDetector;
@@ -15,18 +21,29 @@ impl EmulatorDetector {
     }
 
     pub async fn detect(&self) -> Result<Vec<Game>> {
+        let emus = self.detect_with_locations().await?;
+        Ok(emus.into_iter().map(|e| e.game).collect())
+    }
+
+    pub async fn detect_with_locations(&self) -> Result<Vec<DiscoveredEmulator>> {
         let mut results = Vec::new();
 
         for (platform, name, paths) in emulator_profiles() {
             for path in paths {
                 if path.exists() {
                     debug!("{} encontrado em: {}", name, path.display());
-                    results.push(Game::new(
+                    let game = Game::new(
                         format!("{} (Emulador)", name),
                         platform.clone(),
                         None,
                         Confidence::High,
-                    ));
+                    );
+                    let location =
+                        SaveLocation::new(game.id, path.clone(), SaveLocationType::Directory);
+                    results.push(DiscoveredEmulator {
+                        game,
+                        save_locations: vec![location],
+                    });
                     break; // Uma entrada por emulador
                 }
             }
@@ -84,4 +101,18 @@ fn get_documents_dir() -> String {
     // Tenta via USERPROFILE\Documents (fallback simples)
     let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
     format!("{}\\Documents", userprofile)
+}
+
+/// Retorna emuladores que possuem pastas existentes no sistema.
+pub fn find_installed_emulators() -> Vec<(String, PathBuf)> {
+    let mut found = Vec::new();
+    for (_, name, paths) in emulator_profiles() {
+        for path in paths {
+            if path.exists() {
+                found.push((name.to_string(), path));
+                break;
+            }
+        }
+    }
+    found
 }
