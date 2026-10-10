@@ -333,7 +333,7 @@ fn should_skip_dir(path: &Path, root: &Path) -> bool {
 /// Infere o nome de um jogo pelo nome da pasta-pai da pasta de saves.
 ///
 /// Ex: `Documents/The Witcher 3/saves/` → "The Witcher 3"
-fn infer_game_name(save_path: &Path) -> String {
+pub fn infer_game_name(save_path: &Path) -> String {
     // Tenta subir na hierarquia para encontrar um nome de jogo significativo
     let mut current = save_path;
 
@@ -344,14 +344,17 @@ fn infer_game_name(save_path: &Path) -> String {
             .unwrap_or("")
             .to_string();
 
-        // Se o nome da pasta é um hint de save (ex: "saves"), sobe um nível
-        if SAVE_DIR_HINTS.iter().any(|h| name.to_lowercase().contains(h)) {
+        let is_numeric = !name.is_empty() && name.chars().all(|c| c.is_ascii_digit());
+        let has_save_hint = SAVE_DIR_HINTS.iter().any(|h| name.to_lowercase().contains(h));
+
+        // Se o nome da pasta é puramente numérico (ex: "0", "1", slot de save) ou um hint de save (ex: "saves"), sobe um nível
+        if is_numeric || has_save_hint {
             match current.parent() {
-                Some(p) => {
+                Some(p) if p != current => {
                     current = p;
                     continue;
                 }
-                None => break,
+                _ => break,
             }
         }
 
@@ -442,6 +445,12 @@ mod tests {
     fn infer_game_name_strips_save_folder_name() {
         let path = PathBuf::from(r"C:\Users\foo\Documents\Hollow Knight\saves");
         assert_eq!(infer_game_name(&path), "Hollow Knight");
+    }
+
+    #[test]
+    fn infer_game_name_skips_numeric_slot_and_save_dir() {
+        let path = PathBuf::from(r"C:\Users\foo\AppData\Roaming\10tons\DYSMANTLE\save\0");
+        assert_eq!(infer_game_name(&path), "DYSMANTLE");
     }
 
     #[test]

@@ -61,6 +61,14 @@ impl<'a> GamesRepo<'a> {
         Ok(games)
     }
 
+    pub fn update_name(&self, id: Uuid, name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE games SET name = ?1 WHERE id = ?2",
+            params![name, id.to_string()],
+        )?;
+        Ok(())
+    }
+
     pub fn delete(&self, id: Uuid) -> Result<()> {
         self.conn.execute("DELETE FROM games WHERE id = ?1", params![id.to_string()])?;
         Ok(())

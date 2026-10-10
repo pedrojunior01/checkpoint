@@ -207,6 +207,7 @@ pub struct DevUiState {
     last_reconciliation_report: Mutex<Option<ReconciliationReport>>,
     last_reconcile_time: Mutex<Option<DateTime<Utc>>>,
     pub sync_worker: Mutex<Option<Arc<crate::sync_worker::SyncWorker>>>,
+    pub steam_cover_cache: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl DevUiState {
@@ -217,6 +218,15 @@ impl DevUiState {
         reconciler: Option<Arc<Reconciler>>,
         reconciliation_interval: Duration,
     ) -> Self {
+        let initial_covers = {
+            let cache_file = db_path.parent().unwrap_or(std::path::Path::new(".")).join("steam_covers.json");
+            if let Ok(c) = std::fs::read_to_string(&cache_file) {
+                serde_json::from_str(&c).unwrap_or_default()
+            } else {
+                std::collections::HashMap::new()
+            }
+        };
+
         Self {
             db,
             db_path,
@@ -231,6 +241,7 @@ impl DevUiState {
             last_reconciliation_report: Mutex::new(None),
             last_reconcile_time: Mutex::new(None),
             sync_worker: Mutex::new(None),
+            steam_cover_cache: std::sync::Mutex::new(initial_covers),
         }
     }
 
@@ -238,6 +249,59 @@ impl DevUiState {
     pub async fn set_sync_worker(&self, worker: Arc<crate::sync_worker::SyncWorker>) {
         let mut lock = self.sync_worker.lock().await;
         *lock = Some(worker);
+    }
+
+    /// Salva o cache de capas no disco de forma resiliente (config_dir/steam_covers.json)
+    pub fn persist_cover_cache(&self) {
+        let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache_file = self.db_path.parent().unwrap_or(std::path::Path::new(".")).join("steam_covers.json");
+        if let Ok(json) = serde_json::to_string_pretty(&*lock) {
+            let _ = std::fs::write(cache_file, json);
+        }
+    }
+
+    /// Resolve a capa oficial de um jogo Steam via cache ou consulta a API publica do Steam
+    pub async fn resolve_steam_cover(&self, app_id: &str) -> Option<String> {
+        if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+
+        // 1. Verifica cache em memória
+        {
+            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = lock.get(app_id) {
+                return Some(cached.clone());
+            }
+        }
+
+        // 2. Consulta API pública do Steam (https://store.steampowered.com/api/appdetails?appids=...)
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(3500))
+            .build()
+            .ok()?;
+
+        let api_url = format!("https://store.steampowered.com/api/appdetails?appids={}&filters=basic", app_id);
+        if let Ok(resp) = client.get(&api_url).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(data) = json.get(app_id).and_then(|v| v.get("data")) {
+                    if let Some(header_img) = data.get("header_image").and_then(|v| v.as_str()) {
+                        let final_url = header_img.to_string();
+                        {
+                            let mut lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+                            lock.insert(app_id.to_string(), final_url.clone());
+                        }
+                        self.persist_cover_cache();
+                        return Some(final_url);
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback clássico
+        Some(format!(
+            "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
+            app_id
+        ))
     }
 
     /// Registra um evento no log em memória da DEV-UI.
@@ -370,6 +434,11 @@ impl DevUiState {
 
     /// Retorna a lista de SaveLocations para a aba de Localizações.
     pub async fn get_locations(&self) -> Result<Vec<LocationView>> {
+        let cached_covers = {
+            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            lock.clone()
+        };
+
         let conn = self.db.lock().await;
         let loc_repo = SaveLocationsRepo::new(&conn);
         let games_repo = GamesRepo::new(&conn);
@@ -380,10 +449,22 @@ impl DevUiState {
 
         for loc in locations {
             let game = games_repo.find_by_id(loc.game_id).unwrap_or(None);
-            let game_name = game
+            let mut game_name = game
                 .as_ref()
                 .map(|g| g.name.clone())
                 .unwrap_or_else(|| "Desconhecido".into());
+
+            // Auto-recuperação caso o nome armazenado anteriormente seja numérico (ex: pasta de slot "0")
+            if game_name.chars().all(|c| c.is_ascii_digit()) || game_name == "0" {
+                let inferred = savevault_discovery::generic::infer_game_name(&loc.path);
+                if !inferred.is_empty() && !inferred.chars().all(|c| c.is_ascii_digit()) {
+                    if let Some(ref g) = game {
+                        let _ = games_repo.update_name(g.id, &inferred);
+                    }
+                    game_name = inferred;
+                }
+            }
+
             let platform = game
                 .as_ref()
                 .map(|g| format!("{:?}", g.platform))
@@ -392,24 +473,31 @@ impl DevUiState {
             let exists_on_disk = loc.path.exists();
             let files = files_repo.list_by_location(loc.id).unwrap_or_default();
 
-            let cover_url = if let Some(ref g) = game {
+            // Resolução de capa do jogo:
+            // 1. Se Steam, usa platform_id.
+            // 2. Se DYSMANTLE, associa com AppID 846770.
+            let steam_id = if let Some(ref g) = game {
                 if g.platform == Platform::Steam {
-                    g.platform_id.as_deref().and_then(|id| {
-                        if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
-                            Some(format!(
-                                "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
-                                id
-                            ))
-                        } else {
-                            None
-                        }
-                    })
+                    g.platform_id.as_deref().filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+                } else if game_name.eq_ignore_ascii_case("DYSMANTLE") {
+                    Some("846770")
                 } else {
                     None
                 }
             } else {
                 None
             };
+
+            let cover_url = steam_id.map(|id| {
+                if let Some(cached_url) = cached_covers.get(id) {
+                    cached_url.clone()
+                } else {
+                    format!(
+                        "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
+                        id
+                    )
+                }
+            });
 
             views.push(LocationView {
                 id: loc.id,
@@ -924,9 +1012,20 @@ impl DevUiState {
         let effective_provider = if config.cloud.provider == "none" {
             "none".to_string()
         } else if !local_path.is_empty() {
-            if local_path.to_lowercase().contains("onedrive") {
+            let lower = local_path.to_lowercase();
+            if lower.contains("onedrive") {
                 "onedrive".to_string()
-            } else if local_path.to_lowercase().contains("google") {
+            } else if lower.contains("google")
+                || lower.contains("drive")
+                || lower.contains("meu drive")
+                || lower.starts_with("g:")
+                || lower.starts_with("h:")
+                || detected.iter().any(|d| {
+                    d.provider_type == "google_drive"
+                        && (lower.starts_with(&d.sync_folder.to_string_lossy().to_lowercase())
+                            || lower.starts_with(&d.savevault_folder.to_string_lossy().to_lowercase()))
+                })
+            {
                 "google_drive".to_string()
             } else {
                 config.cloud.provider

@@ -41,6 +41,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
 dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.dependencies]

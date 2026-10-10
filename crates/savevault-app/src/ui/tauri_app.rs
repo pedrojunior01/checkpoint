@@ -293,6 +293,14 @@ pub async fn update_cloud_config(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn resolve_game_cover(
+    state: State<'_, Arc<DevUiState>>,
+    app_id: String,
+) -> Result<Option<String>, String> {
+    Ok(state.resolve_steam_cover(&app_id).await)
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -327,6 +335,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             export_backup_zip,
             get_cloud_config,
             update_cloud_config,
+            resolve_game_cover,
         ])
         .setup(|app| {
             // Mostra janela e dá foco

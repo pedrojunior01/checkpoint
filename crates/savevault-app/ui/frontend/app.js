@@ -174,6 +174,28 @@ document.getElementById("link-ver-todos")?.addEventListener("click", (e) => {
 
 // ── Aba: Início ───────────────────────────────────────────────────────────────
 
+// Ícones vetoriais SVG oficiais dos provedores de nuvem
+const SVG_GDRIVE = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;" viewBox="0 0 24 24" fill="none"><path d="M4.5 20l4.5-8 4.5 8H4.5z" fill="#34A853"/><path d="M12 4l4.5 8H7.5L12 4z" fill="#4285F4"/><path d="M16.5 4l4.5 8-4.5 8-4.5-8 4.5-8z" fill="#FBBC04"/></svg>`;
+const SVG_ONEDRIVE = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;color:#0078D4;" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>`;
+const SVG_CLOUD_WARN = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;color:#d97706;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+
+// Resolução de imagem de capa quando a URL estática 404
+window.handleCoverError = async function(img, appId, initials, gradClass) {
+    if (appId && !img.dataset.retried) {
+        img.dataset.retried = "1";
+        try {
+            const resolvedUrl = await invoke("resolve_game_cover", { appId });
+            if (resolvedUrl && resolvedUrl !== img.src) {
+                img.src = resolvedUrl;
+                return;
+            }
+        } catch (_) {}
+    }
+    const isSmall = img.classList.contains("game-cover-art-sm");
+    const styleAttr = isSmall ? 'style="width:38px;height:38px;"' : 'style="width:44px;height:44px;font-size:14px;"';
+    img.outerHTML = `<div class="game-avatar ${gradClass}" ${styleAttr}>${initials}</div>`;
+};
+
 async function updateCloudBadge() {
     try {
         const cloudCfg = await invoke("get_cloud_config");
@@ -185,25 +207,33 @@ async function updateCloudBadge() {
 
         badgeEl.classList.remove("cloud-badge-onedrive", "cloud-badge-gdrive", "cloud-badge-warning");
 
+        const syncPath = (cloudCfg.local_sync_path || "").toLowerCase();
+        const isOneDrive = (cloudCfg.provider === "onedrive") || syncPath.includes("onedrive");
+        const isGDrive = (cloudCfg.provider === "google_drive") 
+            || syncPath.includes("google") 
+            || syncPath.includes("drive") 
+            || syncPath.includes("meu drive") 
+            || syncPath.startsWith("g:") 
+            || syncPath.startsWith("h:");
+
         if (cloudCfg.enabled) {
-            const isOneDrive = (cloudCfg.provider === "onedrive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("onedrive");
-            const isGDrive = (cloudCfg.provider === "google_drive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("google");
-            
-            if (isOneDrive) {
-                if (iconEl) iconEl.textContent = "☁️";
-                if (textEl) textEl.textContent = "OneDrive";
-                badgeEl.classList.add("cloud-badge-onedrive");
-            } else if (isGDrive) {
-                if (iconEl) iconEl.textContent = "📁";
+            if (isGDrive) {
+                if (iconEl) iconEl.innerHTML = SVG_GDRIVE;
                 if (textEl) textEl.textContent = "Google Drive";
                 badgeEl.classList.add("cloud-badge-gdrive");
+                badgeEl.title = `Google Drive Conectado em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
+            } else if (isOneDrive) {
+                if (iconEl) iconEl.innerHTML = SVG_ONEDRIVE;
+                if (textEl) textEl.textContent = "OneDrive";
+                badgeEl.classList.add("cloud-badge-onedrive");
+                badgeEl.title = `Microsoft OneDrive Conectado em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             } else {
-                if (iconEl) iconEl.textContent = "📁";
-                if (textEl) textEl.textContent = "Pasta Local";
+                if (iconEl) iconEl.innerHTML = SVG_GDRIVE;
+                if (textEl) textEl.textContent = "Sincronizado";
+                badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             }
-            badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}`;
         } else {
-            if (iconEl) iconEl.textContent = "⚠️";
+            if (iconEl) iconEl.innerHTML = SVG_CLOUD_WARN;
             if (textEl) textEl.textContent = "Nuvem Inativa";
             badgeEl.classList.add("cloud-badge-warning");
             badgeEl.title = "Clique para configurar a sincronização em nuvem";
@@ -259,9 +289,10 @@ function renderJogosRecentes(locations) {
     container.innerHTML = locations.map((loc, i) => {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
+        const appId = (loc.cover_url?.match(/\/apps\/(\d+)\//)?.[1]) || "";
         const avatarHtml = loc.cover_url
-            ? `<img src="${loc.cover_url}" class="game-cover-art" style="width:38px;height:38px;" onerror="this.outerHTML='<div class=\\'game-avatar ${gradClass}\\'>${initials}</div>'" alt="${loc.game_name}" />`
-            : `<div class="game-avatar ${gradClass}">${initials}</div>`;
+            ? `<img src="${loc.cover_url}" class="game-cover-art game-cover-art-sm" style="width:38px;height:38px;" onerror="window.handleCoverError(this, '${appId}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
+            : `<div class="game-avatar ${gradClass}" style="width:38px;height:38px;">${initials}</div>`;
 
         return `
         <div class="game-item game-card-clickable" onclick="window.openGameDetails('${loc.id}')">
@@ -315,8 +346,9 @@ function renderJogosList(query = "") {
     container.innerHTML = filtered.map((loc, i) => {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
+        const appId = (loc.cover_url?.match(/\/apps\/(\d+)\//)?.[1]) || "";
         const avatarHtml = loc.cover_url
-            ? `<img src="${loc.cover_url}" class="game-cover-art" onerror="this.outerHTML='<div class=\\'game-avatar ${gradClass}\\' style=\\'width:44px;height:44px;font-size:14px;\\'>${initials}</div>'" alt="${loc.game_name}" />`
+            ? `<img src="${loc.cover_url}" class="game-cover-art" onerror="window.handleCoverError(this, '${appId}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
             : `<div class="game-avatar ${gradClass}" style="width:44px;height:44px;font-size:14px;">${initials}</div>`;
 
         return `
@@ -522,7 +554,12 @@ async function loadNuvem() {
         const prov = cachedCloudConfig.provider;
         const localPath = cachedCloudConfig.local_sync_path || "";
         const isOneDrive = (prov === "onedrive") || localPath.toLowerCase().includes("onedrive");
-        const isGDrive = (prov === "google_drive") || localPath.toLowerCase().includes("google");
+        const isGDrive = (prov === "google_drive")
+            || localPath.toLowerCase().includes("google")
+            || localPath.toLowerCase().includes("drive")
+            || localPath.toLowerCase().includes("meu drive")
+            || localPath.toLowerCase().startsWith("g:")
+            || localPath.toLowerCase().startsWith("h:");
 
         const provName = isOneDrive ? "Microsoft OneDrive" :
                          isGDrive ? "Google Drive" :
@@ -530,7 +567,7 @@ async function loadNuvem() {
 
         const isConnected = cachedCloudConfig.enabled;
         const iconBg = isConnected ? (isOneDrive ? "#e0f2fe" : "#dcfce7") : "#f1f5f9";
-        const iconColor = isConnected ? "☁️" : "📁";
+        const iconHtml = isGDrive ? SVG_GDRIVE : isOneDrive ? SVG_ONEDRIVE : "📁";
 
         const oneDriveDetected = (cachedCloudConfig.detected_folders || []).find(
             f => (f.provider_type === "onedrive") || (f.name || "").toLowerCase().includes("onedrive")
@@ -553,7 +590,7 @@ async function loadNuvem() {
             <div class="content-card" style="display:flex;flex-direction:column;gap:14px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div style="display:flex;align-items:center;gap:12px;">
-                        <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:20px;">${iconColor}</div>
+                        <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:20px;">${iconHtml}</div>
                         <div>
                             <p style="font-size:14px;font-weight:600;" class="game-name">${provName}</p>
                             <p style="font-size:12px;color:${isConnected ? "#10b981" : "#64748b"};font-weight:500;">
@@ -608,7 +645,11 @@ window.openCloudModal = function() {
                 const safePath = targetFolder.replace(/\\/g, "\\\\");
                 const provType = f.provider_type || f.provider || "onedrive";
                 const isOneDrive = provType === "onedrive" || targetFolder.toLowerCase().includes("onedrive");
-                const icon = isOneDrive ? "☁️" : "📁";
+                const isGDrive = provType === "google_drive"
+                    || targetFolder.toLowerCase().includes("google")
+                    || targetFolder.toLowerCase().includes("drive")
+                    || targetFolder.toLowerCase().includes("meu drive");
+                const icon = isGDrive ? SVG_GDRIVE : isOneDrive ? SVG_ONEDRIVE : "📁";
                 return `
                 <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${provType}', '${safePath}')">
                     <div style="display:flex;align-items:center;gap:10px;">
