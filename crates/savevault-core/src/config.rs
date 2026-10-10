@@ -28,8 +28,11 @@ fn default_reconciliation_interval_secs() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudConfig {
-    /// Provedor ativo: "google_drive" (MVP). Outros pós-MVP.
+    /// Provedor ativo: "google_drive", "onedrive", "local_folder", "none"
     pub provider: String,
+    /// Caminho da pasta de sincronização local da nuvem (ex.: C:\Users\...\OneDrive\SaveVault)
+    #[serde(default)]
+    pub local_sync_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +54,8 @@ impl Default for Config {
                 reconciliation_interval_secs: 30,
             },
             cloud: CloudConfig {
-                provider: "google_drive".into(),
+                provider: "local_folder".into(),
+                local_sync_path: None,
             },
             paths: PathsConfig {
                 backup_dir: base.join("backups"),

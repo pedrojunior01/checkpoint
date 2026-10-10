@@ -346,7 +346,7 @@ fn test_cli_restore_binary_execution() {
     assert!(stderr_invalid.contains("[FALHA] ID de snapshot inválido: 'not-a-uuid'"));
 }
 
-fn backup_root_dir(backup_root: &std::path::Path, file_id: Uuid, version: u32) -> PathBuf {
+fn backup_root_dir(backup_root: &std::path::Path, _file_id: Uuid, version: u32) -> PathBuf {
     backup_root
         .join("RPG Hero")
         .join(format!("v{}", version))

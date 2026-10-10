@@ -79,6 +79,14 @@ fn main() -> anyhow::Result<()> {
 fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     use std::sync::Arc;
 
+    let _single_instance = match savevault_app::SingleInstanceGuard::acquire("Local\\SaveVault_checkpoint_Mutex") {
+        Some(guard) => guard,
+        None => {
+            eprintln!("checkpoint já está em execução no sistema.");
+            return Ok(());
+        }
+    };
+
     dotenvy::dotenv().ok();
 
     // Inicializa tracing

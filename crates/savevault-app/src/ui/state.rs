@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocationType};
 use savevault_db::repositories::{FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo};
 use savevault_monitor::scanner::SaveScanner;
 
@@ -74,6 +75,8 @@ pub struct LocationView {
     pub exists_on_disk: bool,
     pub monitored_files_count: usize,
     pub last_check: String,
+    #[serde(default)]
+    pub cover_url: Option<String>,
 }
 
 /// Arquivo físico descoberto durante varredura manual.
@@ -162,6 +165,31 @@ pub struct RestoreApiResponse {
     pub bytes_restored: Option<u64>,
     pub error: Option<String>,
     pub details: Option<String>,
+}
+
+/// Resultado da otimização preventiva e limpeza do banco SQLite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationResult {
+    pub purged_sync_items: usize,
+    pub db_size_bytes: u64,
+    pub db_size_formatted: String,
+}
+
+/// Resultado da exportação do pacote de backup em arquivo .ZIP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub export_path: String,
+    pub file_size_bytes: u64,
+    pub file_size_formatted: String,
+}
+
+/// Configurações detalhadas da nuvem para a UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudConfigView {
+    pub provider: String,
+    pub local_sync_path: String,
+    pub enabled: bool,
+    pub detected_folders: Vec<savevault_cloud::DetectedCloudFolder>,
 }
 
 /// Estado compartilhado e thread-safe da DEV-UI.
@@ -356,6 +384,25 @@ impl DevUiState {
             let exists_on_disk = loc.path.exists();
             let files = files_repo.list_by_location(loc.id).unwrap_or_default();
 
+            let cover_url = if let Some(ref g) = game {
+                if g.platform == Platform::Steam {
+                    g.platform_id.as_deref().and_then(|id| {
+                        if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                            Some(format!(
+                                "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
+                                id
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             views.push(LocationView {
                 id: loc.id,
                 game_id: loc.game_id,
@@ -366,6 +413,7 @@ impl DevUiState {
                 exists_on_disk,
                 monitored_files_count: files.len(),
                 last_check: Utc::now().format("%H:%M:%S").to_string(),
+                cover_url,
             });
         }
 
@@ -787,6 +835,240 @@ impl DevUiState {
                 }
             }
         }
+    }
+
+    fn config_path(&self) -> PathBuf {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+        PathBuf::from(appdata).join("SaveVault").join("config.toml")
+    }
+
+    /// Cadastra um jogo e local de save manualmente através da UI.
+    pub async fn add_game(&self, name: &str, path_str: &str) -> Result<LocationView> {
+        let raw_path = PathBuf::from(path_str);
+        let location_type = if raw_path.is_file() {
+            SaveLocationType::File
+        } else {
+            SaveLocationType::Directory
+        };
+
+        let (game_id, loc) = {
+            let conn = self.db.lock().await;
+            let games_repo = GamesRepo::new(&conn);
+            let locations_repo = SaveLocationsRepo::new(&conn);
+
+            let (game_id, _game) = if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(name, &Platform::Generic)
+            {
+                (existing.id, existing)
+            } else {
+                let game = Game::new(name, Platform::Generic, None, Confidence::High);
+                games_repo.insert(&game)?;
+                (game.id, game)
+            };
+
+            let loc = SaveLocation::new(game_id, raw_path.clone(), location_type);
+            let saved_loc = locations_repo.upsert(&loc)?;
+
+            (game_id, saved_loc)
+        };
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!("Jogo manual '{}' cadastrado com sucesso", name),
+            Some(raw_path.display().to_string()),
+        )
+        .await;
+
+        Ok(LocationView {
+            id: loc.id,
+            game_id,
+            game_name: name.to_string(),
+            platform: "Generic".to_string(),
+            path: raw_path.display().to_string(),
+            location_type: format!("{:?}", loc.location_type),
+            exists_on_disk: raw_path.exists(),
+            monitored_files_count: 0,
+            last_check: Utc::now().format("%H:%M:%S").to_string(),
+            cover_url: None,
+        })
+    }
+
+    /// Retorna as configurações atuais de nuvem.
+    pub async fn get_cloud_config(&self) -> Result<CloudConfigView> {
+        let config_path = self.config_path();
+        let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+        let detected = savevault_cloud::detect_cloud_folders();
+        let local_path = config
+            .cloud
+            .local_sync_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+
+        let enabled = config.cloud.provider != "none" && !local_path.is_empty();
+
+        Ok(CloudConfigView {
+            provider: config.cloud.provider,
+            local_sync_path: local_path,
+            enabled,
+            detected_folders: detected,
+        })
+    }
+
+    /// Atualiza as configurações de nuvem.
+    pub async fn update_cloud_config(
+        &self,
+        provider: Option<String>,
+        local_sync_path: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<CloudConfigView> {
+        let config_path = self.config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        if let Some(p) = provider {
+            config.cloud.provider = p;
+        }
+
+        if let Some(lsp) = local_sync_path {
+            let trimmed = lsp.trim();
+            if !trimmed.is_empty() {
+                let pb = PathBuf::from(trimmed);
+                let _ = std::fs::create_dir_all(&pb);
+                config.cloud.local_sync_path = Some(pb);
+            }
+        }
+
+        if let Some(en) = enabled {
+            if !en {
+                config.cloud.provider = "none".to_string();
+            } else if config.cloud.provider == "none" {
+                config.cloud.provider = "local_folder".to_string();
+            }
+        }
+
+        config.save(&config_path)?;
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Configurações de nuvem atualizadas".to_string(),
+            Some(format!(
+                "Provedor: {}, Pasta: {:?}",
+                config.cloud.provider, config.cloud.local_sync_path
+            )),
+        )
+        .await;
+
+        self.get_cloud_config().await
+    }
+
+    /// Executa manutenção preventiva no banco de dados SQLite (pruning de sync_queue antigas e VACUUM).
+    pub async fn optimize_database(&self) -> Result<OptimizationResult> {
+        let mut purged = 0;
+        {
+            let db = self.db.lock().await;
+            let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+            let deleted = db.execute(
+                "DELETE FROM sync_queue WHERE status = 'synced' OR (attempts >= 5 AND created_at < ?1)",
+                rusqlite::params![cutoff.to_rfc3339()],
+            )?;
+            purged += deleted;
+            db.execute("VACUUM", [])?;
+        }
+
+        let size = std::fs::metadata(&self.db_path).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Otimização do banco concluída. {} itens antigos limpos. Tamanho atual: {}",
+                purged, size_formatted
+            ),
+            None,
+        )
+        .await;
+
+        Ok(OptimizationResult {
+            purged_sync_items: purged,
+            db_size_bytes: size,
+            db_size_formatted: size_formatted,
+        })
+    }
+
+    /// Cria um backup completo compactado (.ZIP) de todos os saves monitorados e snapshots.
+    pub async fn export_backup_zip(&self) -> Result<ExportResult> {
+        let backup_dir = &self.backup_root;
+
+        if !backup_dir.exists() {
+            anyhow::bail!("O diretório de backups ainda não foi criado ou não contém dados.");
+        }
+
+        // Determina destino padrão (Downloads do usuário ou diretório corrente)
+        let downloads_dir = std::env::var("USERPROFILE")
+            .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+
+        if !downloads_dir.exists() {
+            let _ = std::fs::create_dir_all(&downloads_dir);
+        }
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let zip_file_name = format!("checkpoint_backup_{}.zip", timestamp);
+        let target_zip = downloads_dir.join(&zip_file_name);
+
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        backup_dir.display(),
+                        target_zip.display()
+                    ),
+                ])
+                .output()?;
+
+            if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Falha ao gerar arquivo ZIP: {}", err);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let output = std::process::Command::new("zip")
+                .args([
+                    "-r",
+                    target_zip.to_str().unwrap(),
+                    backup_dir.to_str().unwrap(),
+                ])
+                .output()?;
+            if !output.status.success() {
+                anyhow::bail!("Falha ao compactar arquivo no Linux/macOS");
+            }
+        }
+
+        let size = std::fs::metadata(&target_zip).map(|m| m.len()).unwrap_or(0);
+        let size_formatted = format_bytes(size);
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!(
+                "Backup manual exportado com sucesso: {} ({})",
+                zip_file_name, size_formatted
+            ),
+            Some(target_zip.display().to_string()),
+        )
+        .await;
+
+        Ok(ExportResult {
+            export_path: target_zip.display().to_string(),
+            file_size_bytes: size,
+            file_size_formatted: size_formatted,
+        })
     }
 }
 

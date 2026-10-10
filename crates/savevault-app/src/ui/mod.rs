@@ -8,9 +8,9 @@ pub mod state;
 pub mod tauri_app;
 
 pub use state::{
-    DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView, LocationView,
-    ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SafetyBackupItem,
-    ScanLocationResult, SnapshotView,
+    CloudConfigView, DashboardSummary, DevUiEvent, DevUiEventLevel, DevUiState, DiscoveredFileView,
+    ExportResult, LocationView, OptimizationResult, ReconciliationView, RestoreApiResponse,
+    SafetyBackupGroup, SafetyBackupItem, ScanLocationResult, SnapshotView,
 };
 
 use std::net::SocketAddr;

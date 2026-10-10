@@ -15,7 +15,7 @@ mod tests {
             assert_eq!(cfg.general.max_versions, 10);
             assert_eq!(cfg.general.log_level, "info");
             assert!(cfg.general.debounce_ms > 0);
-            assert_eq!(cfg.cloud.provider, "google_drive");
+            assert_eq!(cfg.cloud.provider, "local_folder");
         }
 
         #[test]

@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use savevault_core::config::Config;
 use crate::ui::state::{
-    DashboardSummary, DevUiState, LocationView, ReconciliationView, RestoreApiResponse,
-    SafetyBackupGroup, SnapshotView,
+    CloudConfigView, DashboardSummary, DevUiState, ExportResult, LocationView, OptimizationResult,
+    ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SnapshotView,
 };
 
 // ── Utilitário de Limpeza de Memória (Working Set Trim) ───────────────────────
@@ -71,6 +71,8 @@ pub struct ConfigDto {
     pub log_level: String,
     pub backup_dir: String,
     pub database_path: String,
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 fn config_path() -> PathBuf {
@@ -82,6 +84,7 @@ fn config_path() -> PathBuf {
 pub fn get_config() -> Result<ConfigDto, String> {
     let path = config_path();
     let cfg = Config::load(&path).map_err(|e| e.to_string())?;
+    let autostart = savevault_core::autostart::is_enabled().unwrap_or(false);
     Ok(ConfigDto {
         max_versions: cfg.general.max_versions,
         debounce_ms: cfg.general.debounce_ms,
@@ -89,6 +92,7 @@ pub fn get_config() -> Result<ConfigDto, String> {
         log_level: cfg.general.log_level,
         backup_dir: cfg.paths.backup_dir.to_string_lossy().to_string(),
         database_path: cfg.paths.database_path.to_string_lossy().to_string(),
+        autostart,
     })
 }
 
@@ -104,6 +108,13 @@ pub fn save_config(new_cfg: ConfigDto) -> Result<String, String> {
     cfg.paths.backup_dir = PathBuf::from(new_cfg.backup_dir);
     
     cfg.save(&path).map_err(|e| format!("Erro ao salvar arquivo de configuração: {}", e))?;
+
+    if new_cfg.autostart {
+        let _ = savevault_core::autostart::enable(None);
+    } else {
+        let _ = savevault_core::autostart::disable();
+    }
+
     Ok("Configurações salvas com sucesso!".into())
 }
 
@@ -123,6 +134,11 @@ pub fn open_path_in_explorer(path: String) -> Result<(), String> {
             .map_err(|e| format!("Não foi possível abrir o Explorer: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_folder(path: String) -> Result<(), String> {
+    open_path_in_explorer(path)
 }
 
 // ── Data & Action Commands ───────────────────────────────────────────────────
@@ -181,6 +197,49 @@ pub async fn restore_snapshot(
     Ok(state.trigger_restore(id, None).await)
 }
 
+#[tauri::command]
+pub async fn add_game(
+    state: State<'_, Arc<DevUiState>>,
+    name: String,
+    path: String,
+) -> Result<LocationView, String> {
+    state.add_game(&name, &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn optimize_database(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<OptimizationResult, String> {
+    state.optimize_database().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_backup_zip(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<ExportResult, String> {
+    state.export_backup_zip().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cloud_config(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<CloudConfigView, String> {
+    state.get_cloud_config().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_cloud_config(
+    state: State<'_, Arc<DevUiState>>,
+    provider: Option<String>,
+    local_sync_path: Option<String>,
+    enabled: Option<bool>,
+) -> Result<CloudConfigView, String> {
+    state
+        .update_cloud_config(provider, local_sync_path, enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── App Setup ────────────────────────────────────────────────────────────────
 
 /// Executa a interface gráfica Tauri integrada ao processo residente.
@@ -202,6 +261,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_config,
             save_config,
             open_path_in_explorer,
+            open_folder,
             get_dashboard_status,
             get_locations,
             get_snapshots,
@@ -209,6 +269,11 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_reconciliation_status,
             trigger_reconcile,
             restore_snapshot,
+            add_game,
+            optimize_database,
+            export_backup_zip,
+            get_cloud_config,
+            update_cloud_config,
         ])
         .setup(|app| {
             // Mostra janela e dá foco

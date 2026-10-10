@@ -43,8 +43,10 @@ struct MockCloud {
 
 #[async_trait]
 impl CloudProvider for MockCloud {
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> Result<String> {
-        let content = tokio::fs::read(local_path).await?;
+    async fn upload(&self, local_path: &Path, cloud_path: &str) -> savevault_cloud::CloudResult<String> {
+        let content = tokio::fs::read(local_path)
+            .await
+            .map_err(|e| savevault_cloud::CloudError::Authentication(e.to_string()))?;
         self.uploads
             .lock()
             .unwrap()
@@ -53,12 +55,19 @@ impl CloudProvider for MockCloud {
         Ok(drive_id)
     }
 
-    async fn download(&self, _remote_file_id: &str, _local_path: &Path) -> Result<()> {
+    async fn download(&self, _remote_file_id: &str, _local_path: &Path) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, remote_file_id: &str) -> Result<()> {
+    async fn delete(&self, remote_file_id: &str) -> savevault_cloud::CloudResult<()> {
         self.uploads.lock().unwrap().remove(remote_file_id);
+        Ok(())
+    }
+
+    async fn save_manifest(
+        &self,
+        _manifest: &savevault_cloud::CloudCatalogManifest,
+    ) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 }

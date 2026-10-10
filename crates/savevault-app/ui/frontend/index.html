@@ -71,6 +71,15 @@
 
       <!-- Settings at bottom -->
       <div class="sidebar-footer">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 8px;">
+          <button id="btn-theme-toggle" class="btn-icon" title="Alternar Modo Escuro / Claro">
+            <svg id="theme-icon-sun" style="width:16px;height:16px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="theme-icon-moon" style="width:16px;height:16px;display:none;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+          <button id="btn-open-help" class="btn-icon" title="Central de Ajuda e Guia Rápido">
+            <svg style="width:16px;height:16px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </button>
+        </div>
         <a id="nav-config" href="#" class="nav-link">
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"/>
@@ -140,8 +149,19 @@
       <!-- ════ ABA: JOGOS ════ -->
       <div id="tab-jogos" class="tab-content hidden">
         <div class="section-header">
-          <h2 class="section-title">Jogos Detectados</h2>
-          <span class="section-subtitle">Todos os locais de save monitorados</span>
+          <div>
+            <h2 class="section-title">Jogos Detectados</h2>
+            <span class="section-subtitle">Todos os locais de save monitorados</span>
+          </div>
+          <button id="btn-open-add-game" class="btn-primary" style="display:flex;align-items:center;gap:6px;">
+            <span>+ Adicionar Jogo</span>
+          </button>
+        </div>
+        <div class="search-bar-row">
+          <div class="search-box-wrapper">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="jogos-search-input" class="search-input" placeholder="Buscar jogo monitorado..." />
+          </div>
         </div>
         <div id="jogos-list">
           <p style="font-size: 13px; color: #94a3b8;">Carregando...</p>
@@ -151,8 +171,13 @@
       <!-- ════ ABA: ATIVIDADE ════ -->
       <div id="tab-atividade" class="tab-content hidden">
         <div class="section-header">
-          <h2 class="section-title">Histórico de Snapshots</h2>
-          <span class="section-subtitle">Clique em Restaurar para reverter um save</span>
+          <div>
+            <h2 class="section-title">Histórico de Snapshots</h2>
+            <span class="section-subtitle">Clique em Restaurar para reverter um save</span>
+          </div>
+          <select id="atividade-game-filter" class="config-select" style="max-width: 200px; padding: 6px 10px; font-size: 12px;">
+            <option value="">Todos os jogos</option>
+          </select>
         </div>
         <div id="atividade-list">
           <p style="font-size: 13px; color: #94a3b8;">Carregando...</p>
@@ -162,7 +187,13 @@
       <!-- ════ ABA: NUVEM ════ -->
       <div id="tab-nuvem" class="tab-content hidden">
         <div class="section-header">
-          <h2 class="section-title">Status da Nuvem</h2>
+          <div>
+            <h2 class="section-title">Status da Nuvem</h2>
+            <span class="section-subtitle">Sincronização remota e backup redundante</span>
+          </div>
+          <button id="btn-open-cloud-config" class="btn-secondary" style="display:flex;align-items:center;gap:6px;">
+            <span>Configurar Nuvem</span>
+          </button>
         </div>
         <div id="nuvem-info">
           <p style="font-size: 13px; color: #94a3b8;">Carregando...</p>
@@ -250,10 +281,156 @@
             </div>
           </div>
 
+          <!-- Iniciar com o Windows -->
+          <div class="config-card">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div>
+                <span class="config-label">Iniciar com o Windows</span>
+                <p class="config-help">Executa o checkpoint silenciosamente em segundo plano ao iniciar o sistema operacional.</p>
+              </div>
+              <input id="cfg-autostart" type="checkbox" style="width: 18px; height: 18px; cursor: pointer;" />
+            </div>
+          </div>
+
+          <!-- Manutenção do Sistema -->
+          <div class="config-card">
+            <span class="config-label">Manutenção e Integridade</span>
+            <span class="config-help">Limpeza preventiva do banco SQLite e exportação de segurança física dos arquivos de save.</span>
+            <div style="display:flex; gap: 10px; margin-top: 6px; flex-wrap: wrap;">
+              <button id="btn-optimize-db" type="button" class="btn-secondary" style="display:flex;align-items:center;gap:6px;">
+                <span>🧹 Otimizar Banco de Dados</span>
+              </button>
+              <button id="btn-export-zip" type="button" class="btn-secondary" style="display:flex;align-items:center;gap:6px;">
+                <span>📦 Exportar Backups (ZIP)</span>
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
 
     </main>
+  </div>
+</div>
+
+<!-- ── Toasts Container ── -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ── Modal: Adicionar Jogo Manualmente ── -->
+<div id="modal-add-game" class="modal-overlay hidden">
+  <div class="modal-container">
+    <div class="modal-header">
+      <h3 class="modal-title">Adicionar Jogo Manualmente</h3>
+      <button id="btn-close-add-game" class="modal-close-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <label class="config-label" style="display:block;margin-bottom:4px;">Nome do Jogo</label>
+        <input type="text" id="add-game-name" class="config-input" placeholder="Ex: Hollow Knight, Dark Souls..." />
+      </div>
+      <div>
+        <label class="config-label" style="display:block;margin-bottom:4px;">Pasta do Save</label>
+        <input type="text" id="add-game-path" class="config-input" placeholder="C:\Users\...\AppData\Local\..." />
+        <span class="config-help">Selecione ou cole o caminho exato onde os arquivos de save são gravados.</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancel-add-game" class="btn-secondary">Cancelar</button>
+      <button id="btn-submit-add-game" class="btn-primary">Adicionar Jogo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Detalhes do Jogo ── -->
+<div id="modal-game-details" class="modal-overlay hidden">
+  <div class="modal-container">
+    <div class="modal-header">
+      <h3 id="modal-details-title" class="modal-title">Detalhes do Jogo</h3>
+      <button id="btn-close-details" class="modal-close-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <span class="config-label">Caminho de Salvamento</span>
+        <p id="modal-details-path" style="font-family:ui-monospace, monospace;font-size:12px;color:#475569;margin-top:4px;word-break:break-all;"></p>
+      </div>
+      <div style="display:flex;gap:20px;">
+        <div>
+          <span class="config-label">Arquivos Monitorados</span>
+          <p id="modal-details-files" style="font-size:14px;font-weight:600;margin-top:2px;">0</p>
+        </div>
+        <div>
+          <span class="config-label">Status no Disco</span>
+          <p id="modal-details-disk" style="font-size:14px;font-weight:600;margin-top:2px;color:#10b981;">Existe</p>
+        </div>
+      </div>
+      <div>
+        <button id="btn-details-open-folder" class="btn-secondary" style="width:100%;">Abrir Pasta no Windows Explorer</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-details-close" class="btn-secondary">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Configuração da Nuvem ── -->
+<div id="modal-cloud-config" class="modal-overlay hidden">
+  <div class="modal-container">
+    <div class="modal-header">
+      <h3 class="modal-title">Configurar Sincronização em Nuvem</h3>
+      <button id="btn-close-cloud" class="modal-close-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <span class="config-label" style="display:block;margin-bottom:6px;">Pastas Sincronizadas Detectadas</span>
+        <div id="cloud-detected-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+      </div>
+      <div>
+        <span class="config-label" style="display:block;margin-bottom:4px;">Ou Caminho Personalizado</span>
+        <input type="text" id="cloud-custom-path" class="config-input" placeholder="Ex: D:\Nuvem\checkpoint_saves" />
+        <span class="config-help">Pasta local sincronizada por Google Drive para Desktop, OneDrive, Dropbox, etc.</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancel-cloud" class="btn-secondary">Cancelar</button>
+      <button id="btn-save-cloud" class="btn-primary">Salvar Provedor</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Ajuda e Guia Rápido ── -->
+<div id="modal-help" class="modal-overlay hidden">
+  <div class="modal-container">
+    <div class="modal-header">
+      <h3 class="modal-title">Central de Ajuda — checkpoint</h3>
+      <button id="btn-close-help" class="modal-close-btn">✕</button>
+    </div>
+    <div class="modal-body" style="font-size:13px;line-height:1.6;color:#475569;">
+      <p><strong>Como o checkpoint protege seus saves?</strong></p>
+      <p>• <strong>Monitoramento em Tempo Real:</strong> Quando um jogo salva seu progresso, o checkpoint cria instantaneamente um snapshot protegido.</p>
+      <p>• <strong>Safety Backup:</strong> Ao clicar em Restaurar, o save que estava na pasta ativa é copiado para segurança antes de ser revertido, impedindo qualquer perda acidental.</p>
+      <p>• <strong>Sincronização em Nuvem:</strong> Use pastas sincronizadas (OneDrive, Google Drive) para manter cópias redundantes dos seus jogos.</p>
+      <p>• <strong>Consumo Ultraleve:</strong> O aplicativo utiliza entre 15MB e 25MB de memória RAM, mantendo sua jogabilidade rápida e sem interrupções.</p>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-help-close" class="btn-primary">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Confirmação In-App ── -->
+<div id="modal-confirm" class="modal-overlay hidden">
+  <div class="modal-container" style="max-width:400px;">
+    <div class="modal-header">
+      <h3 id="modal-confirm-title" class="modal-title">Confirmar Ação</h3>
+    </div>
+    <div class="modal-body">
+      <p id="modal-confirm-message" style="font-size:13px;line-height:1.5;color:#334155;white-space:pre-line;"></p>
+    </div>
+    <div class="modal-footer">
+      <button id="modal-confirm-cancel" class="btn-secondary">Cancelar</button>
+      <button id="modal-confirm-ok" class="btn-primary">Confirmar</button>
+    </div>
   </div>
 </div>
 

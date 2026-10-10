@@ -28,6 +28,95 @@ function formatBytes(bytes) {
     return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+// ── Notificações Flutuantes (Toast) ──────────────────────────────────────────
+
+function showToast(message, type = "info") {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = `toast ${type}`;
+    const icon = type === "success" ? "✓" : type === "error" ? "✕" : "ℹ";
+    toast.innerHTML = `<span style="font-weight:700;font-size:14px;">${icon}</span><span style="flex:1;">${message}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(10px)";
+        toast.style.transition = "all 0.3s ease";
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// ── Diálogo Moderno de Confirmação In-App ─────────────────────────────────────
+
+function showConfirmDialog(title, message) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("modal-confirm");
+        const titleEl = document.getElementById("modal-confirm-title");
+        const msgEl = document.getElementById("modal-confirm-message");
+        const okBtn = document.getElementById("modal-confirm-ok");
+        const cancelBtn = document.getElementById("modal-confirm-cancel");
+        if (!modal) {
+            resolve(window.confirm(`${title}\n\n${message}`));
+            return;
+        }
+        titleEl.textContent = title;
+        msgEl.textContent = message;
+        modal.classList.remove("hidden");
+
+        const cleanup = () => {
+            modal.classList.add("hidden");
+            okBtn.removeEventListener("click", onOk);
+            cancelBtn.removeEventListener("click", onCancel);
+        };
+        const onOk = () => { cleanup(); resolve(true); };
+        const onCancel = () => { cleanup(); resolve(false); };
+
+        okBtn.addEventListener("click", onOk);
+        cancelBtn.addEventListener("click", onCancel);
+    });
+}
+
+// ── Tema Escuro / Claro (Dark Mode) ──────────────────────────────────────────
+
+function initTheme() {
+    const saved = localStorage.getItem("checkpoint_theme");
+    const isDark = saved === "dark";
+    setTheme(isDark);
+}
+
+function setTheme(dark) {
+    const sunIcon = document.getElementById("theme-icon-sun");
+    const moonIcon = document.getElementById("theme-icon-moon");
+    if (dark) {
+        document.body.classList.add("dark");
+        if (sunIcon) sunIcon.style.display = "none";
+        if (moonIcon) moonIcon.style.display = "block";
+        localStorage.setItem("checkpoint_theme", "dark");
+    } else {
+        document.body.classList.remove("dark");
+        if (sunIcon) sunIcon.style.display = "block";
+        if (moonIcon) moonIcon.style.display = "none";
+        localStorage.setItem("checkpoint_theme", "light");
+    }
+}
+
+document.getElementById("btn-theme-toggle")?.addEventListener("click", () => {
+    const isDark = document.body.classList.contains("dark");
+    setTheme(!isDark);
+});
+
+// ── Central de Ajuda & Guia Rápido ───────────────────────────────────────────
+
+document.getElementById("btn-open-help")?.addEventListener("click", () => {
+    document.getElementById("modal-help")?.classList.remove("hidden");
+});
+document.getElementById("btn-close-help")?.addEventListener("click", () => {
+    document.getElementById("modal-help")?.classList.add("hidden");
+});
+document.getElementById("btn-help-close")?.addEventListener("click", () => {
+    document.getElementById("modal-help")?.classList.add("hidden");
+});
+
 // ── Controles da Janela (Nativos via IPC) ──────────────────────────────────────
 
 document.getElementById("titlebar-minimize")?.addEventListener("click", () => {
@@ -124,114 +213,292 @@ function renderJogosRecentes(locations) {
     container.innerHTML = locations.map((loc, i) => {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
+        const avatarHtml = loc.cover_url
+            ? `<img src="${loc.cover_url}" class="game-cover-art" style="width:38px;height:38px;" onerror="this.outerHTML='<div class=\\'game-avatar ${gradClass}\\'>${initials}</div>'" alt="${loc.game_name}" />`
+            : `<div class="game-avatar ${gradClass}">${initials}</div>`;
+
         return `
-        <div class="game-item">
-            <div class="game-avatar ${gradClass}">
-                ${initials}
-            </div>
+        <div class="game-item game-card-clickable" onclick="window.openGameDetails('${loc.id}')">
+            ${avatarHtml}
             <div class="game-info">
                 <p class="game-name">${loc.game_name || "Jogo"}</p>
-                <p class="game-subtext">${loc.files_count ?? 0} arquivo(s) · ${timeAgo(loc.last_seen_at)}</p>
+                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) · ${loc.platform || "PC"}</p>
             </div>
-            <span class="badge-synced">Sincronizado</span>
+            <span class="badge-synced">Ativo</span>
         </div>`;
     }).join("");
 }
 
 // ── Aba: Jogos ────────────────────────────────────────────────────────────────
 
+let cachedLocations = [];
+
 async function loadJogos() {
     const container = document.getElementById("jogos-list");
     if (!container) return;
-    container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Carregando...</p>`;
+    container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Carregando jogos...</p>`;
     try {
-        const locs = await invoke("get_locations");
-        if (!locs || locs.length === 0) {
-            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Nenhum jogo detectado. Execute um scan.</p>`;
-            return;
-        }
-        container.innerHTML = locs.map((loc, i) => {
-            const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
-            const gradClass = `grad-${i % 6}`;
-            return `
-            <div class="content-card" style="display:flex;align-items:center;gap:14px;margin-bottom:10px;padding:14px;">
-                <div class="game-avatar ${gradClass}" style="width:44px;height:44px;font-size:14px;">
-                    ${initials}
-                </div>
-                <div class="game-info">
-                    <p class="game-name" style="font-size:14px;">${loc.game_name || "Jogo Desconhecido"}</p>
-                    <p class="game-subtext" style="font-family:ui-monospace, monospace;color:#64748b;">${loc.path || ""}</p>
-                    <p class="game-subtext">${loc.files_count ?? 0} arquivo(s) monitorado(s)</p>
-                </div>
-                <span class="badge-synced">Ativo</span>
-            </div>`;
-        }).join("");
+        cachedLocations = await invoke("get_locations");
+        const query = document.getElementById("jogos-search-input")?.value?.trim() || "";
+        renderJogosList(query);
     } catch (e) {
-        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
+        container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro ao carregar jogos: ${e}</p>`;
     }
 }
 
+function renderJogosList(query = "") {
+    const container = document.getElementById("jogos-list");
+    if (!container) return;
+
+    const lowerQuery = query.toLowerCase();
+    const filtered = cachedLocations.filter(loc => {
+        const name = (loc.game_name || "").toLowerCase();
+        const path = (loc.path || "").toLowerCase();
+        return name.includes(lowerQuery) || path.includes(lowerQuery);
+    });
+
+    if (filtered.length === 0) {
+        if (query) {
+            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:12px 0;">Nenhum jogo encontrado para "${query}".</p>`;
+        } else {
+            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:12px 0;">Nenhum jogo cadastrado. Clique em "+ Adicionar Jogo" para incluir uma pasta.</p>`;
+        }
+        return;
+    }
+
+    container.innerHTML = filtered.map((loc, i) => {
+        const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
+        const gradClass = `grad-${i % 6}`;
+        const avatarHtml = loc.cover_url
+            ? `<img src="${loc.cover_url}" class="game-cover-art" onerror="this.outerHTML='<div class=\\'game-avatar ${gradClass}\\' style=\\'width:44px;height:44px;font-size:14px;\\'>${initials}</div>'" alt="${loc.game_name}" />`
+            : `<div class="game-avatar ${gradClass}" style="width:44px;height:44px;font-size:14px;">${initials}</div>`;
+
+        return `
+        <div class="content-card game-card-clickable" style="display:flex;align-items:center;gap:14px;margin-bottom:10px;padding:14px;" onclick="window.openGameDetails('${loc.id}')">
+            ${avatarHtml}
+            <div class="game-info">
+                <p class="game-name" style="font-size:14px;">${loc.game_name || "Jogo Desconhecido"}</p>
+                <p class="game-subtext" style="font-family:ui-monospace, monospace;color:#64748b;">${loc.path || ""}</p>
+                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) monitorado(s) · Plataforma: ${loc.platform || "Genérica"}</p>
+            </div>
+            <span class="badge-synced">Monitorado</span>
+        </div>`;
+    }).join("");
+}
+
+// Filtro em tempo real no campo de busca
+document.getElementById("jogos-search-input")?.addEventListener("input", (e) => {
+    renderJogosList(e.target.value.trim());
+});
+
+// ── Modal: Detalhes do Jogo ──────────────────────────────────────────────────
+
+window.openGameDetails = function(locationId) {
+    const loc = cachedLocations.find(l => String(l.id) === String(locationId));
+    if (!loc) return;
+
+    const modal = document.getElementById("modal-game-details");
+    const titleEl = document.getElementById("modal-details-title");
+    const pathEl = document.getElementById("modal-details-path");
+    const filesEl = document.getElementById("modal-details-files");
+    const diskEl = document.getElementById("modal-details-disk");
+    const openBtn = document.getElementById("btn-details-open-folder");
+
+    if (titleEl) titleEl.textContent = loc.game_name || "Detalhes do Jogo";
+    if (pathEl) pathEl.textContent = loc.path || "—";
+    if (filesEl) filesEl.textContent = `${loc.monitored_files_count ?? 0} arquivo(s)`;
+    if (diskEl) {
+        diskEl.textContent = loc.exists_on_disk ? "Detectado no Disco" : "Caminho Não Encontrado";
+        diskEl.style.color = loc.exists_on_disk ? "#10b981" : "#ef4444";
+    }
+
+    if (openBtn) {
+        openBtn.onclick = () => {
+            invoke("open_folder", { path: loc.path }).catch(err => {
+                showToast(`Erro ao abrir pasta: ${err}`, "error");
+            });
+        };
+    }
+
+    modal?.classList.remove("hidden");
+};
+
+document.getElementById("btn-close-details")?.addEventListener("click", () => {
+    document.getElementById("modal-game-details")?.classList.add("hidden");
+});
+document.getElementById("btn-details-close")?.addEventListener("click", () => {
+    document.getElementById("modal-game-details")?.classList.add("hidden");
+});
+
+// ── Modal: Adicionar Jogo Manualmente ────────────────────────────────────────
+
+document.getElementById("btn-open-add-game")?.addEventListener("click", () => {
+    const nameInput = document.getElementById("add-game-name");
+    const pathInput = document.getElementById("add-game-path");
+    if (nameInput) nameInput.value = "";
+    if (pathInput) pathInput.value = "";
+    document.getElementById("modal-add-game")?.classList.remove("hidden");
+    nameInput?.focus();
+});
+
+document.getElementById("btn-close-add-game")?.addEventListener("click", () => {
+    document.getElementById("modal-add-game")?.classList.add("hidden");
+});
+document.getElementById("btn-cancel-add-game")?.addEventListener("click", () => {
+    document.getElementById("modal-add-game")?.classList.add("hidden");
+});
+
+document.getElementById("btn-submit-add-game")?.addEventListener("click", async () => {
+    const name = document.getElementById("add-game-name")?.value?.trim();
+    const path = document.getElementById("add-game-path")?.value?.trim();
+
+    if (!name || !path) {
+        showToast("Por favor, preencha o nome do jogo e o caminho da pasta.", "error");
+        return;
+    }
+
+    const btn = document.getElementById("btn-submit-add-game");
+    if (btn) {
+        btn.textContent = "Adicionando...";
+        btn.disabled = true;
+    }
+
+    try {
+        await invoke("add_game", { name, path });
+        showToast(`Jogo "${name}" adicionado com sucesso!`, "success");
+        document.getElementById("modal-add-game")?.classList.add("hidden");
+        loadJogos();
+    } catch (e) {
+        showToast(`Erro ao adicionar jogo: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.textContent = "Adicionar Jogo";
+            btn.disabled = false;
+        }
+    }
+});
+
 // ── Aba: Atividade ────────────────────────────────────────────────────────────
+
+let cachedSnapshots = [];
 
 async function loadAtividade() {
     const container = document.getElementById("atividade-list");
     if (!container) return;
     container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Carregando histórico...</p>`;
     try {
-        const snapshots = await invoke("get_snapshots");
-        if (!snapshots || snapshots.length === 0) {
-            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;">Nenhum snapshot encontrado ainda.</p>`;
-            return;
-        }
-        container.innerHTML = snapshots.map(s => `
-            <div class="activity-item">
-                <div class="dot-indicator"></div>
-                <div class="game-info">
-                    <p class="game-name">${s.game_name || "Arquivo de Save"}</p>
-                    <p class="game-subtext" style="font-family:ui-monospace, monospace;">${(s.blake3_hash || "").substring(0, 16)}…</p>
-                    <p class="game-subtext">${s.file_size_bytes ? formatBytes(s.file_size_bytes) : ""} · ${timeAgo(s.captured_at)}</p>
-                </div>
-                <button
-                    onclick="window.restoreSnapshot('${s.snapshot_id}', '${(s.game_name || "").replace(/'/g, "")}')"
-                    class="btn-restore">
-                    Restaurar
-                </button>
-            </div>`).join("");
+        cachedSnapshots = await invoke("get_snapshots");
+        populateAtividadeGameFilter();
+        renderAtividadeList();
     } catch (e) {
         container.innerHTML = `<p style="font-size:13px;color:#ef4444;">Erro: ${e}</p>`;
     }
 }
 
-window.restoreSnapshot = async function(id, gameName) {
-    if (!confirm(`Restaurar save de "${gameName}"?\n\nUm backup de segurança será criado antes da restauração.`)) return;
+function populateAtividadeGameFilter() {
+    const filterSelect = document.getElementById("atividade-game-filter");
+    if (!filterSelect) return;
+
+    const currentVal = filterSelect.value;
+    const uniqueGames = [...new Set(cachedSnapshots.map(s => s.game_name).filter(Boolean))].sort();
+
+    filterSelect.innerHTML = `<option value="">Todos os jogos (${cachedSnapshots.length})</option>` +
+        uniqueGames.map(g => `<option value="${g}">${g}</option>`).join("");
+
+    if (uniqueGames.includes(currentVal)) {
+        filterSelect.value = currentVal;
+    }
+}
+
+function renderAtividadeList() {
+    const container = document.getElementById("atividade-list");
+    if (!container) return;
+
+    const filterVal = document.getElementById("atividade-game-filter")?.value || "";
+    const filtered = filterVal
+        ? cachedSnapshots.filter(s => s.game_name === filterVal)
+        : cachedSnapshots;
+
+    if (!filtered || filtered.length === 0) {
+        container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:12px 0;">Nenhum snapshot encontrado para os critérios selecionados.</p>`;
+        return;
+    }
+
+    container.innerHTML = filtered.map(s => `
+        <div class="activity-item">
+            <div class="dot-indicator"></div>
+            <div class="game-info">
+                <p class="game-name">${s.game_name || "Arquivo de Save"}</p>
+                <p class="game-subtext" style="font-family:ui-monospace, monospace;">${s.file_name || s.short_hash || ""}</p>
+                <p class="game-subtext">${s.size_formatted || formatBytes(s.size_bytes)} · Versão ${s.version} · ${timeAgo(s.created_at)}</p>
+            </div>
+            <button
+                onclick="window.handleRestoreSnapshot('${s.id}', '${(s.game_name || "").replace(/'/g, "")}', ${s.version})"
+                class="btn-restore">
+                Restaurar
+            </button>
+        </div>`).join("");
+}
+
+document.getElementById("atividade-game-filter")?.addEventListener("change", () => {
+    renderAtividadeList();
+});
+
+window.handleRestoreSnapshot = async function(id, gameName, version) {
+    const confirmed = await showConfirmDialog(
+        "Confirmar Restauração",
+        `Deseja restaurar a versão ${version} do save de "${gameName}"?\n\nUm Safety Backup do save ativo atual será criado antes da substituição.`
+    );
+    if (!confirmed) return;
+
     try {
         const result = await invoke("restore_snapshot", { snapshotId: id });
-        alert(`Restauração concluída!\nArquivo: ${result.restored_path || "OK"}`);
-        loadAtividade();
+        if (result.success) {
+            showToast(`Restauração concluída! Save revertido para a versão ${version}.`, "success");
+            loadAtividade();
+        } else {
+            showToast(`Falha na restauração: ${result.error || "Erro desconhecido"}`, "error");
+        }
     } catch (e) {
-        alert(`Erro ao restaurar: ${e}`);
+        showToast(`Erro ao restaurar: ${e}`, "error");
     }
 };
 
 // ── Aba: Nuvem ────────────────────────────────────────────────────────────────
 
+let cachedCloudConfig = null;
+
 async function loadNuvem() {
     const container = document.getElementById("nuvem-info");
     if (!container) return;
     try {
-        const data = await invoke("get_dashboard_status");
+        cachedCloudConfig = await invoke("get_cloud_config");
+        const prov = cachedCloudConfig.provider;
+        const provName = prov === "onedrive" ? "Microsoft OneDrive" :
+                         prov === "google_drive" ? "Google Drive" :
+                         prov === "local_folder" ? "Pasta Sincronizada Local" : "Nenhum (Desativado)";
+
+        const isConnected = cachedCloudConfig.enabled;
+        const iconBg = isConnected ? "#dcfce7" : "#f1f5f9";
+        const iconColor = isConnected ? "☁️" : "📁";
+
         container.innerHTML = `
-            <div class="content-card" style="display:flex;flex-direction:column;gap:12px;">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <div style="width:40px;height:40px;border-radius:10px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:20px;">☁️</div>
-                    <div>
-                        <p style="font-size:14px;font-weight:600;color:#0f172a;">Google Drive</p>
-                        <p style="font-size:12px;color:#64748b;">${data.app_status || "Verificando..."}</p>
+            <div class="content-card" style="display:flex;flex-direction:column;gap:14px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:20px;">${iconColor}</div>
+                        <div>
+                            <p style="font-size:14px;font-weight:600;color:#0f172a;" class="game-name">${provName}</p>
+                            <p style="font-size:12px;color:${isConnected ? "#10b981" : "#64748b"};font-weight:500;">
+                                ${isConnected ? "● Sincronização Ativa" : "○ Sincronização Desativada"}
+                            </p>
+                        </div>
                     </div>
+                    <button onclick="window.openCloudModal()" class="btn-secondary">Alterar Provedor</button>
                 </div>
-                <div style="font-size:13px;color:#334155;border-top:1px solid #f1f5f9;padding-top:10px;line-height:1.6;">
-                    <p>📦 Itens na fila de sync: <strong>${data.sync_pending_count ?? 0}</strong></p>
-                    <p>🔄 Último sync: <strong>${formatHour(data.last_reconciliation_time)}</strong></p>
+                <div style="font-size:12.5px;color:#334155;border-top:1px solid #f1f5f9;padding-top:12px;line-height:1.7;">
+                    <p>📂 Diretório de Sincronização: <strong style="font-family:ui-monospace, monospace;font-size:12px;">${cachedCloudConfig.local_sync_path || "Nenhuma pasta configurada"}</strong></p>
+                    <p>🔍 Serviços Detectados no Sistema: <strong>${cachedCloudConfig.detected_folders?.length ?? 0} serviço(s)</strong></p>
                 </div>
             </div>`;
     } catch (e) {
@@ -239,14 +506,84 @@ async function loadNuvem() {
     }
 }
 
-// ── Aba: Configurações ────────────────────────────────────────────────────────
+window.openCloudModal = function() {
+    const modal = document.getElementById("modal-cloud-config");
+    const listEl = document.getElementById("cloud-detected-list");
+    const customInput = document.getElementById("cloud-modal-custom-path") || document.getElementById("cloud-custom-path");
 
-let currentConfig = null;
+    if (customInput && cachedCloudConfig) {
+        customInput.value = cachedCloudConfig.local_sync_path || "";
+    }
+
+    if (listEl && cachedCloudConfig) {
+        const folders = cachedCloudConfig.detected_folders || [];
+        if (folders.length === 0) {
+            listEl.innerHTML = `<p style="font-size:12px;color:#94a3b8;">Nenhum cliente de nuvem padrão (OneDrive/Drive) detectado automaticamente nas pastas comuns.</p>`;
+        } else {
+            listEl.innerHTML = folders.map(f => `
+                <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${f.provider}', '${f.path.replace(/\\/g, "\\\\")}')">
+                    <div>
+                        <p style="font-weight:600;font-size:13px;">${f.name}</p>
+                        <p style="font-size:11.5px;color:#64748b;font-family:ui-monospace, monospace;">${f.path}</p>
+                    </div>
+                    <button type="button" class="btn-secondary" style="font-size:11px;padding:4px 8px;">Usar Esta</button>
+                </div>
+            `).join("");
+        }
+    }
+
+    modal?.classList.remove("hidden");
+};
+
+window.selectCloudFolder = function(provider, path) {
+    const customInput = document.getElementById("cloud-custom-path");
+    if (customInput) customInput.value = path;
+};
+
+document.getElementById("btn-open-cloud-config")?.addEventListener("click", () => {
+    window.openCloudModal();
+});
+document.getElementById("btn-close-cloud")?.addEventListener("click", () => {
+    document.getElementById("modal-cloud-config")?.classList.add("hidden");
+});
+document.getElementById("btn-cancel-cloud")?.addEventListener("click", () => {
+    document.getElementById("modal-cloud-config")?.classList.add("hidden");
+});
+
+document.getElementById("btn-save-cloud")?.addEventListener("click", async () => {
+    const customPath = document.getElementById("cloud-custom-path")?.value?.trim() || "";
+    const btn = document.getElementById("btn-save-cloud");
+    if (btn) {
+        btn.textContent = "Salvando...";
+        btn.disabled = true;
+    }
+
+    try {
+        const provider = customPath ? "local_folder" : "none";
+        const enabled = Boolean(customPath);
+        await invoke("update_cloud_config", {
+            provider,
+            localSyncPath: customPath || null,
+            enabled,
+        });
+        showToast("Configuração da nuvem salva com sucesso!", "success");
+        document.getElementById("modal-cloud-config")?.classList.add("hidden");
+        loadNuvem();
+    } catch (e) {
+        showToast(`Erro ao salvar nuvem: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.textContent = "Salvar Provedor";
+            btn.disabled = false;
+        }
+    }
+});
+
+// ── Aba: Configurações ────────────────────────────────────────────────────────
 
 async function loadConfig() {
     try {
         const cfg = await invoke("get_config");
-        currentConfig = cfg;
 
         const elBackupDir = document.getElementById("cfg-backup-dir");
         const elDbPath = document.getElementById("cfg-database-path");
@@ -254,6 +591,7 @@ async function loadConfig() {
         const elReconcile = document.getElementById("cfg-reconcile-interval");
         const elDebounce = document.getElementById("cfg-debounce-ms");
         const elLogLevel = document.getElementById("cfg-log-level");
+        const elAutostart = document.getElementById("cfg-autostart");
 
         if (elBackupDir) elBackupDir.value = cfg.backup_dir || "";
         if (elDbPath) elDbPath.value = cfg.database_path || "";
@@ -261,6 +599,7 @@ async function loadConfig() {
         if (elReconcile) elReconcile.value = String(cfg.reconciliation_interval_secs || 30);
         if (elDebounce) elDebounce.value = String(cfg.debounce_ms || 2000);
         if (elLogLevel) elLogLevel.value = cfg.log_level || "info";
+        if (elAutostart) elAutostart.checked = Boolean(cfg.autostart);
     } catch (e) {
         console.error("Erro ao carregar configurações:", e);
     }
@@ -281,6 +620,7 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
         const debounceMs = parseInt(document.getElementById("cfg-debounce-ms")?.value, 10) || 2000;
         const logLevel = document.getElementById("cfg-log-level")?.value || "info";
         const databasePath = document.getElementById("cfg-database-path")?.value || "";
+        const autostart = Boolean(document.getElementById("cfg-autostart")?.checked);
 
         const payload = {
             max_versions: maxVersions,
@@ -289,13 +629,14 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
             log_level: logLevel,
             backup_dir: backupDir,
             database_path: databasePath,
+            autostart,
         };
 
         const result = await invoke("save_config", { newCfg: payload });
-        alert(result || "Configurações salvas com sucesso!");
+        showToast(result || "Configurações salvas com sucesso!", "success");
         loadConfig();
     } catch (e) {
-        alert(`Erro ao salvar configurações: ${e}`);
+        showToast(`Erro ao salvar configurações: ${e}`, "error");
     } finally {
         if (btn) {
             btn.textContent = "Salvar Alterações";
@@ -308,7 +649,7 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
 document.getElementById("btn-open-backup-dir")?.addEventListener("click", () => {
     const path = document.getElementById("cfg-backup-dir")?.value;
     if (path) {
-        invoke("open_path_in_explorer", { path }).catch(err => alert(`Erro: ${err}`));
+        invoke("open_path_in_explorer", { path }).catch(err => showToast(`Erro: ${err}`, "error"));
     }
 });
 
@@ -316,11 +657,51 @@ document.getElementById("btn-open-backup-dir")?.addEventListener("click", () => 
 document.getElementById("btn-open-db-dir")?.addEventListener("click", () => {
     const path = document.getElementById("cfg-database-path")?.value;
     if (path) {
-        invoke("open_path_in_explorer", { path }).catch(err => alert(`Erro: ${err}`));
+        invoke("open_path_in_explorer", { path }).catch(err => showToast(`Erro: ${err}`, "error"));
     }
 });
 
-// ── Botão Reconciliar ─────────────────────────────────────────────────────────
+// Botão Manutenção: Otimizar Banco SQLite
+document.getElementById("btn-optimize-db")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-optimize-db");
+    if (btn) {
+        btn.textContent = "Otimizando...";
+        btn.disabled = true;
+    }
+    try {
+        const res = await invoke("optimize_database");
+        showToast(`Banco otimizado! ${res.purged_sync_items} itens antigos limpos. Tamanho atual: ${res.db_size_formatted}`, "success");
+    } catch (e) {
+        showToast(`Falha na otimização: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.textContent = "🧹 Otimizar Banco de Dados";
+            btn.disabled = false;
+        }
+    }
+});
+
+// Botão Manutenção: Exportar Backups em ZIP
+document.getElementById("btn-export-zip")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-export-zip");
+    if (btn) {
+        btn.textContent = "Gerando ZIP...";
+        btn.disabled = true;
+    }
+    try {
+        const res = await invoke("export_backup_zip");
+        showToast(`Backup ZIP gerado com sucesso (${res.file_size_formatted}) em Downloads!`, "success");
+    } catch (e) {
+        showToast(`Falha na exportação: ${e}`, "error");
+    } finally {
+        if (btn) {
+            btn.textContent = "📦 Exportar Backups (ZIP)";
+            btn.disabled = false;
+        }
+    }
+});
+
+// ── Botão Sincronizar Agora ──────────────────────────────────────────────────
 
 document.getElementById("btn-reconcile")?.addEventListener("click", async () => {
     const btn = document.getElementById("btn-reconcile");
@@ -330,10 +711,10 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
     }
     try {
         const result = await invoke("trigger_reconcile");
-        alert(`Reconciliação concluída: ${result}`);
+        showToast(`Reconciliação concluída: ${result}`, "success");
         loadInicio();
     } catch (e) {
-        alert(`Erro: ${e}`);
+        showToast(`Erro na reconciliação: ${e}`, "error");
     } finally {
         if (btn) {
             btn.textContent = "Sincronizar Agora";
@@ -342,9 +723,10 @@ document.getElementById("btn-reconcile")?.addEventListener("click", async () => 
     }
 });
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// ── Inicialização ────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
+    initTheme();
     showTab("nav-inicio");
     loadInicio();
     setInterval(loadInicio, 10000);

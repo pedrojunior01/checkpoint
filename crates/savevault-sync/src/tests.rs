@@ -8,22 +8,24 @@
 //! - Caso E: Sucesso após retry
 //! - Caso F: Identificação estrita onde `backup_id != file_id`
 
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use rusqlite::Connection;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 use uuid::Uuid;
 
 use savevault_cloud::CloudProvider;
 use savevault_core::models::{
-    Backup, Confidence, FileEntry, Game, Platform, SaveLocation, SaveLocationType,
-    SyncOperation, SyncQueueItem, SyncStatus,
+    Backup, Confidence, FileEntry, Game, Platform, SaveLocation, SaveLocationType, SyncOperation,
+    SyncQueueItem, SyncStatus,
+};
+use savevault_db::repositories::{
+    BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo,
 };
 use savevault_db::Database;
-use savevault_db::repositories::{BackupsRepo, FilesRepo, GamesRepo, SaveLocationsRepo, SyncQueueRepo};
 
 use crate::{SyncEngine, SyncEngineConfig};
 
@@ -46,7 +48,8 @@ impl MockCloudProvider {
 
     fn with_temporary_failures(failures: usize) -> Self {
         let mock = Self::default();
-        mock.fail_uploads_remaining.store(failures, Ordering::SeqCst);
+        mock.fail_uploads_remaining
+            .store(failures, Ordering::SeqCst);
         mock
     }
 
@@ -67,15 +70,23 @@ impl MockCloudProvider {
 
 #[async_trait]
 impl CloudProvider for MockCloudProvider {
-    async fn upload(&self, local_path: &Path, cloud_path: &str) -> anyhow::Result<String> {
+    async fn upload(
+        &self,
+        local_path: &Path,
+        cloud_path: &str,
+    ) -> savevault_cloud::CloudResult<String> {
         if self.permanent_failure.load(Ordering::SeqCst) {
-            anyhow::bail!("Erro de rede permanente simulado no CloudProvider");
+            return Err(savevault_cloud::CloudError::Network(
+                "Erro de rede permanente simulado no CloudProvider".into(),
+            ));
         }
 
         let remaining = self.fail_uploads_remaining.load(Ordering::SeqCst);
         if remaining > 0 {
             self.fail_uploads_remaining.fetch_sub(1, Ordering::SeqCst);
-            anyhow::bail!("Erro temporário simulado de rede/timeout na Cloud");
+            return Err(savevault_cloud::CloudError::Network(
+                "Erro temporário simulado de rede/timeout na Cloud".into(),
+            ));
         }
 
         self.uploaded_files
@@ -86,12 +97,26 @@ impl CloudProvider for MockCloudProvider {
         Ok(remote_id)
     }
 
-    async fn download(&self, _remote_file_id: &str, _local_path: &Path) -> anyhow::Result<()> {
+    async fn download(
+        &self,
+        _remote_file_id: &str,
+        _local_path: &Path,
+    ) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 
-    async fn delete(&self, remote_file_id: &str) -> anyhow::Result<()> {
-        self.deleted_files.lock().unwrap().push(remote_file_id.to_string());
+    async fn delete(&self, remote_file_id: &str) -> savevault_cloud::CloudResult<()> {
+        self.deleted_files
+            .lock()
+            .unwrap()
+            .push(remote_file_id.to_string());
+        Ok(())
+    }
+
+    async fn save_manifest(
+        &self,
+        _manifest: &savevault_cloud::CloudCatalogManifest,
+    ) -> savevault_cloud::CloudResult<()> {
         Ok(())
     }
 }
@@ -115,15 +140,19 @@ fn create_test_hierarchy(
     let files_repo = FilesRepo::new(conn);
     let backups_repo = BackupsRepo::new(conn);
 
-    let game = Game::new("SyncTestGame", Platform::Steam, Some("12345".into()), Confidence::High);
+    let game = Game::new(
+        "SyncTestGame",
+        Platform::Steam,
+        Some("12345".into()),
+        Confidence::High,
+    );
     games_repo.insert(&game).unwrap();
 
-    let loc = SaveLocation {
-        id: Uuid::new_v4(),
-        game_id: game.id,
-        path: PathBuf::from(r"C:\Saves\SyncTestGame"),
-        location_type: SaveLocationType::Directory,
-    };
+    let loc = SaveLocation::new(
+        game.id,
+        PathBuf::from(r"C:\Saves\SyncTestGame"),
+        SaveLocationType::Directory,
+    );
     loc_repo.insert(&loc).unwrap();
 
     let file_id = Uuid::new_v4();
@@ -192,16 +221,25 @@ async fn test_case_a_successful_upload_flow() {
     );
 
     let synced = engine.process_queue(&conn).await.unwrap();
-    assert_eq!(synced, 1, "Exatamente 1 item deve ser sincronizado com sucesso");
+    assert_eq!(
+        synced, 1,
+        "Exatamente 1 item deve ser sincronizado com sucesso"
+    );
 
     // Prova que upload foi registrado na cloud
     let uploads = mock_cloud.uploads();
     assert_eq!(uploads.len(), 1);
-    assert!(uploads[0].1.contains("v1_savegame.sav"), "cloud_path deve conter o nome versionado do arquivo");
+    assert!(
+        uploads[0].1.contains("v1_savegame.sav"),
+        "cloud_path deve conter o nome versionado do arquivo"
+    );
 
     // Prova que item foi removido da fila após sucesso
     let remaining_queue = queue_repo.list_pending().unwrap();
-    assert!(remaining_queue.is_empty(), "Fila deve estar vazia após upload bem-sucedido");
+    assert!(
+        remaining_queue.is_empty(),
+        "Fila deve estar vazia após upload bem-sucedido"
+    );
 
     // Prova que o status do Backup no banco foi atualizado para Synced com cloud_path e drive_file_id preenchidos
     let backups_repo = BackupsRepo::new(&conn);
@@ -209,7 +247,11 @@ async fn test_case_a_successful_upload_flow() {
     assert_eq!(updated_backup.sync_status, SyncStatus::Synced);
     assert!(updated_backup.cloud_path.is_some());
     assert!(updated_backup.drive_file_id.is_some());
-    assert!(updated_backup.drive_file_id.as_ref().unwrap().starts_with("drive-id-"));
+    assert!(updated_backup
+        .drive_file_id
+        .as_ref()
+        .unwrap()
+        .starts_with("drive-id-"));
 }
 
 #[tokio::test]
@@ -235,10 +277,8 @@ async fn test_case_b_missing_backup_does_not_silently_delete_queue() {
     queue_repo.enqueue(&queue_item).unwrap();
 
     // Simula a perda do backup no banco (ex.: corrupção ou remoção física da linha de backup)
-    conn.execute_batch(
-        "PRAGMA foreign_keys = OFF; DELETE FROM backups; PRAGMA foreign_keys = ON;",
-    )
-    .unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = OFF; DELETE FROM backups; PRAGMA foreign_keys = ON;")
+        .unwrap();
 
     let mock_cloud = MockCloudProvider::new();
     let engine = SyncEngine::with_config(
@@ -249,7 +289,10 @@ async fn test_case_b_missing_backup_does_not_silently_delete_queue() {
 
     let synced = engine.process_queue(&conn).await.unwrap();
     assert_eq!(synced, 0, "Nenhum upload deve ser realizado");
-    assert!(mock_cloud.uploads().is_empty(), "Mock cloud não deve receber uploads");
+    assert!(
+        mock_cloud.uploads().is_empty(),
+        "Mock cloud não deve receber uploads"
+    );
 
     // O item NÃO deve ter sido deletado silenciosamente.
     // Ele deve ter seu status atualizado para Failed no banco e ser observável.
@@ -316,7 +359,10 @@ async fn test_case_c_missing_physical_file_fails_deterministically() {
     assert_eq!(synced2, 0);
 
     let pending2 = queue_repo.list_pending().unwrap();
-    assert!(pending2.is_empty(), "Não deve mais estar pendente após atingir max_attempts");
+    assert!(
+        pending2.is_empty(),
+        "Não deve mais estar pendente após atingir max_attempts"
+    );
 
     let backups_repo = BackupsRepo::new(&conn);
     let failed_backup = backups_repo.find_by_id(backup.id).unwrap().unwrap();
@@ -546,13 +592,22 @@ async fn test_case_h_delete_uses_drive_file_id_not_cloud_path() {
     );
 
     let deleted_count = engine.process_queue(&conn).await.unwrap();
-    assert_eq!(deleted_count, 0, "Delete não incrementa contador de upload/synced");
+    assert_eq!(
+        deleted_count, 0,
+        "Delete não incrementa contador de upload/synced"
+    );
 
     // Verifica que o método delete da cloud recebeu EXATAMENTE o drive_file_id, e NUNCA o cloud_path
     let deleted = mock_cloud.deleted();
     assert_eq!(deleted.len(), 1);
-    assert_eq!(deleted[0], expected_drive_id, "Delete DEVE receber drive_file_id");
-    assert_ne!(deleted[0], logical_cloud_path, "Delete NUNCA deve receber cloud_path");
+    assert_eq!(
+        deleted[0], expected_drive_id,
+        "Delete DEVE receber drive_file_id"
+    );
+    assert_ne!(
+        deleted[0], logical_cloud_path,
+        "Delete NUNCA deve receber cloud_path"
+    );
 
     // Verifica que a fila foi limpa
     assert!(queue_repo.list_pending().unwrap().is_empty());
@@ -597,7 +652,10 @@ async fn test_case_i_upload_succeeds_but_db_fails_preserves_queue() {
 
     // Executa a fila: upload na cloud deve ocorrer, mas o update no banco vai falhar
     let result = engine.process_queue(&conn).await;
-    assert!(result.is_err(), "A falha na persistência DB deve propagar erro");
+    assert!(
+        result.is_err(),
+        "A falha na persistência DB deve propagar erro"
+    );
 
     // Evidência de falha parcial:
     // 1. Arquivo foi enviado para a cloud
@@ -658,10 +716,23 @@ async fn test_case_j_delete_clears_cloud_metadata_when_local_remains() {
     assert!(queue_repo.list_pending().unwrap().is_empty());
 
     // 3. Metadados remotos foram limpos mas backup local PERMANECE
-    let updated_backup = backups_repo.find_by_id(backup.id).unwrap().expect("Backup local deve continuar existindo");
-    assert!(updated_backup.cloud_path.is_none(), "cloud_path deve ser limpo após delete");
-    assert!(updated_backup.drive_file_id.is_none(), "drive_file_id deve ser limpo após delete");
-    assert_eq!(updated_backup.sync_status, SyncStatus::PendingOffline, "sync_status deve ser pending_offline");
+    let updated_backup = backups_repo
+        .find_by_id(backup.id)
+        .unwrap()
+        .expect("Backup local deve continuar existindo");
+    assert!(
+        updated_backup.cloud_path.is_none(),
+        "cloud_path deve ser limpo após delete"
+    );
+    assert!(
+        updated_backup.drive_file_id.is_none(),
+        "drive_file_id deve ser limpo após delete"
+    );
+    assert_eq!(
+        updated_backup.sync_status,
+        SyncStatus::PendingOffline,
+        "sync_status deve ser pending_offline"
+    );
 }
 
 #[tokio::test]
@@ -714,7 +785,10 @@ async fn test_case_k_delete_pruned_backup_removes_db_record() {
     assert!(queue_repo.list_pending().unwrap().is_empty());
 
     // 3. Backup podado foi completamente removido do SQLite
-    assert!(backups_repo.find_by_id(backup.id).unwrap().is_none(), "Backup podado localmente e deletado remotamente deve ser removido do SQLite");
+    assert!(
+        backups_repo.find_by_id(backup.id).unwrap().is_none(),
+        "Backup podado localmente e deletado remotamente deve ser removido do SQLite"
+    );
 }
 
 #[tokio::test]

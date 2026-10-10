@@ -552,3 +552,299 @@ html, body {
   font-size: 12.5px;
   color: #94a3b8;
 }
+
+/* ── Search & Filter Controls ── */
+.search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.search-box-wrapper {
+  position: relative;
+  flex: 1;
+}
+.search-box-wrapper svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  stroke: #94a3b8;
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  padding: 8px 12px 8px 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #ffffff;
+  outline: none;
+  transition: all 0.15s ease;
+}
+.search-input:focus {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08);
+}
+.game-card-clickable {
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+.game-card-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.05);
+}
+.game-cover-art {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #e2e8f0;
+}
+
+/* ── Modals & Dialogs ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal-overlay.hidden {
+  display: none !important;
+}
+.modal-container {
+  width: 100%;
+  max-width: 480px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  animation: modalFadeIn 0.15s ease-out;
+}
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal-header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.modal-close-btn:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+.modal-footer {
+  padding: 14px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── Toast Notifications ── */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 360px;
+  width: calc(100% - 40px);
+}
+.toast {
+  pointer-events: auto;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #3b82f6;
+  animation: toastSlideIn 0.2s ease-out;
+  color: #1e293b;
+}
+.toast.success {
+  border-left-color: #10b981;
+}
+.toast.error {
+  border-left-color: #ef4444;
+}
+.toast.info {
+  border-left-color: #3b82f6;
+}
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Utility Icon Button ── */
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-icon:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+/* ── Dark Mode (.dark) ── */
+body.dark {
+  background: #090d16;
+  color: #f1f5f9;
+}
+body.dark .app-container {
+  background: #0b0f19;
+  border-color: #1e293b;
+}
+body.dark .titlebar {
+  background: #0f172a;
+  border-bottom-color: #1e293b;
+}
+body.dark .titlebar-logo-text {
+  color: #cbd5e1;
+}
+body.dark .app-sidebar {
+  background: #0f172a;
+  border-right-color: #1e293b;
+}
+body.dark .nav-link {
+  color: #94a3b8;
+}
+body.dark .nav-link:hover {
+  background: #1e293b;
+  color: #f8fafc;
+}
+body.dark .nav-link.active {
+  background: #1e293b;
+  color: #38bdf8;
+}
+body.dark .nav-link.active svg {
+  stroke: #38bdf8;
+}
+body.dark .status-title {
+  color: #f8fafc;
+}
+body.dark .kpi-card,
+body.dark .content-card,
+body.dark .activity-item,
+body.dark .config-card {
+  background: #131b2e;
+  border-color: #1e293b;
+}
+body.dark .kpi-value,
+body.dark .card-title,
+body.dark .game-name,
+body.dark .section-title,
+body.dark .modal-title {
+  color: #f8fafc;
+}
+body.dark .config-input,
+body.dark .config-select,
+body.dark .search-input {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+}
+body.dark .config-input:focus,
+body.dark .config-select:focus,
+body.dark .search-input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+body.dark .btn-secondary,
+body.dark .btn-restore {
+  background: #1e293b;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+body.dark .btn-secondary:hover,
+body.dark .btn-restore:hover {
+  background: #334155;
+  color: #ffffff;
+}
+body.dark .btn-icon {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+body.dark .btn-icon:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+body.dark .modal-container {
+  background: #131b2e;
+  border-color: #334155;
+}
+body.dark .modal-header,
+body.dark .modal-footer {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+body.dark .modal-close-btn:hover {
+  background: #1e293b;
+  color: #f8fafc;
+}
+body.dark .toast {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+body.dark .game-item {
+  border-bottom-color: #1e293b;
+}
