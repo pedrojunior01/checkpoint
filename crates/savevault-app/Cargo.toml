@@ -44,7 +44,12 @@ serde_json = { workspace = true }
 dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_Foundation", "Win32_Security"] }
+windows-sys = { version = "0.52", features = [
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp"
+] }
 winrt-notification = "0.5.1"
 
 # Tauri — só incluída quando a feature 'desktop' está ativa

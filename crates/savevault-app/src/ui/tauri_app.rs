@@ -19,16 +19,69 @@ use crate::ui::state::{
 /// páginas de memória ociosas do processo, devolvendo RAM para o sistema.
 #[cfg(windows)]
 pub fn trim_process_memory() {
-    extern "system" {
-        fn SetProcessWorkingSetSize(
-            h_process: *mut std::ffi::c_void,
-            min: usize,
-            max: usize,
-        ) -> i32;
-        fn GetCurrentProcess() -> *mut std::ffi::c_void;
-    }
+    use std::collections::HashSet;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentProcessId, OpenProcess, SetProcessWorkingSetSize,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+    };
+
     unsafe {
+        // 1. Esvazia o Working Set do processo principal Rust
         SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+
+        let my_pid = GetCurrentProcessId();
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE || snapshot == 0 {
+            return;
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        let mut child_pids = HashSet::new();
+        let mut all_processes = Vec::new();
+
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                all_processes.push((entry.th32ProcessID, entry.th32ParentProcessID));
+                if entry.th32ParentProcessID == my_pid {
+                    child_pids.insert(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+
+        // Expande para processos netos e bisnetos do WebView2 (renderer, gpu, storage, network)
+        let mut added = true;
+        while added {
+            added = false;
+            for &(pid, ppid) in &all_processes {
+                if child_pids.contains(&ppid) && child_pids.insert(pid) {
+                    added = true;
+                }
+            }
+        }
+
+        // 2. Esvazia o Working Set de CADA subprocesso do WebView2 no Windows
+        for child_pid in child_pids {
+            let handle = OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                child_pid,
+            );
+            if handle != 0 && handle != INVALID_HANDLE_VALUE {
+                SetProcessWorkingSetSize(handle, usize::MAX, usize::MAX);
+                CloseHandle(handle);
+            }
+        }
     }
 }
 
@@ -349,7 +402,18 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
                     .build(app)?;
             }
 
-            // Limpeza inicial de memória após carregar
+            // Limpeza inicial retardada (após renderização do WebView2) e ciclo periódico em background
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                trim_process_memory();
+
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    trim_process_memory();
+                }
+            });
+
             trim_process_memory();
 
             Ok(())

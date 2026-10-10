@@ -18,6 +18,13 @@ use savevault_db::{
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
+    // Otimizações estritas de baixo consumo de memória RAM para o Chromium WebView2
+    #[cfg(windows)]
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization --in-process-gpu --disable-software-rasterizer --renderer-process-limit=1 --js-flags=\"--max-old-space-size=32 --optimize-for-size --lite-mode\" --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,AudioServiceOutOfProcess --enable-features=NetworkServiceInProcess --disable-extensions --disable-component-update --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio --disable-dev-shm-usage"
+    );
+
     // Carrega as variáveis de ambiente do arquivo .env (se existir)
     dotenvy::dotenv().ok();
 

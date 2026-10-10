@@ -183,6 +183,8 @@ async function updateCloudBadge() {
         const textEl = document.getElementById("cloud-badge-text");
         if (!badgeEl) return;
 
+        badgeEl.classList.remove("cloud-badge-onedrive", "cloud-badge-gdrive", "cloud-badge-warning");
+
         if (cloudCfg.enabled) {
             const isOneDrive = (cloudCfg.provider === "onedrive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("onedrive");
             const isGDrive = (cloudCfg.provider === "google_drive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("google");
@@ -190,21 +192,20 @@ async function updateCloudBadge() {
             if (isOneDrive) {
                 if (iconEl) iconEl.textContent = "☁️";
                 if (textEl) textEl.textContent = "OneDrive";
-                badgeEl.style.color = "#0284c7";
+                badgeEl.classList.add("cloud-badge-onedrive");
             } else if (isGDrive) {
                 if (iconEl) iconEl.textContent = "📁";
                 if (textEl) textEl.textContent = "Google Drive";
-                badgeEl.style.color = "#16a34a";
+                badgeEl.classList.add("cloud-badge-gdrive");
             } else {
                 if (iconEl) iconEl.textContent = "📁";
                 if (textEl) textEl.textContent = "Pasta Local";
-                badgeEl.style.color = "#475569";
             }
             badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}`;
         } else {
             if (iconEl) iconEl.textContent = "⚠️";
             if (textEl) textEl.textContent = "Nuvem Inativa";
-            badgeEl.style.color = "#f59e0b";
+            badgeEl.classList.add("cloud-badge-warning");
             badgeEl.title = "Clique para configurar a sincronização em nuvem";
         }
     } catch (e) {
@@ -537,12 +538,12 @@ async function loadNuvem() {
         const oneDriveFolder = oneDriveDetected ? (oneDriveDetected.savevault_folder || oneDriveDetected.sync_folder) : null;
 
         const quickOneDriveButton = (!isConnected && oneDriveFolder) ? `
-            <div style="margin-top:12px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
+            <div class="cloud-detected-alert" style="margin-top:12px;padding:12px 14px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;">
                 <div>
-                    <p style="font-weight:600;font-size:13px;color:#0369a1;">Microsoft OneDrive detectado no seu PC!</p>
-                    <p style="font-size:11.5px;color:#0284c7;font-family:ui-monospace, monospace;">${oneDriveFolder}</p>
+                    <p style="font-weight:600;font-size:13px;">Microsoft OneDrive detectado no seu PC!</p>
+                    <p style="font-size:11.5px;font-family:ui-monospace, monospace;margin-top:2px;">${oneDriveFolder}</p>
                 </div>
-                <button type="button" class="btn-primary" style="font-size:12px;padding:6px 12px;" onclick="window.quickEnableOneDrive('${oneDriveFolder.replace(/\\/g, "\\\\")}')">
+                <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px;" onclick="window.quickEnableOneDrive('${oneDriveFolder.replace(/\\/g, "\\\\")}')">
                     Ativar OneDrive Agora
                 </button>
             </div>
@@ -554,7 +555,7 @@ async function loadNuvem() {
                     <div style="display:flex;align-items:center;gap:12px;">
                         <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:20px;">${iconColor}</div>
                         <div>
-                            <p style="font-size:14px;font-weight:600;color:#0f172a;" class="game-name">${provName}</p>
+                            <p style="font-size:14px;font-weight:600;" class="game-name">${provName}</p>
                             <p style="font-size:12px;color:${isConnected ? "#10b981" : "#64748b"};font-weight:500;">
                                 ${isConnected ? "● Sincronização Ativa em Tempo Real" : "○ Sincronização Desativada"}
                             </p>
@@ -563,7 +564,7 @@ async function loadNuvem() {
                     <button onclick="window.openCloudModal()" class="btn-secondary">Alterar Provedor</button>
                 </div>
                 ${quickOneDriveButton}
-                <div style="font-size:12.5px;color:#334155;border-top:1px solid #f1f5f9;padding-top:12px;line-height:1.7;">
+                <div class="cloud-details-footer" style="font-size:12.5px;padding-top:12px;line-height:1.7;">
                     <p>📂 Diretório de Sincronização: <strong style="font-family:ui-monospace, monospace;font-size:12px;">${cachedCloudConfig.local_sync_path || "Nenhuma pasta configurada"}</strong></p>
                     <p>🔍 Serviços Detectados no Sistema: <strong>${cachedCloudConfig.detected_folders?.length ?? 0} serviço(s)</strong></p>
                 </div>
@@ -613,8 +614,8 @@ window.openCloudModal = function() {
                     <div style="display:flex;align-items:center;gap:10px;">
                         <span style="font-size:18px;">${icon}</span>
                         <div>
-                            <p style="font-weight:600;font-size:13px;color:#0f172a;" class="game-name">${f.name || "Nuvem"}</p>
-                            <p style="font-size:11.5px;color:#64748b;font-family:ui-monospace, monospace;">${targetFolder}</p>
+                            <p style="font-weight:600;font-size:13px;" class="game-name">${f.name || "Nuvem"}</p>
+                            <p class="game-subtext" style="font-size:11.5px;font-family:ui-monospace, monospace;">${targetFolder}</p>
                         </div>
                     </div>
                     <button type="button" class="btn-secondary" style="font-size:11px;padding:4px 10px;">Usar Esta</button>
