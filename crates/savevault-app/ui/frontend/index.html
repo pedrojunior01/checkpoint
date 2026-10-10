@@ -107,10 +107,10 @@
             </div>
           </div>
           <div class="status-actions">
-            <!-- Google Drive badge -->
-            <div class="cloud-badge">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M4.5 20l4.5-8 4.5 8H4.5z" fill="#34A853"/><path d="M12 4l4.5 8H7.5L12 4z" fill="#4285F4"/><path d="M16.5 4l4.5 8-4.5 8-4.5-8 4.5-8z" fill="#FBBC04"/></svg>
-              <span>Conectado</span>
+            <!-- Dynamic Cloud Badge -->
+            <div id="cloud-status-badge" class="cloud-badge" style="cursor:pointer;" title="Clique para gerenciar a nuvem">
+              <span id="cloud-badge-icon">☁️</span>
+              <span id="cloud-badge-text">OneDrive</span>
             </div>
             <button id="btn-reconcile" class="btn-primary">
               Sincronizar Agora

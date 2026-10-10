@@ -248,6 +248,8 @@ pub async fn process_file(
         }
     }
 
+    crate::notifications::notify_save_protected(&game_name, backup.version);
+
     Ok(Some((backup, item)))
 }
 
@@ -313,6 +315,73 @@ pub async fn run_pipeline(
     // Drenagem final no encerramento limpo
     while let Ok(event) = stable_rx.try_recv() {
         let _ = process_file(&db, &event, &backup_root, max_versions).await;
+    }
+
+    Ok(())
+}
+
+/// Loop de processamento de eventos estáveis integrado com o `SyncWorker`.
+/// Cria snapshots, persiste no banco e acorda o `SyncWorker` em segundo plano para upload imediato.
+pub async fn run_pipeline_with_worker(
+    db: Arc<tokio::sync::Mutex<Connection>>,
+    mut stable_rx: mpsc::Receiver<StableFileEvent>,
+    backup_root: PathBuf,
+    max_versions: u32,
+    mut shutdown_rx: watch::Receiver<bool>,
+    sync_worker: Option<Arc<crate::sync_worker::SyncWorker>>,
+) -> Result<()> {
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("Shutdown recebido no processador de eventos do pipeline.");
+                    break;
+                }
+            }
+            event_opt = stable_rx.recv() => {
+                match event_opt {
+                    Some(event) => {
+                        let res = process_file(
+                            &db,
+                            &event,
+                            &backup_root,
+                            max_versions,
+                        ).await;
+
+                        match res {
+                            Ok(Some((_backup, _queue_item))) => {
+                                if let Some(ref worker) = sync_worker {
+                                    worker.notify_new_item();
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::error!(
+                                    "Erro processando evento de {}: {}",
+                                    event.path.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::info!("Canal de eventos estáveis foi encerrado.");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Drenagem final no encerramento limpo
+    while let Ok(event) = stable_rx.try_recv() {
+        if let Ok(Some((_backup, _queue_item))) =
+            process_file(&db, &event, &backup_root, max_versions).await
+        {
+            if let Some(ref worker) = sync_worker {
+                worker.notify_new_item();
+            }
+        }
     }
 
     Ok(())

@@ -206,6 +206,7 @@ pub struct DevUiState {
     last_error: Mutex<Option<String>>,
     last_reconciliation_report: Mutex<Option<ReconciliationReport>>,
     last_reconcile_time: Mutex<Option<DateTime<Utc>>>,
+    pub sync_worker: Mutex<Option<Arc<crate::sync_worker::SyncWorker>>>,
 }
 
 impl DevUiState {
@@ -229,7 +230,14 @@ impl DevUiState {
             last_error: Mutex::new(None),
             last_reconciliation_report: Mutex::new(None),
             last_reconcile_time: Mutex::new(None),
+            sync_worker: Mutex::new(None),
         }
+    }
+
+    /// Define a instância ativa do SyncWorker para comunicação em tempo real com a UI.
+    pub async fn set_sync_worker(&self, worker: Arc<crate::sync_worker::SyncWorker>) {
+        let mut lock = self.sync_worker.lock().await;
+        *lock = Some(worker);
     }
 
     /// Registra um evento no log em memória da DEV-UI.
@@ -893,7 +901,7 @@ impl DevUiState {
         })
     }
 
-    /// Retorna as configurações atuais de nuvem.
+    /// Retorna as configurações atuais de nuvem com auto-detecção de OneDrive e serviços locais.
     pub async fn get_cloud_config(&self) -> Result<CloudConfigView> {
         let config_path = self.config_path();
         let config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
@@ -903,19 +911,41 @@ impl DevUiState {
             .local_sync_path
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                // Se não há caminho configurado, usa a pasta do OneDrive detectada automaticamente como default inteligente
+                detected
+                    .iter()
+                    .find(|d| d.provider_type == "onedrive")
+                    .or_else(|| detected.first())
+                    .map(|d| d.savevault_folder.display().to_string())
+                    .unwrap_or_default()
+            });
 
-        let enabled = config.cloud.provider != "none" && !local_path.is_empty();
+        let effective_provider = if config.cloud.provider == "none" {
+            "none".to_string()
+        } else if !local_path.is_empty() {
+            if local_path.to_lowercase().contains("onedrive") {
+                "onedrive".to_string()
+            } else if local_path.to_lowercase().contains("google") {
+                "google_drive".to_string()
+            } else {
+                config.cloud.provider
+            }
+        } else {
+            config.cloud.provider
+        };
+
+        let enabled = effective_provider != "none" && !local_path.is_empty();
 
         Ok(CloudConfigView {
-            provider: config.cloud.provider,
+            provider: effective_provider,
             local_sync_path: local_path,
             enabled,
             detected_folders: detected,
         })
     }
 
-    /// Atualiza as configurações de nuvem.
+    /// Atualiza as configurações de nuvem e notifica o SyncWorker imediatamente.
     pub async fn update_cloud_config(
         &self,
         provider: Option<String>,
@@ -942,11 +972,25 @@ impl DevUiState {
             if !en {
                 config.cloud.provider = "none".to_string();
             } else if config.cloud.provider == "none" {
-                config.cloud.provider = "local_folder".to_string();
+                config.cloud.provider = "onedrive".to_string();
             }
         }
 
         config.save(&config_path)?;
+
+        // Notifica o worker em tempo de execução
+        if let Some(ref worker) = *self.sync_worker.lock().await {
+            worker
+                .update_config(crate::sync_worker::SyncWorkerConfig {
+                    provider: config.cloud.provider.clone(),
+                    local_sync_path: config.cloud.local_sync_path.clone(),
+                    reconciliation_interval: std::time::Duration::from_secs(60),
+                    max_attempts: 5,
+                    base_backoff_ms: 2000,
+                })
+                .await;
+            worker.notify_new_item();
+        }
 
         self.record_event(
             DevUiEventLevel::Info,

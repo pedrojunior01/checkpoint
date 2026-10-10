@@ -105,6 +105,9 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     let config = Config::load(&config_path).unwrap_or_default();
     let _ = config.save(&config_path);
 
+    // Inicializa subsistema de notificações do Windows Toast
+    savevault_app::notifications::init_from_config(&config.notifications);
+
     let db = savevault_db::Database::open(&config.paths.database_path)?;
     let locations_repo = savevault_db::repositories::SaveLocationsRepo::new(&db.conn);
     let all_locations = locations_repo.list_all().unwrap_or_default();
@@ -116,6 +119,18 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
         config.general.max_versions,
     ));
 
+    let sync_worker = Arc::new(savevault_app::SyncWorker::new(
+        db_conn.clone(),
+        config.paths.backup_dir.clone(),
+        savevault_app::SyncWorkerConfig {
+            provider: config.cloud.provider.clone(),
+            local_sync_path: config.cloud.local_sync_path.clone(),
+            reconciliation_interval: std::time::Duration::from_secs(60),
+            max_attempts: 5,
+            base_backoff_ms: 2000,
+        },
+    ));
+
     let state = Arc::new(savevault_app::DevUiState::new(
         db_conn.clone(),
         config.paths.database_path.clone(),
@@ -124,11 +139,13 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
         std::time::Duration::from_secs(config.general.reconciliation_interval_secs),
     ));
 
-    // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, servidor HTTP)
+    // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, sync worker, servidor HTTP)
     let state_bg = state.clone();
     let config_bg = config.clone();
     let db_conn_bg = db_conn.clone();
     let reconciler_bg = reconciler.clone();
+    let sync_worker_bg = sync_worker.clone();
+
     std::thread::Builder::new()
         .name("savevault-backend".into())
         .stack_size(16 * 1024 * 1024)
@@ -140,19 +157,29 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                 .build()
                 .expect("Falha ao criar runtime tokio");
             rt.block_on(async move {
+                // Registra o worker no DevUiState
+                state_bg.set_sync_worker(sync_worker_bg.clone()).await;
+
                 let reconciler_config = savevault_app::ReconciliationConfig::new(
                     std::time::Duration::from_secs(config_bg.general.reconciliation_interval_secs),
                 );
                 let (shutdown_tx, pipeline_shutdown_rx) = tokio::sync::watch::channel(false);
                 let recon_shutdown_rx = shutdown_tx.subscribe();
                 let server_shutdown_rx = shutdown_tx.subscribe();
+                let worker_shutdown_rx = shutdown_tx.subscribe();
 
-                // Reconciler
+                // Reconciler periódica local
                 let _recon_handle = tokio::spawn(savevault_app::run_reconciliation_loop(
                     reconciler_bg.clone(),
                     reconciler_config,
                     recon_shutdown_rx,
                 ));
+
+                // SyncWorker em segundo plano (OneDrive / Cloud Folder)
+                let worker_task = sync_worker_bg.clone();
+                let _sync_handle = tokio::spawn(async move {
+                    let _ = worker_task.start(worker_shutdown_rx).await;
+                });
 
                 // Servidor HTTP (fallback dev-ui e API)
                 let _ = savevault_app::start_dev_ui_server(
@@ -162,7 +189,7 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                 )
                 .await;
 
-                // Watcher + Pipeline
+                // Watcher + Pipeline com notificação instantânea para o SyncWorker
                 let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
                 let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
                 watcher_config.debounce.debounce_duration =
@@ -175,13 +202,13 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                         file_access,
                     ) {
                         Ok((_watcher, rx)) => {
-                            let _ = savevault_app::pipeline::run_pipeline(
+                            let _ = savevault_app::pipeline::run_pipeline_with_worker(
                                 db_conn_bg.clone(),
                                 rx,
                                 config_bg.paths.backup_dir.clone(),
                                 config_bg.general.max_versions,
                                 pipeline_shutdown_rx,
-                                false,
+                                Some(sync_worker_bg.clone()),
                             )
                             .await;
                         }

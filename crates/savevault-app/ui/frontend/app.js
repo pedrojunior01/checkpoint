@@ -174,6 +174,49 @@ document.getElementById("link-ver-todos")?.addEventListener("click", (e) => {
 
 // ── Aba: Início ───────────────────────────────────────────────────────────────
 
+async function updateCloudBadge() {
+    try {
+        const cloudCfg = await invoke("get_cloud_config");
+        cachedCloudConfig = cloudCfg;
+        const badgeEl = document.getElementById("cloud-status-badge");
+        const iconEl = document.getElementById("cloud-badge-icon");
+        const textEl = document.getElementById("cloud-badge-text");
+        if (!badgeEl) return;
+
+        if (cloudCfg.enabled) {
+            const isOneDrive = (cloudCfg.provider === "onedrive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("onedrive");
+            const isGDrive = (cloudCfg.provider === "google_drive") || (cloudCfg.local_sync_path || "").toLowerCase().includes("google");
+            
+            if (isOneDrive) {
+                if (iconEl) iconEl.textContent = "☁️";
+                if (textEl) textEl.textContent = "OneDrive";
+                badgeEl.style.color = "#0284c7";
+            } else if (isGDrive) {
+                if (iconEl) iconEl.textContent = "📁";
+                if (textEl) textEl.textContent = "Google Drive";
+                badgeEl.style.color = "#16a34a";
+            } else {
+                if (iconEl) iconEl.textContent = "📁";
+                if (textEl) textEl.textContent = "Pasta Local";
+                badgeEl.style.color = "#475569";
+            }
+            badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}`;
+        } else {
+            if (iconEl) iconEl.textContent = "⚠️";
+            if (textEl) textEl.textContent = "Nuvem Inativa";
+            badgeEl.style.color = "#f59e0b";
+            badgeEl.title = "Clique para configurar a sincronização em nuvem";
+        }
+    } catch (e) {
+        console.error("Erro ao atualizar badge de nuvem:", e);
+    }
+}
+
+document.getElementById("cloud-status-badge")?.addEventListener("click", () => {
+    showTab("nav-nuvem");
+    loadNuvem();
+});
+
 async function loadInicio() {
     try {
         const data = await invoke("get_dashboard_status");
@@ -201,6 +244,8 @@ async function loadInicio() {
     } catch (e) {
         console.error("Erro ao carregar jogos recentes:", e);
     }
+
+    updateCloudBadge();
 }
 
 function renderJogosRecentes(locations) {
@@ -474,13 +519,34 @@ async function loadNuvem() {
     try {
         cachedCloudConfig = await invoke("get_cloud_config");
         const prov = cachedCloudConfig.provider;
-        const provName = prov === "onedrive" ? "Microsoft OneDrive" :
-                         prov === "google_drive" ? "Google Drive" :
+        const localPath = cachedCloudConfig.local_sync_path || "";
+        const isOneDrive = (prov === "onedrive") || localPath.toLowerCase().includes("onedrive");
+        const isGDrive = (prov === "google_drive") || localPath.toLowerCase().includes("google");
+
+        const provName = isOneDrive ? "Microsoft OneDrive" :
+                         isGDrive ? "Google Drive" :
                          prov === "local_folder" ? "Pasta Sincronizada Local" : "Nenhum (Desativado)";
 
         const isConnected = cachedCloudConfig.enabled;
-        const iconBg = isConnected ? "#dcfce7" : "#f1f5f9";
+        const iconBg = isConnected ? (isOneDrive ? "#e0f2fe" : "#dcfce7") : "#f1f5f9";
         const iconColor = isConnected ? "☁️" : "📁";
+
+        const oneDriveDetected = (cachedCloudConfig.detected_folders || []).find(
+            f => (f.provider_type === "onedrive") || (f.name || "").toLowerCase().includes("onedrive")
+        );
+        const oneDriveFolder = oneDriveDetected ? (oneDriveDetected.savevault_folder || oneDriveDetected.sync_folder) : null;
+
+        const quickOneDriveButton = (!isConnected && oneDriveFolder) ? `
+            <div style="margin-top:12px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <p style="font-weight:600;font-size:13px;color:#0369a1;">Microsoft OneDrive detectado no seu PC!</p>
+                    <p style="font-size:11.5px;color:#0284c7;font-family:ui-monospace, monospace;">${oneDriveFolder}</p>
+                </div>
+                <button type="button" class="btn-primary" style="font-size:12px;padding:6px 12px;" onclick="window.quickEnableOneDrive('${oneDriveFolder.replace(/\\/g, "\\\\")}')">
+                    Ativar OneDrive Agora
+                </button>
+            </div>
+        ` : "";
 
         container.innerHTML = `
             <div class="content-card" style="display:flex;flex-direction:column;gap:14px;">
@@ -490,12 +556,13 @@ async function loadNuvem() {
                         <div>
                             <p style="font-size:14px;font-weight:600;color:#0f172a;" class="game-name">${provName}</p>
                             <p style="font-size:12px;color:${isConnected ? "#10b981" : "#64748b"};font-weight:500;">
-                                ${isConnected ? "● Sincronização Ativa" : "○ Sincronização Desativada"}
+                                ${isConnected ? "● Sincronização Ativa em Tempo Real" : "○ Sincronização Desativada"}
                             </p>
                         </div>
                     </div>
                     <button onclick="window.openCloudModal()" class="btn-secondary">Alterar Provedor</button>
                 </div>
+                ${quickOneDriveButton}
                 <div style="font-size:12.5px;color:#334155;border-top:1px solid #f1f5f9;padding-top:12px;line-height:1.7;">
                     <p>📂 Diretório de Sincronização: <strong style="font-family:ui-monospace, monospace;font-size:12px;">${cachedCloudConfig.local_sync_path || "Nenhuma pasta configurada"}</strong></p>
                     <p>🔍 Serviços Detectados no Sistema: <strong>${cachedCloudConfig.detected_folders?.length ?? 0} serviço(s)</strong></p>
@@ -506,10 +573,25 @@ async function loadNuvem() {
     }
 }
 
+window.quickEnableOneDrive = async function(folderPath) {
+    try {
+        await invoke("update_cloud_config", {
+            provider: "onedrive",
+            localSyncPath: folderPath,
+            enabled: true,
+        });
+        showToast("Sincronização com Microsoft OneDrive ativada!", "success");
+        await loadNuvem();
+        await updateCloudBadge();
+    } catch (e) {
+        showToast(`Erro ao ativar OneDrive: ${e}`, "error");
+    }
+};
+
 window.openCloudModal = function() {
     const modal = document.getElementById("modal-cloud-config");
     const listEl = document.getElementById("cloud-detected-list");
-    const customInput = document.getElementById("cloud-modal-custom-path") || document.getElementById("cloud-custom-path");
+    const customInput = document.getElementById("cloud-custom-path");
 
     if (customInput && cachedCloudConfig) {
         customInput.value = cachedCloudConfig.local_sync_path || "";
@@ -520,15 +602,25 @@ window.openCloudModal = function() {
         if (folders.length === 0) {
             listEl.innerHTML = `<p style="font-size:12px;color:#94a3b8;">Nenhum cliente de nuvem padrão (OneDrive/Drive) detectado automaticamente nas pastas comuns.</p>`;
         } else {
-            listEl.innerHTML = folders.map(f => `
-                <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${f.provider}', '${f.path.replace(/\\/g, "\\\\")}')">
-                    <div>
-                        <p style="font-weight:600;font-size:13px;">${f.name}</p>
-                        <p style="font-size:11.5px;color:#64748b;font-family:ui-monospace, monospace;">${f.path}</p>
+            listEl.innerHTML = folders.map(f => {
+                const targetFolder = f.savevault_folder || f.sync_folder || f.path || "";
+                const safePath = targetFolder.replace(/\\/g, "\\\\");
+                const provType = f.provider_type || f.provider || "onedrive";
+                const isOneDrive = provType === "onedrive" || targetFolder.toLowerCase().includes("onedrive");
+                const icon = isOneDrive ? "☁️" : "📁";
+                return `
+                <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${provType}', '${safePath}')">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:18px;">${icon}</span>
+                        <div>
+                            <p style="font-weight:600;font-size:13px;color:#0f172a;" class="game-name">${f.name || "Nuvem"}</p>
+                            <p style="font-size:11.5px;color:#64748b;font-family:ui-monospace, monospace;">${targetFolder}</p>
+                        </div>
                     </div>
-                    <button type="button" class="btn-secondary" style="font-size:11px;padding:4px 8px;">Usar Esta</button>
+                    <button type="button" class="btn-secondary" style="font-size:11px;padding:4px 10px;">Usar Esta</button>
                 </div>
-            `).join("");
+            `;
+            }).join("");
         }
     }
 
@@ -559,7 +651,16 @@ document.getElementById("btn-save-cloud")?.addEventListener("click", async () =>
     }
 
     try {
-        const provider = customPath ? "local_folder" : "none";
+        let provider = "none";
+        if (customPath) {
+            if (customPath.toLowerCase().includes("onedrive")) {
+                provider = "onedrive";
+            } else if (customPath.toLowerCase().includes("google")) {
+                provider = "google_drive";
+            } else {
+                provider = "local_folder";
+            }
+        }
         const enabled = Boolean(customPath);
         await invoke("update_cloud_config", {
             provider,
@@ -568,7 +669,8 @@ document.getElementById("btn-save-cloud")?.addEventListener("click", async () =>
         });
         showToast("Configuração da nuvem salva com sucesso!", "success");
         document.getElementById("modal-cloud-config")?.classList.add("hidden");
-        loadNuvem();
+        await loadNuvem();
+        await updateCloudBadge();
     } catch (e) {
         showToast(`Erro ao salvar nuvem: ${e}`, "error");
     } finally {
