@@ -175,9 +175,60 @@ document.getElementById("link-ver-todos")?.addEventListener("click", (e) => {
 // ── Aba: Início ───────────────────────────────────────────────────────────────
 
 // Ícones vetoriais SVG oficiais dos provedores de nuvem
-const SVG_GDRIVE = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;" viewBox="0 0 24 24" fill="none"><path d="M4.5 20l4.5-8 4.5 8H4.5z" fill="#34A853"/><path d="M12 4l4.5 8H7.5L12 4z" fill="#4285F4"/><path d="M16.5 4l4.5 8-4.5 8-4.5-8 4.5-8z" fill="#FBBC04"/></svg>`;
-const SVG_ONEDRIVE = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;color:#0078D4;" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>`;
-const SVG_CLOUD_WARN = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;color:#d97706;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+function getGoogleDriveIcon(size = 18) {
+    const height = Math.round(size * 78 / 87.3);
+    return `<svg style="width:${size}px;height:${height}px;flex-shrink:0;vertical-align:middle;" viewBox="0 0 87.3 78" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+        <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+        <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+        <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+        <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+        <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+    </svg>`;
+}
+
+function getOneDriveIcon(size = 20) {
+    const height = Math.round(size * 18 / 24);
+    return `<svg style="width:${size}px;height:${height}px;flex-shrink:0;vertical-align:middle;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M10.15 17.5H4.25A3.25 3.25 0 0 1 1 14.25a3.25 3.25 0 0 1 2.94-3.23A4.5 4.5 0 0 1 12.63 9.4a4.48 4.48 0 0 1 2.27 1.58A5 5 0 0 0 10.15 17.5z" fill="#0364B8"/>
+        <path d="M18.5 17.5h-8.35a5 5 0 0 1 4.75-6.52c.6 0 1.18.1 1.72.3A4.25 4.25 0 0 1 18.5 9a4.25 4.25 0 0 1 4.25 4.25A4.25 4.25 0 0 1 18.5 17.5z" fill="#1490DF"/>
+        <path d="M18.5 17.5h-8.35a4.98 4.98 0 0 1 2.68-4.42 4.24 4.24 0 0 1 2.07-.58 4.25 4.25 0 0 1 3.6 2 4.25 4.25 0 0 1 0 3z" fill="#28A8EA"/>
+    </svg>`;
+}
+
+function getCloudWarnIcon(size = 18) {
+    return `<svg style="width:${size}px;height:${size}px;flex-shrink:0;vertical-align:middle;color:#d97706;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+}
+
+function identifyCloudProvider(providerType, path = "", name = "") {
+    const p = (providerType || "").toLowerCase();
+    const s = (path || "").toLowerCase();
+    const n = (name || "").toLowerCase();
+
+    // 1. OneDrive verificado primeiro para evitar falso-positivo com substring "drive"
+    const isOneDrive = (p === "onedrive") || n.includes("onedrive") || s.includes("onedrive");
+    if (isOneDrive) {
+        return "onedrive";
+    }
+
+    // 2. Google Drive
+    const isGDrive = (p === "google_drive")
+        || n.includes("google")
+        || n.includes("drive")
+        || s.includes("google")
+        || s.includes("meu drive")
+        || s.includes("my drive")
+        || s.startsWith("g:")
+        || s.startsWith("h:");
+    if (isGDrive) {
+        return "google_drive";
+    }
+
+    if (p === "local_folder" || s.length > 0) {
+        return "local_folder";
+    }
+    return "none";
+}
 
 // Resolução de imagem de capa quando a URL estática 404
 window.handleCoverError = async function(img, appId, initials, gradClass) {
@@ -207,33 +258,26 @@ async function updateCloudBadge() {
 
         badgeEl.classList.remove("cloud-badge-onedrive", "cloud-badge-gdrive", "cloud-badge-warning");
 
-        const syncPath = (cloudCfg.local_sync_path || "").toLowerCase();
-        const isOneDrive = (cloudCfg.provider === "onedrive") || syncPath.includes("onedrive");
-        const isGDrive = (cloudCfg.provider === "google_drive") 
-            || syncPath.includes("google") 
-            || syncPath.includes("drive") 
-            || syncPath.includes("meu drive") 
-            || syncPath.startsWith("g:") 
-            || syncPath.startsWith("h:");
+        const identified = identifyCloudProvider(cloudCfg.provider, cloudCfg.local_sync_path);
 
         if (cloudCfg.enabled) {
-            if (isGDrive) {
-                if (iconEl) iconEl.innerHTML = SVG_GDRIVE;
+            if (identified === "google_drive") {
+                if (iconEl) iconEl.innerHTML = getGoogleDriveIcon(17);
                 if (textEl) textEl.textContent = "Google Drive";
                 badgeEl.classList.add("cloud-badge-gdrive");
                 badgeEl.title = `Google Drive Conectado em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
-            } else if (isOneDrive) {
-                if (iconEl) iconEl.innerHTML = SVG_ONEDRIVE;
+            } else if (identified === "onedrive") {
+                if (iconEl) iconEl.innerHTML = getOneDriveIcon(19);
                 if (textEl) textEl.textContent = "OneDrive";
                 badgeEl.classList.add("cloud-badge-onedrive");
                 badgeEl.title = `Microsoft OneDrive Conectado em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             } else {
-                if (iconEl) iconEl.innerHTML = SVG_GDRIVE;
+                if (iconEl) iconEl.innerHTML = getGoogleDriveIcon(17);
                 if (textEl) textEl.textContent = "Sincronizado";
                 badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             }
         } else {
-            if (iconEl) iconEl.innerHTML = SVG_CLOUD_WARN;
+            if (iconEl) iconEl.innerHTML = getCloudWarnIcon(17);
             if (textEl) textEl.textContent = "Nuvem Inativa";
             badgeEl.classList.add("cloud-badge-warning");
             badgeEl.title = "Clique para configurar a sincronização em nuvem";
@@ -553,21 +597,19 @@ async function loadNuvem() {
         cachedCloudConfig = await invoke("get_cloud_config");
         const prov = cachedCloudConfig.provider;
         const localPath = cachedCloudConfig.local_sync_path || "";
-        const isOneDrive = (prov === "onedrive") || localPath.toLowerCase().includes("onedrive");
-        const isGDrive = (prov === "google_drive")
-            || localPath.toLowerCase().includes("google")
-            || localPath.toLowerCase().includes("drive")
-            || localPath.toLowerCase().includes("meu drive")
-            || localPath.toLowerCase().startsWith("g:")
-            || localPath.toLowerCase().startsWith("h:");
+        const identified = identifyCloudProvider(prov, localPath);
 
-        const provName = isOneDrive ? "Microsoft OneDrive" :
-                         isGDrive ? "Google Drive" :
+        const provName = identified === "onedrive" ? "Microsoft OneDrive" :
+                         identified === "google_drive" ? "Google Drive" :
                          prov === "local_folder" ? "Pasta Sincronizada Local" : "Nenhum (Desativado)";
 
         const isConnected = cachedCloudConfig.enabled;
-        const iconBg = isConnected ? (isOneDrive ? "#e0f2fe" : "#dcfce7") : "#f1f5f9";
-        const iconHtml = isGDrive ? SVG_GDRIVE : isOneDrive ? SVG_ONEDRIVE : "📁";
+        const iconBg = isConnected 
+            ? (identified === "onedrive" ? "rgba(0,120,212,0.12)" : "rgba(0,172,71,0.12)") 
+            : "rgba(100,116,139,0.12)";
+        const iconHtml = identified === "google_drive" ? getGoogleDriveIcon(26) 
+                       : identified === "onedrive" ? getOneDriveIcon(28) 
+                       : "📁";
 
         const oneDriveDetected = (cachedCloudConfig.detected_folders || []).find(
             f => (f.provider_type === "onedrive") || (f.name || "").toLowerCase().includes("onedrive")
@@ -576,9 +618,12 @@ async function loadNuvem() {
 
         const quickOneDriveButton = (!isConnected && oneDriveFolder) ? `
             <div class="cloud-detected-alert" style="margin-top:12px;padding:12px 14px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                    <p style="font-weight:600;font-size:13px;">Microsoft OneDrive detectado no seu PC!</p>
-                    <p style="font-size:11.5px;font-family:ui-monospace, monospace;margin-top:2px;">${oneDriveFolder}</p>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    ${getOneDriveIcon(22)}
+                    <div>
+                        <p style="font-weight:600;font-size:13px;">Microsoft OneDrive detectado no seu PC!</p>
+                        <p style="font-size:11.5px;font-family:ui-monospace, monospace;margin-top:2px;">${oneDriveFolder}</p>
+                    </div>
                 </div>
                 <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px;" onclick="window.quickEnableOneDrive('${oneDriveFolder.replace(/\\/g, "\\\\")}')">
                     Ativar OneDrive Agora
@@ -590,7 +635,7 @@ async function loadNuvem() {
             <div class="content-card" style="display:flex;flex-direction:column;gap:14px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div style="display:flex;align-items:center;gap:12px;">
-                        <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:20px;">${iconHtml}</div>
+                        <div style="width:42px;height:42px;border-radius:10px;background:${iconBg};display:flex;align-items:center;justify-content:center;">${iconHtml}</div>
                         <div>
                             <p style="font-size:14px;font-weight:600;" class="game-name">${provName}</p>
                             <p style="font-size:12px;color:${isConnected ? "#10b981" : "#64748b"};font-weight:500;">
@@ -643,17 +688,15 @@ window.openCloudModal = function() {
             listEl.innerHTML = folders.map(f => {
                 const targetFolder = f.savevault_folder || f.sync_folder || f.path || "";
                 const safePath = targetFolder.replace(/\\/g, "\\\\");
-                const provType = f.provider_type || f.provider || "onedrive";
-                const isOneDrive = provType === "onedrive" || targetFolder.toLowerCase().includes("onedrive");
-                const isGDrive = provType === "google_drive"
-                    || targetFolder.toLowerCase().includes("google")
-                    || targetFolder.toLowerCase().includes("drive")
-                    || targetFolder.toLowerCase().includes("meu drive");
-                const icon = isGDrive ? SVG_GDRIVE : isOneDrive ? SVG_ONEDRIVE : "📁";
+                const provType = f.provider_type || f.provider || "";
+                const identified = identifyCloudProvider(provType, targetFolder, f.name);
+                const icon = identified === "onedrive" ? getOneDriveIcon(22) 
+                           : identified === "google_drive" ? getGoogleDriveIcon(20) 
+                           : "📁";
                 return `
-                <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${provType}', '${safePath}')">
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <span style="font-size:18px;">${icon}</span>
+                <div class="content-card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="window.selectCloudFolder('${provType || identified}', '${safePath}')">
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;">${icon}</span>
                         <div>
                             <p style="font-weight:600;font-size:13px;" class="game-name">${f.name || "Nuvem"}</p>
                             <p class="game-subtext" style="font-size:11.5px;font-family:ui-monospace, monospace;">${targetFolder}</p>

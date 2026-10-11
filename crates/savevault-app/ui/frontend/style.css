@@ -273,8 +273,8 @@ html, body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .cloud-badge svg {
-  width: 15px;
-  height: 15px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .btn-primary {
