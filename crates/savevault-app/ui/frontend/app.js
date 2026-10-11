@@ -800,6 +800,7 @@ async function loadConfig() {
         const cfg = await invoke("get_config");
 
         const elBackupDir = document.getElementById("cfg-backup-dir");
+        const elCloudSync = document.getElementById("cfg-cloud-sync-path");
         const elDbPath = document.getElementById("cfg-database-path");
         const elMaxVersions = document.getElementById("cfg-max-versions");
         const elReconcile = document.getElementById("cfg-reconcile-interval");
@@ -808,6 +809,7 @@ async function loadConfig() {
         const elAutostart = document.getElementById("cfg-autostart");
 
         if (elBackupDir) elBackupDir.value = cfg.backup_dir || "";
+        if (elCloudSync) elCloudSync.value = cfg.cloud_sync_path || "";
         if (elDbPath) elDbPath.value = cfg.database_path || "";
         if (elMaxVersions) elMaxVersions.value = String(cfg.max_versions || 10);
         if (elReconcile) elReconcile.value = String(cfg.reconciliation_interval_secs || 30);
@@ -829,6 +831,7 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
 
     try {
         const backupDir = document.getElementById("cfg-backup-dir")?.value?.trim() || "";
+        const cloudSyncPath = document.getElementById("cfg-cloud-sync-path")?.value?.trim() || null;
         const maxVersions = parseInt(document.getElementById("cfg-max-versions")?.value, 10) || 10;
         const reconciliationInterval = parseInt(document.getElementById("cfg-reconcile-interval")?.value, 10) || 30;
         const debounceMs = parseInt(document.getElementById("cfg-debounce-ms")?.value, 10) || 2000;
@@ -844,11 +847,14 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
             backup_dir: backupDir,
             database_path: databasePath,
             autostart,
+            cloud_sync_path: cloudSyncPath,
         };
 
         const result = await invoke("save_config", { newCfg: payload });
         showToast(result || "Configurações salvas com sucesso!", "success");
-        loadConfig();
+        await loadConfig();
+        await loadNuvem();
+        await updateCloudBadge();
     } catch (e) {
         showToast(`Erro ao salvar configurações: ${e}`, "error");
     } finally {
@@ -862,6 +868,14 @@ document.getElementById("btn-save-config")?.addEventListener("click", async () =
 // Botão Abrir Pasta de Backups no Explorer
 document.getElementById("btn-open-backup-dir")?.addEventListener("click", () => {
     const path = document.getElementById("cfg-backup-dir")?.value;
+    if (path) {
+        invoke("open_path_in_explorer", { path }).catch(err => showToast(`Erro: ${err}`, "error"));
+    }
+});
+
+// Botão Abrir Pasta de Nuvem no Explorer
+document.getElementById("btn-open-cloud-sync-dir")?.addEventListener("click", () => {
+    const path = document.getElementById("cfg-cloud-sync-path")?.value;
     if (path) {
         invoke("open_path_in_explorer", { path }).catch(err => showToast(`Erro: ${err}`, "error"));
     }

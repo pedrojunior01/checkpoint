@@ -69,7 +69,7 @@ impl SyncWorkerConfig {
 /// Worker de sincronização em segundo plano.
 pub struct SyncWorker {
     pub db: Arc<Mutex<Connection>>,
-    pub backup_root: PathBuf,
+    backup_root: std::sync::RwLock<PathBuf>,
     config: Arc<RwLock<SyncWorkerConfig>>,
     custom_engine: Option<Arc<SyncEngine>>,
     is_running: Arc<AtomicBool>,
@@ -82,7 +82,7 @@ impl SyncWorker {
     pub fn new(db: Arc<Mutex<Connection>>, backup_root: PathBuf, config: SyncWorkerConfig) -> Self {
         Self {
             db,
-            backup_root,
+            backup_root: std::sync::RwLock::new(backup_root),
             config: Arc::new(RwLock::new(config)),
             custom_engine: None,
             is_running: Arc::new(AtomicBool::new(false)),
@@ -107,13 +107,25 @@ impl SyncWorker {
         };
         Self {
             db,
-            backup_root,
+            backup_root: std::sync::RwLock::new(backup_root),
             config: Arc::new(RwLock::new(config)),
             custom_engine: Some(engine),
             is_running: Arc::new(AtomicBool::new(false)),
             processing_lock: Arc::new(Mutex::new(())),
             notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Atualiza dinamicamente o diretório raiz de backups utilizado pelo worker.
+    pub fn update_backup_root(&self, new_root: PathBuf) {
+        if let Ok(mut lock) = self.backup_root.write() {
+            *lock = new_root;
+        }
+    }
+
+    /// Retorna o diretório raiz de backups atual.
+    pub fn get_backup_root(&self) -> PathBuf {
+        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
     }
 
     /// Retorna `true` se o loop do worker estiver em execução.
@@ -165,15 +177,16 @@ impl SyncWorker {
                 return Ok(0);
             }
 
+            let backup_root = self.get_backup_root();
             let provider = resolve_active_cloud_provider_with_path(
                 &provider_name,
-                &self.backup_root,
+                &backup_root,
                 local_path.as_deref(),
             );
 
             let engine = SyncEngine::with_config(
                 provider,
-                self.backup_root.clone(),
+                backup_root,
                 SyncEngineConfig {
                     max_attempts,
                     base_backoff_ms,

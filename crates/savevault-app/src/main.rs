@@ -120,6 +120,12 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     let _ = std::fs::create_dir_all(&config_dir);
     let _ = config.save(&config_path);
 
+    // Migração automática transparente de dados legados do SaveVault para checkpoint se aplicável
+    savevault_cloud::auto_migrate_legacy_cloud_folder(&config.paths.backup_dir);
+    if let Some(ref lsp) = config.cloud.local_sync_path {
+        savevault_cloud::auto_migrate_legacy_cloud_folder(lsp);
+    }
+
     // Inicializa subsistema de notificações do Windows Toast
     savevault_app::notifications::init_from_config(&config.notifications);
 

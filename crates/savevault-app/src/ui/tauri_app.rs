@@ -116,17 +116,7 @@ pub fn window_close(window: WebviewWindow) -> Result<(), String> {
 
 // ── Configuration & Explorer Commands ────────────────────────────────────────
 
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct ConfigDto {
-    pub max_versions: u32,
-    pub debounce_ms: u64,
-    pub reconciliation_interval_secs: u64,
-    pub log_level: String,
-    pub backup_dir: String,
-    pub database_path: String,
-    #[serde(default)]
-    pub autostart: bool,
-}
+pub use crate::ui::state::ConfigDto;
 
 fn config_path() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
@@ -146,6 +136,11 @@ pub fn get_config() -> Result<ConfigDto, String> {
     let path = config_path();
     let cfg = Config::load(&path).map_err(|e| e.to_string())?;
     let autostart = savevault_core::autostart::is_enabled().unwrap_or(false);
+    let cloud_sync_path = cfg
+        .cloud
+        .local_sync_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
     Ok(ConfigDto {
         max_versions: cfg.general.max_versions,
         debounce_ms: cfg.general.debounce_ms,
@@ -154,29 +149,16 @@ pub fn get_config() -> Result<ConfigDto, String> {
         backup_dir: cfg.paths.backup_dir.to_string_lossy().to_string(),
         database_path: cfg.paths.database_path.to_string_lossy().to_string(),
         autostart,
+        cloud_sync_path,
     })
 }
 
 #[tauri::command]
-pub fn save_config(new_cfg: ConfigDto) -> Result<String, String> {
-    let path = config_path();
-    let mut cfg = Config::load(&path).unwrap_or_default();
-    
-    cfg.general.max_versions = new_cfg.max_versions.max(1);
-    cfg.general.debounce_ms = new_cfg.debounce_ms.max(100);
-    cfg.general.reconciliation_interval_secs = new_cfg.reconciliation_interval_secs.max(5);
-    cfg.general.log_level = new_cfg.log_level;
-    cfg.paths.backup_dir = PathBuf::from(new_cfg.backup_dir);
-    
-    cfg.save(&path).map_err(|e| format!("Erro ao salvar arquivo de configuração: {}", e))?;
-
-    if new_cfg.autostart {
-        let _ = savevault_core::autostart::enable(None);
-    } else {
-        let _ = savevault_core::autostart::disable();
-    }
-
-    Ok("Configurações salvas com sucesso!".into())
+pub async fn save_config(
+    state: State<'_, Arc<DevUiState>>,
+    new_cfg: ConfigDto,
+) -> Result<String, String> {
+    state.update_config(new_cfg).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

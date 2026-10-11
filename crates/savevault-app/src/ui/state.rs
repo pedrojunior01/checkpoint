@@ -185,6 +185,21 @@ pub struct ExportResult {
     pub file_size_formatted: String,
 }
 
+/// DTO para transferência de configurações com o frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigDto {
+    pub max_versions: u32,
+    pub debounce_ms: u64,
+    pub reconciliation_interval_secs: u64,
+    pub log_level: String,
+    pub backup_dir: String,
+    pub database_path: String,
+    #[serde(default)]
+    pub autostart: bool,
+    #[serde(default)]
+    pub cloud_sync_path: Option<String>,
+}
+
 /// Configurações detalhadas da nuvem para a UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudConfigView {
@@ -198,7 +213,7 @@ pub struct CloudConfigView {
 pub struct DevUiState {
     pub db: Arc<Mutex<Connection>>,
     pub db_path: PathBuf,
-    pub backup_root: PathBuf,
+    backup_root: std::sync::RwLock<PathBuf>,
     pub reconciler: Option<Arc<Reconciler>>,
     pub reconciliation_interval: Duration,
     pub watcher_active: AtomicBool,
@@ -232,7 +247,7 @@ impl DevUiState {
         Self {
             db,
             db_path,
-            backup_root,
+            backup_root: std::sync::RwLock::new(backup_root),
             reconciler,
             reconciliation_interval,
             watcher_active: AtomicBool::new(true),
@@ -244,6 +259,21 @@ impl DevUiState {
             last_reconcile_time: Mutex::new(None),
             sync_worker: Mutex::new(None),
             steam_cover_cache: std::sync::Mutex::new(initial_covers),
+        }
+    }
+
+    /// Retorna o diretório raiz de backups configurado atualmente.
+    pub fn get_backup_root(&self) -> PathBuf {
+        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
+    }
+
+    /// Atualiza dinamicamente o diretório raiz de backups e notifica o reconciliador.
+    pub fn update_backup_root(&self, new_root: PathBuf) {
+        if let Ok(mut lock) = self.backup_root.write() {
+            *lock = new_root.clone();
+        }
+        if let Some(ref rec) = self.reconciler {
+            rec.update_backup_root(new_root);
         }
     }
 
@@ -419,7 +449,7 @@ impl DevUiState {
             app_status,
             db_status: "Connected".to_string(),
             db_path: self.db_path.to_string_lossy().to_string(),
-            backup_root: self.backup_root.to_string_lossy().to_string(),
+            backup_root: self.get_backup_root().to_string_lossy().to_string(),
             save_locations_count: locations_count,
             monitored_files_count,
             snapshots_count,
@@ -699,7 +729,7 @@ impl DevUiState {
 
             let safe_game_name = savevault_backup::snapshot::sanitize_name(&game_name);
             let physical_p = self
-                .backup_root
+                .get_backup_root()
                 .join(&safe_game_name)
                 .join("latest")
                 .join(&file_name);
@@ -914,7 +944,7 @@ impl DevUiState {
         )
         .await;
 
-        let res = restore_snapshot_with_db(&self.db, &self.backup_root, &req).await;
+        let res = restore_snapshot_with_db(&self.db, &self.get_backup_root(), &req).await;
 
         match res {
             Ok(report) => {
@@ -1144,6 +1174,7 @@ impl DevUiState {
             if !trimmed.is_empty() {
                 let pb = PathBuf::from(trimmed);
                 let _ = std::fs::create_dir_all(&pb);
+                savevault_cloud::auto_migrate_legacy_cloud_folder(&pb);
                 config.cloud.local_sync_path = Some(pb);
             }
         }
@@ -1160,6 +1191,7 @@ impl DevUiState {
 
         // Notifica o worker em tempo de execução
         if let Some(ref worker) = *self.sync_worker.lock().await {
+            worker.update_backup_root(self.get_backup_root());
             worker
                 .update_config(crate::sync_worker::SyncWorkerConfig {
                     provider: config.cloud.provider.clone(),
@@ -1183,6 +1215,95 @@ impl DevUiState {
         .await;
 
         self.get_cloud_config().await
+    }
+
+    /// Atualiza as configurações gerais e de diretórios, garantindo sincronização imediata
+    /// com Reconciler e SyncWorker em tempo de execução sem reiniciar o app.
+    pub async fn update_config(&self, new_cfg: ConfigDto) -> Result<String> {
+        let config_path = self.config_path();
+        let mut config = savevault_core::config::Config::load(&config_path).unwrap_or_default();
+
+        config.general.max_versions = new_cfg.max_versions.max(1);
+        config.general.debounce_ms = new_cfg.debounce_ms.max(100);
+        config.general.reconciliation_interval_secs = new_cfg.reconciliation_interval_secs.max(5);
+        config.general.log_level = new_cfg.log_level;
+
+        let trimmed_backup = new_cfg.backup_dir.trim();
+        if !trimmed_backup.is_empty() {
+            let pb = PathBuf::from(trimmed_backup);
+            let _ = std::fs::create_dir_all(&pb);
+
+            // Migração automática transparente de pastas legadas (SaveVault -> checkpoint)
+            savevault_cloud::auto_migrate_legacy_cloud_folder(&pb);
+
+            config.paths.backup_dir = pb.clone();
+            self.update_backup_root(pb.clone());
+
+            // Se o usuário apontou a pasta de backups para o Google Drive ou OneDrive,
+            // sincroniza também a pasta de cloud sync para garantir coerência completa
+            let lower = trimmed_backup.to_lowercase();
+            let is_cloud_target = lower.contains("google")
+                || lower.contains("drive")
+                || lower.contains("meu drive")
+                || lower.starts_with("g:")
+                || lower.starts_with("h:")
+                || lower.contains("onedrive");
+
+            if is_cloud_target {
+                config.cloud.local_sync_path = Some(pb.clone());
+                if lower.contains("onedrive") {
+                    config.cloud.provider = "onedrive".to_string();
+                } else {
+                    config.cloud.provider = "google_drive".to_string();
+                }
+            }
+        }
+
+        if let Some(csp) = new_cfg.cloud_sync_path {
+            let trimmed_csp = csp.trim();
+            if !trimmed_csp.is_empty() {
+                let pb_csp = PathBuf::from(trimmed_csp);
+                let _ = std::fs::create_dir_all(&pb_csp);
+                savevault_cloud::auto_migrate_legacy_cloud_folder(&pb_csp);
+                config.cloud.local_sync_path = Some(pb_csp);
+            }
+        }
+
+        config.save(&config_path)?;
+
+        if new_cfg.autostart {
+            let _ = savevault_core::autostart::enable(None);
+        } else {
+            let _ = savevault_core::autostart::disable();
+        }
+
+        // Atualiza e notifica SyncWorker em tempo de execução
+        if let Some(ref worker) = *self.sync_worker.lock().await {
+            worker.update_backup_root(self.get_backup_root());
+            worker
+                .update_config(crate::sync_worker::SyncWorkerConfig {
+                    provider: config.cloud.provider.clone(),
+                    local_sync_path: config.cloud.local_sync_path.clone(),
+                    reconciliation_interval: std::time::Duration::from_secs(60),
+                    max_attempts: 5,
+                    base_backoff_ms: 2000,
+                })
+                .await;
+            worker.notify_new_item();
+        }
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Configurações atualizadas e aplicadas".to_string(),
+            Some(format!(
+                "Backups: {}, Nuvem: {:?}",
+                config.paths.backup_dir.display(),
+                config.cloud.local_sync_path
+            )),
+        )
+        .await;
+
+        Ok("Configurações salvas e sincronizadas com sucesso!".to_string())
     }
 
     /// Executa manutenção preventiva no banco de dados SQLite (pruning de sync_queue antigas e VACUUM).
@@ -1221,7 +1342,7 @@ impl DevUiState {
 
     /// Cria um backup completo compactado (.ZIP) de todos os saves monitorados e snapshots.
     pub async fn export_backup_zip(&self) -> Result<ExportResult> {
-        let backup_dir = &self.backup_root;
+        let backup_dir = self.get_backup_root();
 
         if !backup_dir.exists() {
             anyhow::bail!("O diretório de backups ainda não foi criado ou não contém dados.");

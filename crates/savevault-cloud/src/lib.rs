@@ -252,7 +252,10 @@ impl CloudProvider for Box<dyn CloudProvider> {
 // Re-exports de conveniência
 pub use auth::AuthService;
 pub use google_drive::GoogleDriveProvider;
-pub use local_folder::{detect_cloud_folders, DetectedCloudFolder, LocalFolderProvider};
+pub use local_folder::{
+    auto_migrate_legacy_cloud_folder, copy_dir_all, detect_cloud_folders, DetectedCloudFolder,
+    LocalFolderProvider,
+};
 pub use onedrive::OneDriveProvider;
 pub use onedrive_auth::OneDriveAuthService;
 

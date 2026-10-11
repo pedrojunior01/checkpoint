@@ -95,7 +95,7 @@ impl Drop for ReconcileGuard {
 /// Reconciliador periódico de saves.
 pub struct Reconciler {
     pub db: Arc<tokio::sync::Mutex<Connection>>,
-    pub backup_root: PathBuf,
+    backup_root: std::sync::RwLock<PathBuf>,
     pub max_versions: u32,
     pub scanner: SaveScanner,
     is_reconciling: Arc<AtomicBool>,
@@ -109,7 +109,7 @@ impl Reconciler {
     ) -> Self {
         Self {
             db,
-            backup_root,
+            backup_root: std::sync::RwLock::new(backup_root),
             max_versions,
             scanner: SaveScanner::default(),
             is_reconciling: Arc::new(AtomicBool::new(false)),
@@ -124,11 +124,21 @@ impl Reconciler {
     ) -> Self {
         Self {
             db,
-            backup_root,
+            backup_root: std::sync::RwLock::new(backup_root),
             max_versions,
             scanner,
             is_reconciling: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn update_backup_root(&self, new_root: PathBuf) {
+        if let Ok(mut lock) = self.backup_root.write() {
+            *lock = new_root;
+        }
+    }
+
+    pub fn get_backup_root(&self) -> PathBuf {
+        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
     }
 
     /// Retorna se há uma reconciliação atualmente em execução.
@@ -290,7 +300,7 @@ impl Reconciler {
                         observed_at: disc.modified_at,
                     };
 
-                    match process_file(&self.db, &event, &self.backup_root, self.max_versions).await
+                    match process_file(&self.db, &event, &self.get_backup_root(), self.max_versions).await
                     {
                         Ok(Some((backup, _item))) => {
                             if is_new {

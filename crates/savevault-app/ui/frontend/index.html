@@ -221,7 +221,17 @@
               <button id="btn-open-backup-dir" class="btn-secondary" type="button">Abrir no Explorer</button>
             </div>
             <input id="cfg-backup-dir" type="text" class="config-input" placeholder="C:\Users\...\checkpoint_Backups" />
-            <span class="config-help">Diretório onde os arquivos de save são empacotados antes da sincronização.</span>
+            <span class="config-help">Diretório onde os arquivos de save são empacotados e versionados localmente.</span>
+          </div>
+
+          <!-- Pasta de Sincronização em Nuvem -->
+          <div class="config-card">
+            <div class="config-header">
+              <span class="config-label">Pasta de Sincronização em Nuvem</span>
+              <button id="btn-open-cloud-sync-dir" class="btn-secondary" type="button">Abrir no Explorer</button>
+            </div>
+            <input id="cfg-cloud-sync-path" type="text" class="config-input" placeholder="G:\Meu Drive\checkpoint" />
+            <span class="config-help">Diretório onde os backups são espelhados na nuvem (Google Drive, OneDrive ou pasta sincronizada).</span>
           </div>
 
           <!-- Banco de Dados -->

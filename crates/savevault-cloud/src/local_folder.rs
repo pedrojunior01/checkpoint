@@ -108,15 +108,85 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
     detected
 }
 
+/// Copia recursivamente um diretório para outro sem sobrescrever arquivos existentes com mesmo tamanho.
+pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if !src.exists() || !src.is_dir() {
+        return Ok(());
+    }
+    if src == dst {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        if file_name_str.starts_with(".tmp.") {
+            continue;
+        }
+        let target_path = dst.join(&file_name);
+        if entry_path.is_dir() {
+            copy_dir_all(&entry_path, &target_path)?;
+        } else {
+            let should_copy = if target_path.exists() {
+                let src_meta = entry.metadata().ok();
+                let dst_meta = std::fs::metadata(&target_path).ok();
+                match (src_meta, dst_meta) {
+                    (Some(s), Some(d)) => s.len() != d.len(),
+                    _ => false,
+                }
+            } else {
+                true
+            };
+            if should_copy {
+                let _ = std::fs::copy(&entry_path, &target_path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Migra automaticamente arquivos de pastas legadas (SaveVault) para a nova pasta (checkpoint).
+pub fn auto_migrate_legacy_cloud_folder(target: &Path) {
+    if !target.exists() {
+        let _ = std::fs::create_dir_all(target);
+    }
+    // 1. Verifica pasta irmã 'SaveVault'
+    if let Some(parent) = target.parent() {
+        let legacy_sibling = parent.join("SaveVault");
+        if legacy_sibling.exists() && legacy_sibling.is_dir() && legacy_sibling != target {
+            tracing::info!("Migrando saves legados de {} para {}", legacy_sibling.display(), target.display());
+            let _ = copy_dir_all(&legacy_sibling, target);
+        }
+    }
+    // 2. Verifica pasta legada do usuário em USERPROFILE\Google Drive\SaveVault_Backups
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        let legacy_user_backup = PathBuf::from(&user_profile).join("Google Drive").join("SaveVault_Backups");
+        if legacy_user_backup.exists() && legacy_user_backup.is_dir() && legacy_user_backup != target {
+            tracing::info!("Migrando backups locais legados de {} para {}", legacy_user_backup.display(), target.display());
+            let _ = copy_dir_all(&legacy_user_backup, target);
+        }
+        let legacy_user_savevault = PathBuf::from(&user_profile).join("Google Drive").join("SaveVault");
+        if legacy_user_savevault.exists() && legacy_user_savevault.is_dir() && legacy_user_savevault != target {
+            tracing::info!("Migrando backups legados de {} para {}", legacy_user_savevault.display(), target.display());
+            let _ = copy_dir_all(&legacy_user_savevault, target);
+        }
+    }
+}
+
 /// Resolve a pasta de backup dentro da raiz de sincronização:
-/// usa `checkpoint` se existir, ou fallback para `SaveVault` se o usuário já tiver saves anteriores.
+/// prioriza `checkpoint` e migra automaticamente dados anteriores de `SaveVault` se existirem.
 fn resolve_cloud_app_folder(root: &Path) -> PathBuf {
     let checkpoint = root.join("checkpoint");
     let legacy = root.join("SaveVault");
     if checkpoint.exists() {
+        auto_migrate_legacy_cloud_folder(&checkpoint);
         checkpoint
     } else if legacy.exists() {
-        legacy
+        let _ = std::fs::create_dir_all(&checkpoint);
+        auto_migrate_legacy_cloud_folder(&checkpoint);
+        checkpoint
     } else {
         checkpoint
     }
