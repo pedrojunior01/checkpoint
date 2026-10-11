@@ -77,6 +77,8 @@ pub struct LocationView {
     pub last_check: String,
     #[serde(default)]
     pub cover_url: Option<String>,
+    #[serde(default)]
+    pub last_backup_time: Option<String>,
 }
 
 /// Arquivo físico descoberto durante varredura manual.
@@ -440,9 +442,59 @@ impl DevUiState {
         };
 
         let conn = self.db.lock().await;
+
+        // Auto-correção preventiva: converte entradas de arquivos conhecidos salvas anteriormente como 'directory'
+        let _ = conn.execute(
+            "UPDATE save_locations 
+             SET location_type = 'file' 
+             WHERE location_type = 'directory' 
+               AND (path LIKE '%.sl2' OR path LIKE '%.sav' OR path LIKE '%.dat' OR path LIKE '%.vdf' OR path LIKE '%.bin')",
+            [],
+        );
+
         let loc_repo = SaveLocationsRepo::new(&conn);
         let games_repo = GamesRepo::new(&conn);
         let files_repo = FilesRepo::new(&conn);
+
+        // Mapeamento de último backup por save_location_id
+        let mut last_backups: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT f.save_location_id, MAX(b.created_at)
+             FROM backups b
+             JOIN files f ON b.file_id = f.id
+             GROUP BY f.save_location_id"
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                let loc_id_str: String = r.get(0)?;
+                let created_at: String = r.get(1)?;
+                Ok((loc_id_str, created_at))
+            }) {
+                for r in rows.flatten() {
+                    if let Ok(uid) = Uuid::parse_str(&r.0) {
+                        last_backups.insert(uid, r.1);
+                    }
+                }
+            }
+        }
+
+        // Fallback: se o arquivo foi modificado/monitorado mas ainda não tem backup registrado
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT save_location_id, MAX(modified_at)
+             FROM files
+             GROUP BY save_location_id"
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                let loc_id_str: String = r.get(0)?;
+                let mod_at: String = r.get(1)?;
+                Ok((loc_id_str, mod_at))
+            }) {
+                for r in rows.flatten() {
+                    if let Ok(uid) = Uuid::parse_str(&r.0) {
+                        last_backups.entry(uid).or_insert(r.1);
+                    }
+                }
+            }
+        }
 
         let locations = loc_repo.list_all().unwrap_or_default();
         let mut views = Vec::new();
@@ -471,6 +523,12 @@ impl DevUiState {
                 .unwrap_or_else(|| "Generic".into());
 
             let exists_on_disk = loc.path.exists();
+            if loc.path.is_file() && loc.location_type != SaveLocationType::File {
+                let _ = conn.execute(
+                    "UPDATE save_locations SET location_type = 'file' WHERE id = ?1",
+                    [loc.id.to_string()],
+                );
+            }
             let files = files_repo.list_by_location(loc.id).unwrap_or_default();
 
             // Resolução de capa do jogo:
@@ -499,6 +557,8 @@ impl DevUiState {
                 }
             });
 
+            let last_backup_time = last_backups.get(&loc.id).cloned();
+
             views.push(LocationView {
                 id: loc.id,
                 game_id: loc.game_id,
@@ -510,8 +570,20 @@ impl DevUiState {
                 monitored_files_count: files.len(),
                 last_check: Utc::now().format("%H:%M:%S").to_string(),
                 cover_url,
+                last_backup_time,
             });
         }
+
+        // Ordena por atividade mais recente (último backup/modificação decrescente)
+        // Jogos sem backup ficam no final ordenados alfabeticamente
+        views.sort_by(|a, b| {
+            match (&b.last_backup_time, &a.last_backup_time) {
+                (Some(tb), Some(ta)) => tb.cmp(ta),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.game_name.to_lowercase().cmp(&b.game_name.to_lowercase()),
+            }
+        });
 
         Ok(views)
     }
@@ -986,6 +1058,7 @@ impl DevUiState {
             monitored_files_count: 0,
             last_check: Utc::now().format("%H:%M:%S").to_string(),
             cover_url: None,
+            last_backup_time: None,
         })
     }
 

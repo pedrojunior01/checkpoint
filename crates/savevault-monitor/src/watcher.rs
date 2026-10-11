@@ -659,10 +659,19 @@ pub fn resolve_watch_targets(locations: &[SaveLocation]) -> Vec<WatchTarget> {
                 }
             }
             SaveLocationType::Directory => {
-                targets.push(WatchTarget {
-                    desired_path: loc.path.clone(),
-                    mode: RecursiveMode::Recursive,
-                });
+                if loc.path.is_file() {
+                    if let Some(parent) = loc.path.parent() {
+                        targets.push(WatchTarget {
+                            desired_path: parent.to_path_buf(),
+                            mode: RecursiveMode::NonRecursive,
+                        });
+                    }
+                } else {
+                    targets.push(WatchTarget {
+                        desired_path: loc.path.clone(),
+                        mode: RecursiveMode::Recursive,
+                    });
+                }
             }
             SaveLocationType::Glob => {
                 if let Ok((base_dir, _)) = split_glob_base_and_pattern(&loc.path) {
@@ -721,6 +730,9 @@ pub fn match_path_to_locations(
             }
             SaveLocationType::Directory => {
                 if let Ok(canon_loc) = canonicalize_windows_path(&loc.path) {
+                    if canon_path == canon_loc {
+                        return Some((loc.id, SaveLocationType::File));
+                    }
                     if canon_path != canon_loc && canon_path.starts_with(&canon_loc) {
                         return Some((loc.id, SaveLocationType::Directory));
                     }

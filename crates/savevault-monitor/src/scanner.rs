@@ -59,6 +59,12 @@ impl SaveScanner {
     ///
     /// Se o caminho não existir no disco, retorna `Ok(vec![])` sem erro fatal.
     pub fn scan(&self, location: &SaveLocation) -> Result<Vec<DiscoveredFile>, ScanError> {
+        if location.path.is_file() {
+            return self.scan_file(location);
+        }
+        if is_glob_pattern(&location.path.to_string_lossy()) {
+            return self.scan_glob(location);
+        }
         match location.location_type {
             SaveLocationType::File => self.scan_file(location),
             SaveLocationType::Directory => self.scan_directory(location),

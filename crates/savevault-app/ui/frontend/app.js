@@ -334,6 +334,7 @@ async function loadInicio() {
 
     try {
         const locs = await invoke("get_locations");
+        cachedLocations = locs;
         renderJogosRecentes(locs.slice(0, 4));
     } catch (e) {
         console.error("Erro ao carregar jogos recentes:", e);
@@ -357,14 +358,19 @@ function renderJogosRecentes(locations) {
             ? `<img src="${loc.cover_url}" class="game-cover-art game-cover-art-sm" style="width:38px;height:38px;" onerror="window.handleCoverError(this, '${appId}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
             : `<div class="game-avatar ${gradClass}" style="width:38px;height:38px;">${initials}</div>`;
 
+        const timeSubtext = loc.last_backup_time ? `Backup ${timeAgo(loc.last_backup_time)}` : (loc.platform || "PC");
+        const statusBadge = loc.last_backup_time
+            ? `<span class="badge-synced" title="Último backup: ${loc.last_backup_time}">Protegido</span>`
+            : `<span class="badge-synced">Ativo</span>`;
+
         return `
         <div class="game-item game-card-clickable" onclick="window.openGameDetails('${loc.id}')">
             ${avatarHtml}
             <div class="game-info">
                 <p class="game-name">${loc.game_name || "Jogo"}</p>
-                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) · ${loc.platform || "PC"}</p>
+                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) · ${timeSubtext}</p>
             </div>
-            <span class="badge-synced">Ativo</span>
+            ${statusBadge}
         </div>`;
     }).join("");
 }
@@ -420,7 +426,7 @@ function renderJogosList(query = "") {
             <div class="game-info">
                 <p class="game-name" style="font-size:14px;">${loc.game_name || "Jogo Desconhecido"}</p>
                 <p class="game-subtext game-path-text">${loc.path || ""}</p>
-                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) monitorado(s) · Plataforma: ${loc.platform || "Genérica"}</p>
+                <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) monitorado(s) · Plataforma: ${loc.platform || "Genérica"}${loc.last_backup_time ? ` · Backup ${timeAgo(loc.last_backup_time)}` : ""}</p>
             </div>
             <span class="badge-synced">Monitorado</span>
         </div>`;
@@ -443,11 +449,13 @@ window.openGameDetails = function(locationId) {
     const pathEl = document.getElementById("modal-details-path");
     const filesEl = document.getElementById("modal-details-files");
     const diskEl = document.getElementById("modal-details-disk");
+    const backupEl = document.getElementById("modal-details-backup");
     const openBtn = document.getElementById("btn-details-open-folder");
 
     if (titleEl) titleEl.textContent = loc.game_name || "Detalhes do Jogo";
     if (pathEl) pathEl.textContent = loc.path || "—";
     if (filesEl) filesEl.textContent = `${loc.monitored_files_count ?? 0} arquivo(s)`;
+    if (backupEl) backupEl.textContent = loc.last_backup_time ? timeAgo(loc.last_backup_time) : "Nenhum";
     if (diskEl) {
         diskEl.textContent = loc.exists_on_disk ? "Detectado no Disco" : "Caminho Não Encontrado";
         diskEl.style.color = loc.exists_on_disk ? "#10b981" : "#ef4444";
@@ -935,5 +943,12 @@ document.addEventListener("DOMContentLoaded", () => {
     initTheme();
     showTab("nav-inicio");
     loadInicio();
-    setInterval(loadInicio, 10000);
+    setInterval(() => {
+        const activeTab = document.querySelector(".nav-item.active")?.id;
+        if (activeTab === "nav-inicio") {
+            loadInicio();
+        } else if (activeTab === "nav-atividade") {
+            loadAtividade();
+        }
+    }, 10000);
 });

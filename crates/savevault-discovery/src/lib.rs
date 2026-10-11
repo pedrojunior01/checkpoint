@@ -114,11 +114,19 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         };
 
                         for path in paths {
+                            let location_type = if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
+                                SaveLocationType::Glob
+                            } else if path.is_file() || path.extension().is_some() {
+                                SaveLocationType::File
+                            } else {
+                                SaveLocationType::Directory
+                            };
+
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
                                 game_id: game.id,
                                 path,
-                                location_type: SaveLocationType::Directory,
+                                location_type,
                             });
                         }
 
@@ -141,11 +149,19 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         }
 
                         for path in paths {
+                            let location_type = if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
+                                SaveLocationType::Glob
+                            } else if path.is_file() || path.extension().is_some() {
+                                SaveLocationType::File
+                            } else {
+                                SaveLocationType::Directory
+                            };
+
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
                                 game_id: game.id,
                                 path,
-                                location_type: SaveLocationType::Directory,
+                                location_type,
                             });
                         }
 
