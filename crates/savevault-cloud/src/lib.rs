@@ -258,17 +258,10 @@ pub use onedrive_auth::OneDriveAuthService;
 
 /// Verifica se existem credenciais salvas do Google Drive no Windows Credential Manager.
 pub fn is_google_authenticated() -> bool {
-    keyring::Entry::new(auth::KEYRING_SERVICE, "google_drive_refresh_token")
-        .and_then(|e| e.get_password())
-        .is_ok()
+    auth::get_keyring_password("google_drive_refresh_token").is_some()
 }
 
 /// Verifica se existem credenciais salvas do OneDrive no Windows Credential Manager.
 pub fn is_onedrive_authenticated() -> bool {
-    keyring::Entry::new(
-        auth::KEYRING_SERVICE,
-        onedrive_auth::KEYRING_ONEDRIVE_REFRESH,
-    )
-    .and_then(|e| e.get_password())
-    .is_ok()
+    auth::get_keyring_password(onedrive_auth::KEYRING_ONEDRIVE_REFRESH).is_some()
 }

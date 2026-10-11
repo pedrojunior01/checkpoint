@@ -331,7 +331,7 @@ async fn test_dev_ui_http_server_endpoints_and_shutdown() {
     // 1. Testa GET / (Assets HTML)
     let (status, html) = http_get(addr, "/").await;
     assert_eq!(status, 200);
-    assert!(html.contains("SaveVault"));
+    assert!(html.contains("checkpoint"));
     assert!(html.contains("DEV-UI-01"));
 
     // 2. Testa GET /api/dashboard

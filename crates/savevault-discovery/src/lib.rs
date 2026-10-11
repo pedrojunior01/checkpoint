@@ -24,7 +24,7 @@ pub struct DiscoveryResult {
 /// Executa todos os detectors disponíveis e retorna os jogos e saves encontrados.
 ///
 /// O `cache_dir` é usado para armazenar o manifest.yaml do Ludusavi.
-/// Normalmente é `%APPDATA%\SaveVault\`.
+/// Normalmente é `%APPDATA%\checkpoint\` (ou `%APPDATA%\SaveVault\`).
 pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
     let mut games: Vec<Game> = Vec::new();
     let mut save_locations: Vec<SaveLocation> = Vec::new();

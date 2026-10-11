@@ -128,7 +128,7 @@ pub fn notify_save_protected(game_name: &str, version: u32) {
     }
 
     notify(
-        "SaveVault — Save Protegido",
+        "checkpoint — Save Protegido",
         format!(
             "O save de '{}' foi protegido com sucesso (v{}).",
             game_name, version
@@ -159,7 +159,7 @@ pub fn notify_cloud_synced(game_name: &str, version: u32, provider: &str) {
     };
 
     notify(
-        "SaveVault — Sincronização Concluída",
+        "checkpoint — Sincronização Concluída",
         format!(
             "Backup de '{}' (v{}) sincronizado na nuvem via {}.",
             game_name, version, provider_label
@@ -174,7 +174,7 @@ pub fn notify_restore_success(game_name: &str, version: u32) {
     }
 
     notify(
-        "SaveVault — Restauração Concluída",
+        "checkpoint — Restauração Concluída",
         format!(
             "O save de '{}' foi restaurado para a versão v{}.",
             game_name, version
@@ -182,13 +182,13 @@ pub fn notify_restore_success(game_name: &str, version: u32) {
     );
 }
 
-/// Notificação de aviso ou erro no SaveVault.
+/// Notificação de aviso ou erro no checkpoint.
 pub fn notify_warning(title: &str, message: &str) {
     let key = format!("warn:{}", title);
     if !check_and_update_cooldown(&key, 60) {
         return;
     }
-    notify(format!("SaveVault — {}", title), message.to_string());
+    notify(format!("checkpoint — {}", title), message.to_string());
 }
 
 /// Notificação quando um conflito multi-PC for detectado entre computadores.
@@ -199,7 +199,7 @@ pub fn notify_conflict_detected(game_name: &str, detail: &str) {
     }
 
     notify(
-        "SaveVault — Conflito Multi-PC Detectado",
+        "checkpoint — Conflito Multi-PC Detectado",
         format!(
             "O save de '{}' divergiu entre dispositivos. {}",
             game_name, detail
@@ -230,7 +230,7 @@ mod tests {
         };
         init_from_config(&config);
 
-        notify("SaveVault Teste", "Notificação de teste automatizado");
+        notify("checkpoint Teste", "Notificação de teste automatizado");
         notify_save_protected("Teste Game Rate Limit", 1);
         notify_cloud_synced("Teste Game Rate Limit", 1, "google_drive");
         notify_restore_success("Teste Game Rate Limit", 1);

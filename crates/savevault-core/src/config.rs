@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Configuração principal do SaveVault (lida de `config.toml`).
+/// Configuração principal do checkpoint (lida de `config.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub general: GeneralConfig,
@@ -103,7 +103,7 @@ fn default_reconciliation_interval_secs() -> u64 {
 pub struct CloudConfig {
     /// Provedor ativo: "google_drive", "onedrive", "local_folder", "none"
     pub provider: String,
-    /// Caminho da pasta de sincronização local da nuvem (ex.: C:\Users\...\OneDrive\SaveVault)
+    /// Caminho da pasta de sincronização local da nuvem (ex.: C:\Users\...\OneDrive\checkpoint)
     #[serde(default)]
     pub local_sync_path: Option<PathBuf>,
 }
@@ -119,6 +119,13 @@ pub struct PathsConfig {
 impl Default for Config {
     fn default() -> Self {
         let base = dirs_default();
+        let db_path = if base.join("checkpoint.db").exists() {
+            base.join("checkpoint.db")
+        } else if base.join("savevault.db").exists() {
+            base.join("savevault.db")
+        } else {
+            base.join("checkpoint.db")
+        };
         Self {
             general: GeneralConfig {
                 max_versions: 10,
@@ -135,18 +142,27 @@ impl Default for Config {
             },
             paths: PathsConfig {
                 backup_dir: base.join("backups"),
-                database_path: base.join("savevault.db"),
+                database_path: db_path,
             },
             notifications: NotificationsConfig::default(),
         }
     }
 }
 
-/// Retorna o diretório de dados padrão do SaveVault no Windows:
-/// `%APPDATA%\SaveVault`
+/// Retorna o diretório de dados padrão do checkpoint no Windows:
+/// `%APPDATA%\checkpoint` (com fallback transparente para `%APPDATA%\SaveVault` se já existir).
 fn dirs_default() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-    PathBuf::from(appdata).join("SaveVault")
+    let checkpoint_dir = PathBuf::from(&appdata).join("checkpoint");
+    let legacy_dir = PathBuf::from(&appdata).join("SaveVault");
+
+    if checkpoint_dir.exists() {
+        checkpoint_dir
+    } else if legacy_dir.exists() {
+        legacy_dir
+    } else {
+        checkpoint_dir
+    }
 }
 
 impl Config {

@@ -5,7 +5,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SaveVault — DEV-UI-01</title>
+  <title>checkpoint — DEV-UI-01</title>
   <style>
     :root {
       --bg-dark: #0f172a;
@@ -130,7 +130,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
   <!-- Header -->
   <header>
     <div class="brand">
-      <h1>SaveVault</h1>
+      <h1>checkpoint</h1>
       <span class="dev-badge">DEV-UI-01</span>
     </div>
     <div class="header-actions">

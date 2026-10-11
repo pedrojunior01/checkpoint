@@ -310,36 +310,36 @@ async fn test_restore_tampered_snapshot_fails_integrity_and_leaves_save_intact()
 
 #[test]
 fn test_cli_restore_binary_execution() {
-    let bin_path = env!("CARGO_BIN_EXE_savevault");
+    let bin_path = env!("CARGO_BIN_EXE_checkpoint");
 
-    // 1. savevault restore --help
+    // 1. checkpoint restore --help
     let output_help = std::process::Command::new(bin_path)
         .arg("restore")
         .arg("--help")
         .output()
-        .expect("Falha ao executar savevault restore --help");
+        .expect("Falha ao executar checkpoint restore --help");
 
     assert!(output_help.status.success());
     let stdout_help = String::from_utf8_lossy(&output_help.stdout);
-    assert!(stdout_help.contains("Uso: savevault restore <snapshot-id>"));
-    assert!(stdout_help.contains("savevault restore list"));
+    assert!(stdout_help.contains("Uso: checkpoint restore <snapshot-id>"));
+    assert!(stdout_help.contains("checkpoint restore list"));
 
-    // 2. savevault restore sem argumentos
+    // 2. checkpoint restore sem argumentos
     let output_no_args = std::process::Command::new(bin_path)
         .arg("restore")
         .output()
-        .expect("Falha ao executar savevault restore");
+        .expect("Falha ao executar checkpoint restore");
 
     assert!(output_no_args.status.success());
     let stdout_no_args = String::from_utf8_lossy(&output_no_args.stdout);
-    assert!(stdout_no_args.contains("Uso: savevault restore <snapshot-id>"));
+    assert!(stdout_no_args.contains("Uso: checkpoint restore <snapshot-id>"));
 
-    // 3. savevault restore not-a-uuid (deve falhar com código 1 e mensagem clara)
+    // 3. checkpoint restore not-a-uuid (deve falhar com código 1 e mensagem clara)
     let output_invalid_uuid = std::process::Command::new(bin_path)
         .arg("restore")
         .arg("not-a-uuid")
         .output()
-        .expect("Falha ao executar savevault restore not-a-uuid");
+        .expect("Falha ao executar checkpoint restore not-a-uuid");
 
     assert!(!output_invalid_uuid.status.success());
     let stderr_invalid = String::from_utf8_lossy(&output_invalid_uuid.stderr);

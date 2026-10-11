@@ -34,13 +34,34 @@ fn build_auth_http_client() -> reqwest::Client {
 }
 
 /// Nome do serviço registrado no Windows Credential Manager.
-pub(crate) const KEYRING_SERVICE: &str = "SaveVault";
+pub(crate) const KEYRING_SERVICE: &str = "checkpoint";
+/// Nome do serviço legado para retrocompatibilidade no Windows Credential Manager.
+pub(crate) const LEGACY_KEYRING_SERVICE: &str = "SaveVault";
 /// Chave do refresh token do Google Drive.
 const KEYRING_GOOGLE_REFRESH: &str = "google_drive_refresh_token";
-/// Escopo de acesso: apenas arquivos criados pelo próprio SaveVault.
+/// Escopo de acesso: apenas arquivos criados pelo próprio aplicativo.
 const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 /// Porta do servidor local para receber o callback OAuth.
 const REDIRECT_PORT: u16 = 8085;
+
+/// Recupera uma credencial do Windows Credential Manager tentando primeiro 'checkpoint' e depois 'SaveVault'.
+pub(crate) fn get_keyring_password(key: &str) -> Option<String> {
+    if let Ok(entry) = Entry::new(KEYRING_SERVICE, key) {
+        if let Ok(pwd) = entry.get_password() {
+            if !pwd.trim().is_empty() {
+                return Some(pwd);
+            }
+        }
+    }
+    if let Ok(legacy_entry) = Entry::new(LEGACY_KEYRING_SERVICE, key) {
+        if let Ok(pwd) = legacy_entry.get_password() {
+            if !pwd.trim().is_empty() {
+                return Some(pwd);
+            }
+        }
+    }
+    None
+}
 
 // ---------------------------------------------------------------------------
 // Tipos internos de resposta da API do Google
@@ -128,9 +149,7 @@ impl AuthService {
         if self.fixed_token.is_some() || self.mock_refresh_token.is_some() {
             return true;
         }
-        Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
-            .and_then(|e| e.get_password())
-            .is_ok()
+        get_keyring_password(KEYRING_GOOGLE_REFRESH).is_some()
     }
 
     /// Inicia o fluxo interativo de login:
@@ -222,7 +241,7 @@ impl AuthService {
                     "Content-Type: text/html; charset=utf-8\r\n",
                     "Connection: close\r\n\r\n",
                     "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                    "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                    "<title>checkpoint - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
                     "<h2>❌ Falha de segurança na autenticação</h2>",
                     "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
                     "</body></html>",
@@ -246,9 +265,9 @@ impl AuthService {
                 "Content-Type: text/html; charset=utf-8\r\n",
                 "Connection: close\r\n\r\n",
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                "<title>SaveVault</title></head><body style='font-family:sans-serif;padding:2rem'>",
-                "<h2>✅ SaveVault autenticado com sucesso!</h2>",
-                "<p>Você pode fechar esta aba e voltar para o SaveVault.</p>",
+                "<title>checkpoint</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                "<h2>✅ checkpoint autenticado com sucesso!</h2>",
+                "<p>Você pode fechar esta aba e voltar para o checkpoint.</p>",
                 "</body></html>",
             );
             let _ = socket.write_all(html.as_bytes()).await;
@@ -299,13 +318,11 @@ impl AuthService {
                 info!("Refresh token salvo com segurança no Windows Credential Manager.");
             }
             None => {
-                let has_existing = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
-                    .and_then(|e| e.get_password())
-                    .is_ok();
+                let has_existing = get_keyring_password(KEYRING_GOOGLE_REFRESH).is_some();
                 if !has_existing {
                     return Err(anyhow!(
                         "Google não retornou refresh_token e nenhum token prévio foi encontrado no cofre do sistema. \
-                        Por favor, acesse https://myaccount.google.com/permissions, revogue o acesso do SaveVault e tente novamente."
+                        Por favor, acesse https://myaccount.google.com/permissions, revogue o acesso do checkpoint e tente novamente."
                     ));
                 } else {
                     info!("Google não retornou novo refresh_token; mantido o refresh token existente no cofre.");
@@ -339,13 +356,10 @@ impl AuthService {
         let refresh_token = if let Some(ref rt) = self.mock_refresh_token {
             rt.clone()
         } else {
-            let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
-                .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
-
-            entry.get_password().map_err(|_| {
+            get_keyring_password(KEYRING_GOOGLE_REFRESH).ok_or_else(|| {
                 anyhow!(
-                    "SaveVault não está autenticado no Google Drive.\n\
-                    Execute: cargo run --bin savevault -- auth login"
+                    "checkpoint não está autenticado no Google Drive.\n\
+                    Execute: cargo run --bin checkpoint -- auth login"
                 )
             })?
         };
@@ -391,11 +405,12 @@ impl AuthService {
         if let Ok(mut cache) = self.cached_token.try_write() {
             *cache = None;
         }
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH)
-            .map_err(|e| anyhow!("Erro ao acessar o cofre de senhas: {}", e))?;
-        entry
-            .delete_credential()
-            .map_err(|e| anyhow!("Erro ao remover credenciais: {}", e))?;
+        if let Ok(entry) = Entry::new(KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH) {
+            let _ = entry.delete_credential();
+        }
+        if let Ok(legacy_entry) = Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_GOOGLE_REFRESH) {
+            let _ = legacy_entry.delete_credential();
+        }
         info!("Credenciais do Google Drive removidas.");
         Ok(())
     }

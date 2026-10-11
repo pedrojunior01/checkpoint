@@ -1007,7 +1007,15 @@ impl DevUiState {
 
     fn config_path(&self) -> PathBuf {
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-        PathBuf::from(appdata).join("SaveVault").join("config.toml")
+        let checkpoint_cfg = PathBuf::from(&appdata).join("checkpoint").join("config.toml");
+        if checkpoint_cfg.exists() {
+            return checkpoint_cfg;
+        }
+        let legacy_cfg = PathBuf::from(&appdata).join("SaveVault").join("config.toml");
+        if legacy_cfg.exists() {
+            return legacy_cfg;
+        }
+        checkpoint_cfg
     }
 
     /// Cadastra um jogo e local de save manualmente através da UI.

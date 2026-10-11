@@ -1,6 +1,6 @@
 //! Gerenciador de inicialização automática com o Windows.
 //!
-//! Registra e remove a execução do SaveVault no Registro do Windows sob:
+//! Registra e remove a execução do checkpoint no Registro do Windows sob:
 //! `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
 use anyhow::{Context, Result};
@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Nome da chave no Registro do Windows.
-pub const APP_NAME: &str = "SaveVault";
+pub const APP_NAME: &str = "checkpoint";
+pub const LEGACY_APP_NAME: &str = "SaveVault";
 
 /// Subchave padrão de inicialização de aplicativos do usuário no Windows.
 pub const REG_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -18,7 +19,7 @@ pub const REG_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 pub struct AutostartStatus {
     /// Se a inicialização automática está ativa no Registro do Windows.
     pub enabled: bool,
-    /// O comando completo registrado (ex.: `"C:\Users\...\savevault.exe"`).
+    /// O comando completo registrado (ex.: `"C:\Users\...\checkpoint.exe"`).
     pub command: Option<String>,
     /// Caminho do executável extraído do comando.
     pub executable_path: Option<PathBuf>,
@@ -30,7 +31,7 @@ mod windows_impl {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE};
     use winreg::RegKey;
 
-    /// Verifica se o SaveVault está configurado para inicializar com o Windows.
+    /// Verifica se o checkpoint está configurado para inicializar com o Windows.
     pub fn is_enabled() -> Result<bool> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let run_key = match hkcu.open_subkey_with_flags(REG_RUN_KEY, KEY_QUERY_VALUE) {
@@ -39,11 +40,19 @@ mod windows_impl {
             Err(e) => return Err(e).context("Falha ao abrir chave de inicialização no Registro"),
         };
 
-        match run_key.get_value::<String, _>(APP_NAME) {
-            Ok(val) => Ok(!val.trim().is_empty()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e).context("Falha ao consultar valor de inicialização do SaveVault"),
+        if let Ok(val) = run_key.get_value::<String, _>(APP_NAME) {
+            if !val.trim().is_empty() {
+                return Ok(true);
+            }
         }
+
+        if let Ok(val) = run_key.get_value::<String, _>(LEGACY_APP_NAME) {
+            if !val.trim().is_empty() {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Retorna os detalhes da configuração atual de inicialização automática.
@@ -61,24 +70,36 @@ mod windows_impl {
             Err(e) => return Err(e).context("Falha ao abrir chave de inicialização no Registro"),
         };
 
-        match run_key.get_value::<String, _>(APP_NAME) {
-            Ok(cmd) if !cmd.trim().is_empty() => {
+        if let Ok(cmd) = run_key.get_value::<String, _>(APP_NAME) {
+            if !cmd.trim().is_empty() {
                 let exe_path = extract_executable_path(&cmd);
-                Ok(AutostartStatus {
+                return Ok(AutostartStatus {
                     enabled: true,
                     command: Some(cmd),
                     executable_path: exe_path,
-                })
+                });
             }
-            _ => Ok(AutostartStatus {
-                enabled: false,
-                command: None,
-                executable_path: None,
-            }),
         }
+
+        if let Ok(cmd) = run_key.get_value::<String, _>(LEGACY_APP_NAME) {
+            if !cmd.trim().is_empty() {
+                let exe_path = extract_executable_path(&cmd);
+                return Ok(AutostartStatus {
+                    enabled: true,
+                    command: Some(cmd),
+                    executable_path: exe_path,
+                });
+            }
+        }
+
+        Ok(AutostartStatus {
+            enabled: false,
+            command: None,
+            executable_path: None,
+        })
     }
 
-    /// Habilita a inicialização automática do SaveVault registrando o executável em `HKCU\...\Run`.
+    /// Habilita a inicialização automática do checkpoint registrando o executável em `HKCU\...\Run`.
     ///
     /// Se `custom_exe_path` for `None`, utiliza o caminho do executável do processo atual (`std::env::current_exe`).
     pub fn enable(custom_exe_path: Option<&Path>) -> Result<AutostartStatus> {
@@ -87,7 +108,7 @@ mod windows_impl {
                 extract_executable_path(&p.to_string_lossy()).unwrap_or_else(|| p.to_path_buf())
             }
             None => std::env::current_exe()
-                .context("Falha ao obter o caminho do executável atual do SaveVault")?,
+                .context("Falha ao obter o caminho do executável atual do checkpoint")?,
         };
 
         // Normaliza o caminho do executável
@@ -109,7 +130,10 @@ mod windows_impl {
 
         run_key
             .set_value(APP_NAME, &command_str)
-            .context("Falha ao gravar valor de inicialização do SaveVault no Registro")?;
+            .context("Falha ao gravar valor de inicialização do checkpoint no Registro")?;
+
+        // Remove chave legada caso existisse
+        let _ = run_key.delete_value(LEGACY_APP_NAME);
 
         Ok(AutostartStatus {
             enabled: true,
@@ -118,7 +142,7 @@ mod windows_impl {
         })
     }
 
-    /// Desabilita a inicialização automática do SaveVault, removendo o valor de `HKCU\...\Run`.
+    /// Desabilita a inicialização automática do checkpoint, removendo o valor de `HKCU\...\Run`.
     pub fn disable() -> Result<AutostartStatus> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let run_key = match hkcu.open_subkey_with_flags(REG_RUN_KEY, KEY_SET_VALUE) {
@@ -133,13 +157,8 @@ mod windows_impl {
             Err(e) => return Err(e).context("Falha ao abrir chave de inicialização no Registro"),
         };
 
-        match run_key.delete_value(APP_NAME) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(e).context("Falha ao remover valor de inicialização do SaveVault");
-            }
-        }
+        let _ = run_key.delete_value(APP_NAME);
+        let _ = run_key.delete_value(LEGACY_APP_NAME);
 
         Ok(AutostartStatus {
             enabled: false,

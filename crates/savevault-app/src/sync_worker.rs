@@ -185,7 +185,7 @@ impl SyncWorker {
 
         if count > 0 {
             crate::notifications::notify(
-                "SaveVault — Sincronização Concluída",
+                "checkpoint — Sincronização Concluída",
                 format!("{} save(s) sincronizado(s) com sucesso na nuvem.", count),
             );
         }

@@ -167,7 +167,7 @@ pub fn canonicalize_windows_path(path: &Path) -> Result<PathBuf, PathError> {
     Ok(PathBuf::from(canon))
 }
 
-/// Verifica se um arquivo é de uso interno/temporário do SaveVault (backups de segurança, arquivos temporários de restore, etc.).
+/// Verifica se um arquivo é de uso interno/temporário do checkpoint (backups de segurança, arquivos temporários de restore, etc.).
 ///
 /// Arquivos internos devem ser ignorados por scanners e watchers para evitar loops de backup e poluição do banco.
 pub fn is_internal_savevault_file(path: &Path) -> bool {
@@ -176,7 +176,8 @@ pub fn is_internal_savevault_file(path: &Path) -> bool {
         None => return false,
     };
 
-    filename.contains(".savevault_safety_")
+    filename.contains(".checkpoint_safety_")
+        || filename.contains(".savevault_safety_")
         || filename.contains(".restore_tmp_")
         || filename.ends_with(".tmp")
         || filename.ends_with(".crswap")

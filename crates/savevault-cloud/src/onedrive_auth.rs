@@ -22,14 +22,15 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::auth::{
-    extract_query_param, open_url_windows, percent_decode, urlencoding_simple,
-    AUTH_CONNECT_TIMEOUT, AUTH_REQUEST_TIMEOUT, KEYRING_SERVICE,
+    extract_query_param, get_keyring_password, open_url_windows, percent_decode,
+    urlencoding_simple, AUTH_CONNECT_TIMEOUT, AUTH_REQUEST_TIMEOUT, KEYRING_SERVICE,
+    LEGACY_KEYRING_SERVICE,
 };
 
 /// Chave do refresh token do OneDrive no Windows Credential Manager.
 pub const KEYRING_ONEDRIVE_REFRESH: &str = "onedrive_refresh_token";
 
-/// Escopo de menor privilégio para o OneDrive: acesso exclusivo à pasta de aplicativo `SaveVault`.
+/// Escopo de menor privilégio para o OneDrive: acesso exclusivo à pasta de aplicativo `checkpoint`.
 pub const ONEDRIVE_SCOPE: &str = "Files.ReadWrite.AppFolder offline_access";
 
 /// Porta padrão do loopback local para callback do OneDrive.
@@ -157,9 +158,7 @@ impl OneDriveAuthService {
             return true;
         }
 
-        Entry::new(KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH)
-            .and_then(|e| e.get_password())
-            .is_ok()
+        get_keyring_password(KEYRING_ONEDRIVE_REFRESH).is_some()
     }
 
     /// Inicia o fluxo interativo de login via navegador com PKCE e servidor loopback local.
@@ -259,7 +258,7 @@ impl OneDriveAuthService {
                     "Content-Type: text/html; charset=utf-8\r\n",
                     "Connection: close\r\n\r\n",
                     "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                    "<title>SaveVault - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                    "<title>checkpoint - Erro</title></head><body style='font-family:sans-serif;padding:2rem'>",
                     "<h2>❌ Falha de segurança na autenticação</h2>",
                     "<p>O parâmetro 'state' recebido não confere com o gerado. A requisição foi bloqueada.</p>",
                     "</body></html>",
@@ -282,9 +281,9 @@ impl OneDriveAuthService {
                 "Content-Type: text/html; charset=utf-8\r\n",
                 "Connection: close\r\n\r\n",
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-                "<title>SaveVault - Sucesso</title></head><body style='font-family:sans-serif;padding:2rem'>",
+                "<title>checkpoint - Sucesso</title></head><body style='font-family:sans-serif;padding:2rem'>",
                 "<h2>✅ Autenticação realizada com sucesso!</h2>",
-                "<p>O SaveVault foi autorizado a sincronizar backups com o Microsoft OneDrive.</p>",
+                "<p>O checkpoint foi autorizado a sincronizar backups com o Microsoft OneDrive.</p>",
                 "<p>Você já pode fechar esta aba.</p>",
                 "</body></html>",
             );
@@ -384,13 +383,10 @@ impl OneDriveAuthService {
         let refresh_token = if let Some(ref rt) = self.mock_refresh_token {
             rt.clone()
         } else {
-            let entry = Entry::new(KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH)
-                .map_err(|e| anyhow!("Erro ao acessar cofre de senhas: {}", e))?;
-
-            entry.get_password().map_err(|_| {
+            get_keyring_password(KEYRING_ONEDRIVE_REFRESH).ok_or_else(|| {
                 anyhow!(
-                    "SaveVault não está autenticado no Microsoft OneDrive.\n\
-                    Execute: savevault auth login"
+                    "checkpoint não está autenticado no Microsoft OneDrive.\n\
+                    Execute: checkpoint auth login"
                 )
             })?
         };
@@ -450,11 +446,12 @@ impl OneDriveAuthService {
             *cache = None;
         }
 
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH)
-            .map_err(|e| anyhow!("Erro ao acessar cofre de senhas: {}", e))?;
-        entry
-            .delete_credential()
-            .map_err(|e| anyhow!("Erro ao remover credenciais do OneDrive: {}", e))?;
+        if let Ok(entry) = Entry::new(KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH) {
+            let _ = entry.delete_credential();
+        }
+        if let Ok(legacy_entry) = Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_ONEDRIVE_REFRESH) {
+            let _ = legacy_entry.delete_credential();
+        }
         info!("Credenciais do Microsoft OneDrive removidas.");
         Ok(())
     }

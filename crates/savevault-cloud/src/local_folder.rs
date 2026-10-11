@@ -49,7 +49,7 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
         if candidate.exists() && candidate.is_dir() {
             detected.push(DetectedCloudFolder {
                 name: "Microsoft OneDrive".to_string(),
-                savevault_folder: candidate.join("SaveVault"),
+                savevault_folder: resolve_cloud_app_folder(&candidate),
                 sync_folder: candidate,
                 provider_type: "onedrive".to_string(),
                 is_available: true,
@@ -72,7 +72,7 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
         if candidate.exists() && candidate.is_dir() {
             detected.push(DetectedCloudFolder {
                 name: "Google Drive".to_string(),
-                savevault_folder: candidate.join("SaveVault"),
+                savevault_folder: resolve_cloud_app_folder(&candidate),
                 sync_folder: candidate,
                 provider_type: "google_drive".to_string(),
                 is_available: true,
@@ -86,7 +86,7 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
     if dropbox_path.exists() && dropbox_path.is_dir() {
         detected.push(DetectedCloudFolder {
             name: "Dropbox".to_string(),
-            savevault_folder: dropbox_path.join("SaveVault"),
+            savevault_folder: resolve_cloud_app_folder(&dropbox_path),
             sync_folder: dropbox_path,
             provider_type: "dropbox".to_string(),
             is_available: true,
@@ -98,7 +98,7 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
     if icloud_path.exists() && icloud_path.is_dir() {
         detected.push(DetectedCloudFolder {
             name: "iCloud Drive".to_string(),
-            savevault_folder: icloud_path.join("SaveVault"),
+            savevault_folder: resolve_cloud_app_folder(&icloud_path),
             sync_folder: icloud_path,
             provider_type: "icloud".to_string(),
             is_available: true,
@@ -106,6 +106,20 @@ pub fn detect_cloud_folders() -> Vec<DetectedCloudFolder> {
     }
 
     detected
+}
+
+/// Resolve a pasta de backup dentro da raiz de sincronização:
+/// usa `checkpoint` se existir, ou fallback para `SaveVault` se o usuário já tiver saves anteriores.
+fn resolve_cloud_app_folder(root: &Path) -> PathBuf {
+    let checkpoint = root.join("checkpoint");
+    let legacy = root.join("SaveVault");
+    if checkpoint.exists() {
+        checkpoint
+    } else if legacy.exists() {
+        legacy
+    } else {
+        checkpoint
+    }
 }
 
 /// Provedor que sincroniza backups através de uma pasta local gerenciada por um serviço de nuvem.

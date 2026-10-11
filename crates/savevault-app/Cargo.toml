@@ -2,13 +2,13 @@
 name = "savevault-app"
 version.workspace = true
 edition.workspace = true
-default-run = "savevault"
+default-run = "checkpoint"
 
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
-name = "savevault"
+name = "checkpoint"
 path = "src/main.rs"
 
 [[bin]]

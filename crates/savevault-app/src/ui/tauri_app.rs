@@ -130,7 +130,15 @@ pub struct ConfigDto {
 
 fn config_path() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-    PathBuf::from(appdata).join("SaveVault").join("config.toml")
+    let checkpoint_cfg = PathBuf::from(&appdata).join("checkpoint").join("config.toml");
+    if checkpoint_cfg.exists() {
+        return checkpoint_cfg;
+    }
+    let legacy_cfg = PathBuf::from(&appdata).join("SaveVault").join("config.toml");
+    if legacy_cfg.exists() {
+        return legacy_cfg;
+    }
+    checkpoint_cfg
 }
 
 #[tauri::command]

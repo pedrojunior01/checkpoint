@@ -1,13 +1,12 @@
-//! Ponto de entrada principal do SaveVault.
+//! Ponto de entrada principal do checkpoint.
 //!
 //! ## Uso
 //! ```
-//! savevault                    # Executa o discovery e persiste no banco
-//! savevault restore <id>       # Restaura snapshot com safety backup e escrita atômica
-//! savevault restore list       # Lista os snapshots disponíveis
-//! savevault add <nome> <caminho> # Adiciona um jogo e local de save manualmente
-//! savevault list                # Lista todos os jogos cadastrados no banco
-
+//! checkpoint                    # Executa o discovery e persiste no banco
+//! checkpoint restore <id>       # Restaura snapshot com safety backup e escrita atômica
+//! checkpoint restore list       # Lista os snapshots disponíveis
+//! checkpoint add <nome> <caminho> # Adiciona um jogo e local de save manualmente
+//! checkpoint list                # Lista todos os jogos cadastrados no banco
 //! ```
 
 use savevault_core::config::Config;
@@ -86,7 +85,7 @@ fn main() -> anyhow::Result<()> {
 fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     use std::sync::Arc;
 
-    let _single_instance = match savevault_app::SingleInstanceGuard::acquire("Local\\SaveVault_checkpoint_Mutex") {
+    let _single_instance = match savevault_app::SingleInstanceGuard::acquire("Local\\checkpoint_Mutex") {
         Some(guard) => guard,
         None => {
             eprintln!("checkpoint já está em execução no sistema.");
@@ -107,9 +106,18 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
 
     // Carrega config e banco
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-    let config_dir = std::path::PathBuf::from(&appdata).join("SaveVault");
+    let checkpoint_dir = std::path::PathBuf::from(&appdata).join("checkpoint");
+    let legacy_dir = std::path::PathBuf::from(&appdata).join("SaveVault");
+    let config_dir = if checkpoint_dir.exists() {
+        checkpoint_dir
+    } else if legacy_dir.exists() {
+        legacy_dir
+    } else {
+        checkpoint_dir
+    };
     let config_path = config_dir.join("config.toml");
     let config = Config::load(&config_path).unwrap_or_default();
+    let _ = std::fs::create_dir_all(&config_dir);
     let _ = config.save(&config_path);
 
     // Inicializa subsistema de notificações do Windows Toast
@@ -253,9 +261,18 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
 
     // Carrega configuração e banco
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-    let config_dir = PathBuf::from(&appdata).join("SaveVault");
+    let checkpoint_dir = PathBuf::from(&appdata).join("checkpoint");
+    let legacy_dir = PathBuf::from(&appdata).join("SaveVault");
+    let config_dir = if checkpoint_dir.exists() {
+        checkpoint_dir
+    } else if legacy_dir.exists() {
+        legacy_dir
+    } else {
+        checkpoint_dir
+    };
     let config_path = config_dir.join("config.toml");
     let config = Config::load(&config_path).unwrap_or_default();
+    let _ = std::fs::create_dir_all(&config_dir);
     let _ = config.save(&config_path);
 
     // Se compilado com desktop, modo GUI é o padrão quando não há argumentos.
@@ -331,7 +348,7 @@ async fn run_resident_daemon(
     args: &[String],
 ) -> anyhow::Result<()> {
 
-    tracing::info!("SaveVault iniciando...");
+    tracing::info!("checkpoint iniciando...");
 
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
@@ -407,7 +424,7 @@ async fn run_resident_daemon(
     }
 
     tracing::info!(
-        "SaveVault — {} jogo(s) registrado(s), {} caminho(s) de save detectado(s).",
+        "checkpoint — {} jogo(s) registrado(s), {} caminho(s) de save detectado(s).",
         result.games.len(),
         result.save_locations.len()
     );
@@ -735,7 +752,7 @@ fn handle_restore_list(config: &Config) -> anyhow::Result<()> {
     }
     println!("================================================================================");
     println!(
-        "Total: {} snapshot(s) listado(s). Para restaurar, use: savevault restore <SNAPSHOT_ID>",
+        "Total: {} snapshot(s) listado(s). Para restaurar, use: checkpoint restore <SNAPSHOT_ID>",
         count
     );
 
@@ -743,8 +760,8 @@ fn handle_restore_list(config: &Config) -> anyhow::Result<()> {
 }
 
 fn print_restore_help() {
-    println!("Uso: savevault restore <snapshot-id> [opções]");
-    println!("     savevault restore list");
+    println!("Uso: checkpoint restore <snapshot-id> [opções]");
+    println!("     checkpoint restore list");
     println!();
     println!("Restaura um snapshot versionado para o local de save original.");
     println!("Cria automaticamente um backup de segurança (safety backup) do estado atual");
@@ -760,14 +777,14 @@ fn print_restore_help() {
     println!("  --help, -h               Exibe esta mensagem de ajuda");
     println!();
     println!("Exemplos:");
-    println!("  savevault restore 550e8400-e29b-41d4-a716-446655440000");
-    println!("  savevault restore --snapshot 550e8400-e29b-41d4-a716-446655440000");
-    println!("  savevault restore list");
+    println!("  checkpoint restore 550e8400-e29b-41d4-a716-446655440000");
+    println!("  checkpoint restore --snapshot 550e8400-e29b-41d4-a716-446655440000");
+    println!("  checkpoint restore list");
 }
 
 async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     println!("================================================================================");
-    println!("               SaveVault DEV-UI-01 — Modo de Teste Provisório                   ");
+    println!("               checkpoint DEV-UI-01 — Modo de Teste Provisório                  ");
     println!("================================================================================");
     println!("  Banco de dados: {}", config.paths.database_path.display());
     println!("  Cofre backups:  {}", config.paths.backup_dir.display());
