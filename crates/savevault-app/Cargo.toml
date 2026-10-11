@@ -16,9 +16,8 @@ name = "scan_report"
 path = "src/bin/scan_report.rs"
 
 [features]
+default = ["desktop"]
 # Feature 'desktop' habilita a GUI nativa via Tauri 2.
-# Sem essa feature, o binário funciona normalmente como CLI/headless.
-# Isso garante que 'cargo test --workspace' nunca precise do runtime gráfico.
 desktop = ["tauri", "tauri-build"]
 
 [dependencies]
