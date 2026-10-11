@@ -1,4 +1,4 @@
-# 📊 Relatório de Implementação e Status do Projeto — SaveVault
+# 📊 Relatório de Implementação e Status do Projeto — checkpoint
 
 **Versão Atual:** v0.9.0-rc (Release Candidate)  
 **Data do Relatório:** Outubro 2026  
@@ -7,7 +7,7 @@
 ---
 
 ## 1. Visão Geral do Projeto
-O **SaveVault** é um sistema completo e modular escrito em **Rust**, desenvolvido prioritariamente para Windows 10/11 x64, projetado para:
+O **checkpoint** (estruturado internamente pelos crates `savevault-*`) é um sistema completo e modular escrito em **Rust**, desenvolvido prioritariamente para Windows 10/11 x64, projetado para:
 1. Detectar automaticamente jogos instalados no PC (Steam, GOG Galaxy, Emuladores, Heurística genérica e Ludusavi Manifest).
 2. Monitorar em tempo real os diretórios e arquivos de save de forma não-bloqueante e resiliente a travas do jogo (`ERROR_SHARING_VIOLATION`).
 3. Gerar snapshots versionados locais criptografados por hash **BLAKE3** com deduplicação perfeita.
@@ -27,7 +27,7 @@ O **SaveVault** é um sistema completo e modular escrito em **Rust**, desenvolvi
 | **`savevault-backup`** | **100% Completo** | Hashing BLAKE3 em streaming constante $O(1)$ de RAM, snapshots versionados (`latest` e `daily`), poda transacional e restauração segura em 4 etapas com Safety Backups. |
 | **`savevault-cloud`** | **100% Completo** | Abstração `CloudProvider`, detecção automática de pastas locais do OneDrive e Google Drive, clientes OAuth 2.0 PKCE com armazenamento seguro no Windows Credential Manager e manifesto central de Disaster Recovery (`savevault_manifest.json`). |
 | **`savevault-sync`** | **100% Completo** | Motor `SyncEngine` assíncrono com desacoplamento de lock do banco, retentativas com backoff exponencial (até 5 tentativas), dead-lettering e transações atômicas de upload/deleção. |
-| **`savevault-app`** | **100% Completo** | Orquestrador unificado, interface gráfica Tauri v2 Desktop (frameless, temas claro/escuro, responsiva), bandeja do sistema (*System Tray*), poda ativa de memória Working Set, 20 comandos IPC e utilitários CLI (`scan_report`, `restore`). |
+| **`savevault-app`** | **100% Completo** | Orquestrador unificado do checkpoint, interface gráfica Tauri v2 Desktop (frameless, temas claro/escuro, responsiva), bandeja do sistema (*System Tray*), poda ativa de memória Working Set, 20 comandos IPC e utilitários CLI (`scan_report`, `restore`). |
 
 ---
 
@@ -63,7 +63,7 @@ cargo test --workspace
 
 ## 5. Próximos Passos (Para a v1.0 Final)
 
-- [x] Interface Desktop Definitiva com Tauri v2.
+- [x] Interface Desktop Definitiva com Tauri v2 (`checkpoint.exe`).
 - [x] Ícone na bandeja do Windows (System Tray) para monitoramento silencioso minimizado.
 - [x] Suporte integrado a Microsoft OneDrive e Google Drive.
 - [x] Otimização rigorosa de consumo de RAM (15MB - 25MB).

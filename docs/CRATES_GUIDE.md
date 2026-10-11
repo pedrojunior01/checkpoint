@@ -1,6 +1,6 @@
-# 📦 Guia Detalhado dos Crates — SaveVault
+# 📦 Guia Detalhado dos Crates — checkpoint
 
-Este guia fornece um mergulho técnico em cada um dos **8 crates** do workspace Cargo do SaveVault, detalhando suas responsabilidades, contratos públicos, tratamento de concorrência e particularidades do ambiente Windows.
+Este guia fornece um mergulho técnico em cada um dos **8 crates** do workspace Cargo do **checkpoint** (que utiliza a convenção de nomenclatura de pacotes `savevault-*`), detalhando suas responsabilidades, contratos públicos, tratamento de concorrência e particularidades do ambiente Windows.
 
 ---
 
@@ -40,7 +40,7 @@ Este guia fornece um mergulho técnico em cada um dos **8 crates** do workspace 
 ### Manipulação Lógica de Caminhos Windows (`path.rs`)
 * `normalize_windows_path_str(raw: &str)`: Normaliza strings de caminhos para persistência no banco sem depender da existência física no disco. Remove prefixos `\\?\` e `\\?\UNC\`, colapsa separadores duplicados (`\\` → `\`), garante letras de drive em maiúsculo (`c:` → `C:`) e trata UNC (`\\servidor\pasta`).
 * `canonicalize_windows_path_str(raw: &str)`: Cria representação única para chaves em tabelas hash (case-folded para minúsculas), respeitando a semântica case-insensitive do NTFS.
-* `is_internal_savevault_file(path: &Path)`: Detecta arquivos de trabalho gerados pelo próprio SaveVault (`.savevault_safety_*`, `.restore_tmp_*`, `.tmp`, `.crswap`), evitando que o watcher entre em loop recursivo.
+* `is_internal_savevault_file(path: &Path)`: Detecta arquivos de trabalho gerados pelo próprio checkpoint (`.savevault_safety_*`, `.restore_tmp_*`, `.tmp`, `.crswap`), evitando que o watcher entre em loop recursivo.
 
 ### Gerenciamento de Autostart (`autostart.rs`)
 * Manipula a chave `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` através da crate `winreg`.
@@ -214,12 +214,12 @@ Motor transacional de sincronização em segundo plano. Consome a tabela `sync_q
 * **Dependências Externas Principais:** `tauri` (v2, opcional via feature `desktop`), `tokio`, `tracing`, todos os crates internos
 
 ### Responsabilidade
-Orquestrador central do sistema. Une os componentes de persistência, monitoramento, reconciliação e sincronização em uma aplicação unificada, disponibilizando tanto interface desktop gráfica nativa quanto modo daemon/CLI.
+Orquestrador central do **checkpoint**. Une os componentes de persistência, monitoramento, reconciliação e sincronização em uma aplicação unificada, disponibilizando tanto interface desktop gráfica nativa (Tauri v2) quanto modo daemon/CLI.
 
 ### Modos de Operação
 * **Desktop GUI (Tauri v2):** Executado por padrão no Windows quando compilado com `--features desktop`. Renderiza a WebView2 ultraleve sem decorações nativas, ícone persistente na bandeja do sistema (*System Tray*) e controle de ciclo de vida da janela.
 * **Headless Daemon (CLI):** Executado em servidores ou terminais sem dependência do WebView2. Monitora o filesystem e executa a reconciliação em loop perpétuo.
 * **Ferramentas Especializadas:**
   * `scan_report` (`src/bin/scan_report.rs`): Utilitário de diagnóstico que varre os jogos instalados e exibe um relatório formatado de saves no terminal.
-  * Subcomandos CLI de restauração e listagem (`savevault restore <id>`, `savevault list`).
+  * Subcomandos CLI de restauração e listagem (`checkpoint restore <id>`, `checkpoint list`).
 

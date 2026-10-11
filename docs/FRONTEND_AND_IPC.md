@@ -1,12 +1,12 @@
-# 🖥️ Frontend & Contrato IPC — SaveVault
+# 🖥️ Frontend & Contrato IPC — checkpoint
 
-Este documento detalha a camada de interface desktop do **SaveVault**, baseada em **Tauri v2** + **Vanilla JS/CSS**, cobrindo o catálogo de comandos IPC, o gerenciamento de estado no backend (`DevUiState`), o design system responsivo e as otimizações agressivas de consumo de memória RAM.
+Este documento detalha a camada de interface desktop do **checkpoint**, baseada em **Tauri v2** + **Vanilla JS/CSS**, cobrindo o catálogo de comandos IPC, o gerenciamento de estado no backend (`DevUiState`), o design system responsivo e as otimizações agressivas de consumo de memória RAM.
 
 ---
 
 ## 1. Arquitetura da Interface Desktop
 
-O SaveVault opta por uma abordagem de **altíssimo desempenho e zero overhead**, dispensando NodeJS, React, Electron ou bundlers pesados em tempo de execução:
+O **checkpoint** opta por uma abordagem de **altíssimo desempenho e zero overhead**, dispensando NodeJS, React, Electron ou bundlers pesados em tempo de execução:
 
 ```
 crates/savevault-app/ui/frontend/

@@ -1,30 +1,30 @@
-# 🏛️ Arquitetura do Sistema — SaveVault
+# 🏛️ Arquitetura do Sistema — checkpoint
 
-Este documento detalha os fundamentos de arquitetura, o pipeline de dados de ponta a ponta, o modelo de concorrência e as decisões de engenharia que sustentam o **SaveVault**.
+Este documento detalha os fundamentos de arquitetura, o pipeline de dados de ponta a ponta, o modelo de concorrência e as decisões de engenharia que sustentam o **checkpoint** (desenvolvido a partir dos crates modulares `savevault-*`).
 
 ---
 
 ## 1. Visão Geral e Princípios Arquiteturais
 
-O SaveVault foi concebido sob princípios estritos de confiabilidade para sistemas desktop em Windows:
+O checkpoint foi concebido sob princípios estritos de confiabilidade para sistemas desktop em Windows:
 
-* **Zero-Data-Loss (Perda Zero de Dados):** Saves de jogos representam dezenas ou centenas de horas de progresso do usuário. Nenhuma falha de rede, crash de processo ou restauração de versão antiga pode corromper ou deletar um save ativo sem cópia de segurança prévia.
-* **Non-Intrusive & Zero-Impact (Não-Intrusivo no Desempenho):** O monitoramento não pode degradar a taxa de quadros (FPS) ou gerar stuttering durante gameplays. Toda operação pesada (hashing, compressão, I/O de rede) ocorre em background assíncrono com limites de concorrência controlados por semáforos.
-* **Self-Healing & Idempotente (Auto-Recuperável):** Se o aplicativo for desligado abruptamente enquanto o usuário joga, o subsistema de **Reconciliação Periódica** detectará e capturará o novo save na reinicialização. Operações de banco são estritamente idempotentes.
-* **Offline-First com Nuvem Híbrida:** O SaveVault opera 100% desconectado da internet. Quando conectado, sincroniza de forma transacional com pastas locais de nuvem (OneDrive, Google Drive Desktop) ou APIs na nuvem.
+* **Zero-Data-Loss (Perda Zero de Dados):** Saves de jogos representam dezenas ou centenas de horas de progresso do jogador. Nenhuma falha de rede, crash de processo ou restauração de versão antiga pode corromper ou deletar um save ativo sem cópia de segurança prévia.
+* **Non-Intrusive & Zero-Impact (Não-Intrusivo no Desempenho):** O monitoramento não degrada a taxa de quadros (FPS) nem gera stuttering durante gameplays. Toda operação pesada (hashing, compressão, I/O de rede) ocorre em background assíncrono com limites de concorrência controlados por semáforos.
+* **Self-Healing & Idempotente (Auto-Recuperável):** Se o computador for desligado abruptamente enquanto o usuário joga, o subsistema de **Reconciliação Periódica** detectará e capturará o novo save na reinicialização. Operações de banco são estritamente idempotentes.
+* **Offline-First com Nuvem Híbrida:** O checkpoint opera 100% desconectado da internet. Quando conectado, sincroniza de forma transacional com pastas locais de nuvem (OneDrive, Google Drive Desktop) ou APIs na nuvem.
 
 ---
 
 ## 2. Diagrama de Pipeline de Ponta a Ponta
 
-O fluxo de dados do SaveVault é particionado em 4 estágios contínuos e desacoplados:
+O fluxo de dados do checkpoint é particionado em 4 estágios contínuos e desacoplados:
 
 ```mermaid
 flowchart TD
     subgraph ETAPA_1["1. Game & Save Discovery"]
         A["savevault-discovery<br/>(Steam / GOG / Emuladores / Generic)"] -->|Identifica jogos instalados| B["Ludusavi Manifest<br/>(Cache YAML & PathResolver)"]
         B -->|Gera caminhos brutos de save| C["savevault-core<br/>(path::normalize / canonicalize)"]
-        C -->|SaveLocation canônico| D["savevault-app<br/>(Orquestrador)"]
+        C -->|SaveLocation canônico| D["savevault-app<br/>(Orquestrador checkpoint)"]
         D -->|upsert idempotente| E[("savevault-db<br/>(games & save_locations)")]
     end
 
@@ -91,11 +91,11 @@ flowchart TD
 
 ## 4. Modelo de Concorrência e Threads
 
-O SaveVault foi projetado para contornar uma restrição arquitetural essencial do Windows: **a WebView2 e a message loop do Win32 exigem execução na thread principal (Main Thread)**, enquanto tarefas de monitoramento e sincronização em background exigem um runtime assíncrono multi-thread.
+O checkpoint foi projetado para contornar uma restrição arquitetural essencial do Windows: **a WebView2 e a message loop do Win32 exigem execução na thread principal (Main Thread)**, enquanto tarefas de monitoramento e sincronização em background exigem um runtime assíncrono multi-thread.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        PROCESSO: savevault.exe                         │
+│                        PROCESSO: checkpoint.exe                        │
 ├───────────────────────────────────┬────────────────────────────────────┤
 │ MAIN THREAD (Win32 GUI Loop)      │ TOKIO RUNTIME DEDICADO (Background)│
 │                                   │ (2 Worker Threads + 4 Blocking)    │
@@ -118,7 +118,7 @@ O SaveVault foi projetado para contornar uma restrição arquitetural essencial 
 
 ## 5. Resiliência e Tolerância a Falhas
 
-| Cenário de Falha | Mecanismo de Proteção do SaveVault |
+| Cenário de Falha | Mecanismo de Proteção do checkpoint |
 | :--- | :--- |
 | **Queda de energia durante escrita de save pelo jogo** | O `StabilityChecker` detecta oscilação de tamanho/hash e descarta eventos corrompidos; o snapshot anterior permanece 100% íntegro. |
 | **Restauração de save antigo pelo usuário** | Um **Safety Backup** (`.savevault_safety_<uuid>_<n>`) é gerado no mesmo diretório antes de tocar no arquivo ativo. |
@@ -138,4 +138,3 @@ Para viabilizar a execução permanente em segundo plano sem incomodar jogadores
    Utiliza `CreateToolhelp32Snapshot` para localizar subprocessos filhos e netos do WebView2 (renderer, GPU process, network service) e executa o trimming de memória em cada um deles.
 3. **Flags de Contenção no Chromium:**
    O V8 JavaScript é configurado com `--max-old-space-size=32 --optimize-for-size --lite-mode`, forçando garbage collection agressivo e unificando instâncias de renderização (`--renderer-process-limit=1`).
-

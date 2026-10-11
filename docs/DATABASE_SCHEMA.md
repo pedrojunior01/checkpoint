@@ -1,6 +1,6 @@
-# 🗄️ Esquema do Banco de Dados — SaveVault
+# 🗄️ Esquema do Banco de Dados — checkpoint
 
-Este documento detalha o modelo relacional de persistência do **SaveVault**, implementado sobre **SQLite** com Write-Ahead Logging (`WAL`) e integridade referencial estrita (`PRAGMA foreign_keys = ON;`).
+Este documento detalha o modelo relacional de persistência do **checkpoint**, implementado sobre **SQLite** (`savevault.db`) com Write-Ahead Logging (`WAL`) e integridade referencial estrita (`PRAGMA foreign_keys = ON;`).
 
 ---
 

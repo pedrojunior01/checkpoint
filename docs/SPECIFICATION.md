@@ -1,6 +1,6 @@
-# 📋 Especificação Funcional e Requisitos — SaveVault
+# 📋 Especificação Funcional e Requisitos — checkpoint
 
-> Documento canônico de especificação de produto e regras de negócio do **SaveVault**.
+> Documento canônico de especificação de produto e regras de negócio do **checkpoint**.
 
 **Stack:** 100% Rust  
 **Plataforma Inicial:** Windows 10/11 x64  
@@ -10,14 +10,14 @@
 
 ## 1. Proposta de Valor e Posicionamento
 
-O SaveVault roda silenciosamente em segundo plano no computador com uma única finalidade: **encontrar e proteger automaticamente os saves dos jogos do usuário**, versionando-os localmente e sincronizando-os com a nuvem sem exigir intervenção manual.
+O **checkpoint** roda silenciosamente em segundo plano no computador com uma única finalidade: **encontrar e proteger automaticamente os saves dos jogos do jogador**, versionando-os localmente e sincronizando-os com a nuvem sem exigir intervenção manual.
 
-> *"Você joga. O SaveVault encontra e protege seus saves automaticamente."*
+> *"Você joga. O checkpoint encontra e protege seus saves automaticamente."*
 
 ```mermaid
 flowchart TD
-    A[Instala SaveVault] --> B[Abre pela primeira vez]
-    B --> C[Configura Cloud / OneDrive / GDrive]
+    A[Instala checkpoint] --> B[Abre pela primeira vez]
+    B --> C[Configura Nuvem: OneDrive ou GDrive]
     C --> D[Discovery inicial automático]
     D --> E[Encontra jogos e emuladores instalados]
     E --> F[Mapeia pastas e arquivos de save]
@@ -45,7 +45,7 @@ flowchart TD
 * **Emuladores:** Dolphin, PCSX2, PPSSPP e RetroArch.
 * **Heurística Genérica:** Varredura em pastas padrão (`%APPDATA%`, `%LOCALAPPDATA%`, `Saved Games`, `Documents`).
 * **Catálogo Comunitário:** Ludusavi Manifest (+53.000 títulos).
-* **Inclusão Manual:** Cadastro via interface ou CLI de pastas e arquivos arbitrários.
+* **Inclusão Manual:** Cadastro via interface desktop ou CLI de pastas e arquivos arbitrários.
 
 ### 2.3. Provedores de Nuvem Suportados
 * **Pastas Locais de Nuvem:** Microsoft OneDrive, Google Drive Desktop, Dropbox, iCloud Drive (sem necessidade de chaves de API).
@@ -82,6 +82,6 @@ flowchart TD
 
 ## 4. Licenciamento e Dados de Terceiros
 
-O SaveVault consome dados do **Ludusavi Manifest** (mantido sob licença CC BY-NC-SA 3.0, originado da PCGamingWiki).
-* Todo o código Rust de parsing e resolução de variáveis foi desenvolvido **100% do zero** dentro do SaveVault (sem reutilização de código do projeto Ludusavi).
+O checkpoint consome dados do **Ludusavi Manifest** (mantido sob licença CC BY-NC-SA 3.0, originado da PCGamingWiki).
+* Todo o código Rust de parsing e resolução de variáveis foi desenvolvido **100% do zero** dentro do checkpoint (sem reutilização de código do projeto Ludusavi).
 * Para distribuição gratuita e open-source, o consumo dos dados é perfeitamente compatível. Em caso de planos comerciais futuros, é recomendável manter uma base proprietária ou licenciar formalmente as fontes de dados.

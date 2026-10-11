@@ -1,6 +1,6 @@
-# 🛠️ Guia do Desenvolvedor & Contribuidor — SaveVault
+# 🛠️ Guia do Desenvolvedor & Contribuidor — checkpoint
 
-Este guia orienta engenheiros de software e novos contribuidores sobre como configurar o ambiente de desenvolvimento, compilar o projeto em diferentes modalidades, executar a suíte de testes e estender a base de código do **SaveVault**.
+Este guia orienta engenheiros de software e novos contribuidores sobre como configurar o ambiente de desenvolvimento, compilar o projeto em diferentes modalidades, executar a suíte de testes e estender a base de código do **checkpoint**.
 
 ---
 
@@ -50,7 +50,7 @@ cargo run --package savevault-app
 
 ## 3. Execução de Testes Automatizados
 
-O SaveVault possui **100% de cobertura nos fluxos críticos** com mais de 110 testes automatizados:
+O **checkpoint** possui **100% de cobertura nos fluxos críticos** com mais de 110 testes automatizados:
 
 ### 3.1. Rodar toda a suíte do workspace
 ```powershell
