@@ -119,14 +119,33 @@ document.getElementById("btn-help-close")?.addEventListener("click", () => {
 
 // ── Controles da Janela (Nativos via IPC) ──────────────────────────────────────
 
-document.getElementById("titlebar-minimize")?.addEventListener("click", () => {
+const btnTitleMin = document.getElementById("titlebar-minimize");
+const btnTitleMax = document.getElementById("titlebar-maximize");
+const btnTitleClose = document.getElementById("titlebar-close");
+
+[btnTitleMin, btnTitleMax, btnTitleClose].forEach(btn => {
+    if (!btn) return;
+    btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    btn.addEventListener("mousedown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => e.stopPropagation());
+});
+
+btnTitleMin?.addEventListener("click", () => {
     invoke("window_minimize").catch(console.error);
 });
-document.getElementById("titlebar-maximize")?.addEventListener("click", () => {
+btnTitleMax?.addEventListener("click", () => {
     invoke("window_toggle_maximize").catch(console.error);
 });
-document.getElementById("titlebar-close")?.addEventListener("click", () => {
+btnTitleClose?.addEventListener("click", () => {
     invoke("window_close").catch(console.error);
+});
+
+// Duplo clique na barra de título para maximizar/restaurar
+document.querySelector(".titlebar-drag-spacer")?.addEventListener("dblclick", () => {
+    invoke("window_toggle_maximize").catch(console.error);
+});
+document.querySelector(".titlebar-brand")?.addEventListener("dblclick", () => {
+    invoke("window_toggle_maximize").catch(console.error);
 });
 
 // ── Navegação de Abas ─────────────────────────────────────────────────────────
@@ -272,8 +291,8 @@ async function updateCloudBadge() {
                 badgeEl.classList.add("cloud-badge-onedrive");
                 badgeEl.title = `Microsoft OneDrive Conectado em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             } else {
-                if (iconEl) iconEl.innerHTML = getGoogleDriveIcon(17);
-                if (textEl) textEl.textContent = "Sincronizado";
+                if (iconEl) iconEl.innerHTML = `<svg style="width:16px;height:16px;flex-shrink:0;vertical-align:middle;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
+                if (textEl) textEl.textContent = "Pasta Local";
                 badgeEl.title = `Sincronização ativa em: ${cloudCfg.local_sync_path}\nClique para gerenciar`;
             }
         } else {
@@ -400,7 +419,7 @@ function renderJogosList(query = "") {
             ${avatarHtml}
             <div class="game-info">
                 <p class="game-name" style="font-size:14px;">${loc.game_name || "Jogo Desconhecido"}</p>
-                <p class="game-subtext" style="font-family:ui-monospace, monospace;color:#64748b;">${loc.path || ""}</p>
+                <p class="game-subtext game-path-text">${loc.path || ""}</p>
                 <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) monitorado(s) · Plataforma: ${loc.platform || "Genérica"}</p>
             </div>
             <span class="badge-synced">Monitorado</span>

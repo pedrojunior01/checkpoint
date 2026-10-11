@@ -1167,7 +1167,7 @@ impl DevUiState {
                     "-NonInteractive",
                     "-Command",
                     &format!(
-                        "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        "Compress-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
                         backup_dir.display(),
                         target_zip.display()
                     ),

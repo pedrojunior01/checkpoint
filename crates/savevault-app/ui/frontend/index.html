@@ -12,8 +12,8 @@
 <div class="app-container">
 
   <!-- ── TitleBar ── -->
-  <header data-tauri-drag-region class="titlebar">
-    <div class="titlebar-brand">
+  <header class="titlebar">
+    <div data-tauri-drag-region class="titlebar-brand">
       <div class="titlebar-logo-icon">
         <svg style="width:10px;height:10px;fill:none;stroke:#ffffff;stroke-width:2;" viewBox="0 0 24 24">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -21,6 +21,7 @@
       </div>
       <span class="titlebar-logo-text">checkpoint</span>
     </div>
+    <div data-tauri-drag-region class="titlebar-drag-spacer"></div>
     <div class="titlebar-controls">
       <button id="titlebar-minimize" aria-label="Minimizar" class="btn-control">
         <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>

@@ -58,19 +58,18 @@ html, body {
 }
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
+  user-select: none;
 }
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] a,
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] select {
-  -webkit-app-region: no-drag;
+.titlebar-drag-spacer {
+  flex: 1;
+  height: 100%;
 }
 
 .titlebar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  pointer-events: none;
+  cursor: default;
 }
 .titlebar-logo-icon {
   width: 18px;
@@ -92,6 +91,9 @@ html, body {
   display: flex;
   align-items: center;
   gap: 4px;
+  position: relative;
+  z-index: 50;
+  -webkit-app-region: no-drag;
 }
 .btn-control {
   width: 28px;
@@ -909,7 +911,7 @@ body.dark .btn-restore:hover {
   color: #ffffff;
 }
 body.dark .btn-control {
-  color: #64748b;
+  color: #94a3b8;
 }
 body.dark .btn-control:hover {
   background: #1e293b;
@@ -993,4 +995,38 @@ body.dark ::-webkit-scrollbar-thumb {
 }
 body.dark ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* ── Placeholders & Readonly Inputs ── */
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;
+}
+body.dark input::placeholder,
+body.dark textarea::placeholder {
+  color: #64748b;
+}
+
+body.dark .config-input[readonly] {
+  background: #090d16;
+  color: #94a3b8;
+  border-color: #1e293b;
+}
+
+.config-card input[type="checkbox"] {
+  accent-color: #0284c7;
+}
+
+.game-path-text {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: #64748b;
+  word-break: break-all;
+}
+body.dark .game-path-text {
+  color: #94a3b8;
+}
+
+body.dark #modal-details-files {
+  color: #f8fafc;
 }

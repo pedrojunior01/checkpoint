@@ -181,6 +181,9 @@ pub fn open_path_in_explorer(path: String) -> Result<(), String> {
         } else {
             p
         };
+        if !target.exists() {
+            let _ = std::fs::create_dir_all(target);
+        }
         std::process::Command::new("explorer.exe")
             .arg(target)
             .spawn()
@@ -310,7 +313,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
     #[cfg(windows)]
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions --disable-extensions --disable-component-update --renderer-process-limit=1 --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio"
+        "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization --in-process-gpu --disable-software-rasterizer --renderer-process-limit=1 --js-flags=\"--max-old-space-size=32 --optimize-for-size --lite-mode\" --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,AudioServiceOutOfProcess --enable-features=NetworkServiceInProcess --disable-extensions --disable-component-update --disable-background-networking --disable-speech-api --disable-sync --disable-breakpad --disable-default-apps --disable-domain-reliability --no-pings --mute-audio --disable-dev-shm-usage"
     );
 
     tauri::Builder::default()
