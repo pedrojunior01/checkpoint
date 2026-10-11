@@ -138,3 +138,4 @@ Para viabilizar a execução permanente em segundo plano sem incomodar jogadores
    Utiliza `CreateToolhelp32Snapshot` para localizar subprocessos filhos e netos do WebView2 (renderer, GPU process, network service) e executa o trimming de memória em cada um deles.
 3. **Flags de Contenção no Chromium:**
    O V8 JavaScript é configurado com `--max-old-space-size=32 --optimize-for-size --lite-mode`, forçando garbage collection agressivo e unificando instâncias de renderização (`--renderer-process-limit=1`).
+

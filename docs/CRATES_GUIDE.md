@@ -222,3 +222,4 @@ Orquestrador central do sistema. Une os componentes de persistência, monitorame
 * **Ferramentas Especializadas:**
   * `scan_report` (`src/bin/scan_report.rs`): Utilitário de diagnóstico que varre os jogos instalados e exibe um relatório formatado de saves no terminal.
   * Subcomandos CLI de restauração e listagem (`savevault restore <id>`, `savevault list`).
+

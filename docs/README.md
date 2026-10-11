@@ -27,6 +27,7 @@ A documentação está subdividida em guias temáticos para facilitar a consulta
 | **[Esquema do Banco de Dados](DATABASE_SCHEMA.md)** | Estrutura completa do SQLite (tabelas, chaves estrangeiras com `CASCADE`, migrações 001 a 005, índices `NOCASE` e integridade ACID). |
 | **[Frontend & Contrato IPC](FRONTEND_AND_IPC.md)** | Camada Desktop Tauri v2, catálogo completo dos 20 comandos IPC, gerenciamento de estado (`DevUiState`), design system, modais e poda de memória. |
 | **[Guia do Desenvolvedor & Contribuidor](DEVELOPMENT_GUIDE.md)** | Como configurar o ambiente, compilar (Desktop vs. Headless), rodar a suite de testes, adicionar novos detectores de jogos e novos provedores de nuvem. |
+| **[Especificação & Requisitos](SPECIFICATION.md)** | Especificação canônica do produto, proposta de valor, regras de negócio e limites de escopo. |
 | **[Status do Projeto & Roadmap](PROJECT_STATUS.md)** | Relatório do estado atual de entrega (`v0.9.0-rc`), auditoria de qualidade, correções recentes e próximos passos. |
 
 ---
@@ -95,3 +96,4 @@ cargo run --package savevault-app
 2. **Escrita Atômica:** Nenhum arquivo é sobrescrito diretamente por streaming; a escrita ocorre em um arquivo de staging temporário (`.restore_tmp_<uuid>`) no mesmo volume NTFS e é promovida via renomeação atômica (`MoveFileExW` com `MOVEFILE_REPLACE_EXISTING`).
 3. **Imunidade a Travamentos de Jogo:** O monitor não tenta ler arquivos enquanto jogos ativos estiverem gravando dados; códigos de erro Win32 `ERROR_SHARING_VIOLATION` (32/33) são interceptados e entram em espera exponencial sem gerar falsos positivos.
 4. **Sem Dependência de Node.js em Produção:** A interface visual é Vanilla JS/CSS servida diretamente pelo executável compilado, sem node_modules ou pacotes npm em tempo de execução.
+

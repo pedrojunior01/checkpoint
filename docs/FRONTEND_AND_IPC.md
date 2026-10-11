@@ -101,3 +101,4 @@ A navegação ocorre sem recarregamento de página (*Single Page Application*):
 * **Sistema de Toasts Flutuantes (`showToast`):** Notificações de feedback visual no canto da tela com auto-dismiss após 4 segundos e estilos distintos para `success`, `error` e `info`.
 * **Formatação de Tempo Relativo (`timeAgo`):** Converte strings ISO 8601 em descrições amigáveis em português (`agora mesmo`, `há 15 min`, `há 2h`, `10 de out`).
 * **Polling Leve Inteligente:** Um `setInterval` de 10 segundos atualiza periodicamente apenas a aba que está visível no momento (`nav-inicio` ou `nav-atividade`), sem desperdiçar ciclos de CPU em abas ocultas.
+

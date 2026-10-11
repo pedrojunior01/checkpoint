@@ -175,3 +175,4 @@ impl CloudProvider for NovoProvedor {
   $env:SAVEVAULT_LOG="debug"
   cargo run --package savevault-app --features desktop
   ```
+

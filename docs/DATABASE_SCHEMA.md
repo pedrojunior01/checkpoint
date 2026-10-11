@@ -205,3 +205,4 @@ JOIN save_locations sl ON f.save_location_id = sl.id
 JOIN games g ON sl.game_id = g.id
 WHERE sq.status = 'pending';
 ```
+
