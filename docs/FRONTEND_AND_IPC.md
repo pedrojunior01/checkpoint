@@ -54,7 +54,7 @@ Abaixo está a especificação completa de todos os **20 comandos IPC** registra
 | `export_backup_zip` | *(State Arc<DevUiState>)* | `Result<ExportResult, String>` | Compacta todo o diretório de backups em um arquivo `.zip` na pasta Downloads do usuário via PowerShell. |
 | `get_cloud_config` | *(State Arc<DevUiState>)* | `Result<CloudConfigView, String>` | Retorna a configuração de nuvem atual e pastas de nuvem detectadas na máquina (OneDrive, etc.). |
 | `update_cloud_config` | `provider: Option<String>`, `local_sync_path: Option<String>`, `enabled: Option<bool>` | `Result<CloudConfigView, String>` | Atualiza os parâmetros de nuvem e notifica o `SyncWorker` em tempo de execução via canal interno. |
-| `resolve_game_cover` | `app_id: String` | `Result<Option<String>, String>` | Resolve a imagem oficial da capa do jogo via cache em memória, arquivo local ou API da Steam. |
+| `resolve_game_cover` | `app_id: Option<String>`, `game_name: Option<String>` | `Result<Option<String>, String>` | Resolve a capa em alta definição (600x900) via AppID, mapeamento de alias ou busca dinâmica na Steam Store Search API. |
 
 ---
 
@@ -79,10 +79,16 @@ pub struct DevUiState {
 }
 ```
 
-### Cache de Capas em 3 Níveis (`steam_covers.json`):
-1. **Nível 1 (Memória RAM):** `steam_cover_cache: Mutex<HashMap<String, String>>`.
-2. **Nível 2 (Arquivo Local):** `%APPDATA%\SaveVault\steam_covers.json`. Cada nova capa descoberta via API é persistida atomicamente no disco.
-3. **Nível 3 (Rede com Fallback):** Consulta HTTP à API oficial da Steam com timeout de 3.5s (`https://store.steampowered.com/api/appdetails?appids={app_id}&filters=basic`). Se indisponível ou offline, recorre à URL estática da Cloudflare CDN Steam. Se falhar, renderiza um avatar com gradiente CSS e as iniciais do jogo.
+### Resolução e Cache de Capas em Alta Resolução (`steam_covers.json`):
+O sistema garante capas oficiais verticais em alta definição (600x900) tanto para jogos catalogados na Steam quanto para jogos genéricos sem AppID prévio:
+1. **Nível 1 (Memória RAM):** `steam_cover_cache: Mutex<HashMap<String, String>>` para lookup imediato em $O(1)$.
+2. **Nível 2 (Arquivo Local Persistente):** `%APPDATA%\SaveVault\steam_covers.json`. Cada nova capa descoberta via API ou busca dinâmica é persistida atomicamente no disco, sobrevivendo a reinicializações.
+3. **Nível 3 (Resolução em Cascata na Rede):**
+   * **Se possuir `app_id`:** Gera diretamente a URL da arte vertical oficial da biblioteca na CDN Cloudflare da Steam (`https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900_2x.jpg` com fallback para `header.jpg`).
+   * **Se for jogo genérico (`game_name`):**
+     * **Aliases Conhecidos (`map_game_name_to_steam_id`):** Mapeia nomes abreviados de pastas para AppIDs oficiais (ex: `KOFXV` → 1498570, `MortalShell2` → 1110910, `RSDragonwilds` → 1790600, `PioneerGame` → 1808500 / ARC Raiders, `DYSMANTLE` → 846770).
+     * **Steam Store Search API (`resolve_cover_by_name`):** Consulta `https://store.steampowered.com/api/storesearch/?term={clean_name}` (limpando numerações romanas ou sufixos comuns) e obtém o AppID correspondente.
+4. **Tratamento Visual no Frontend (`handleCoverError`):** No caso de imagens inacessíveis ou títulos inexistentes na Steam, o frontend substitui dinamicamente o `<img>` por um avatar estilizado com gradiente CSS e as iniciais do jogo, evitando ícones quebrados na interface.
 
 ---
 

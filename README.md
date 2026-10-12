@@ -1,161 +1,131 @@
-# SaveVault
+# checkpoint 🎮
 
-> Motor de backup automático de saves de jogos para Windows, feito em Rust.  
-> Silencioso, leve (~15MB RAM) e com sincronização nativa na nuvem.
-
----
-
-## O que é o SaveVault?
-
-SaveVault é uma solução em Rust que roda em segundo plano e protege automaticamente os arquivos de save dos seus jogos no Windows. Ele detecta jogos instalados, monitora alterações nos arquivos de save em tempo real e mantém backups sincronizados com a nuvem — sem interromper sua gameplay e sem consumir espaço infinito no disco.
+> **Motor inteligente de backup automático e sincronização de saves de jogos para Windows.**  
+> Escrito 100% em **Rust**, com interface Desktop nativa via **Tauri v2**, consumo ultraleve (**15MB a 25MB RAM**), residência silenciosa na bandeja do sistema (*System Tray*) e suporte híbrido à nuvem (**Google Drive** e **Microsoft OneDrive**).
 
 ---
 
-## Funcionalidades
+## 🚀 O que é o checkpoint?
+
+O **checkpoint** opera silenciosamente em segundo plano enquanto você joga, com uma missão simples: **garantir que nenhum minuto do seu progresso seja perdido**.
+
+Ele detecta seus jogos instalados e seus respectivos diretórios de save, monitora gravações em tempo real com debouncing inteligente, calcula hashes criptográficos **BLAKE3** para eliminar duplicações, armazena snapshots locais versionados e sincroniza tudo de forma transacional com a nuvem (suportando tanto pastas locais sincronizadas como o Google Drive Desktop e OneDrive quanto APIs diretas).
+
+---
+
+## ✨ Funcionalidades Principais
 
 | Recurso | Descrição |
-|---|---|
-| 🔍 **Discovery Automático** | Detecta jogos via Steam, GOG, emuladores e heurística genérica |
-| 📖 **Manifesto Ludusavi** | Base de dados de +30.000 jogos com caminhos de save conhecidos |
-| 👁️ **Watcher em Tempo Real** | Monitora saves com debounce inteligente (evita backups duplicados) |
-| 🔐 **Integridade BLAKE3** | Cada save é verificado por hash antes e após a cópia |
-| ☁️ **Motor de 2 Pastas** | Estrutura `latest`/`daily` para sync nativo via Google Drive, OneDrive ou Dropbox |
-| 🔄 **Sincronização Cloud** | Fila de upload atômica com retry e backoff exponencial |
-| 🗑️ **Pruning Automático** | Limpa registros do banco SQLite com mais de 30 dias automaticamente |
-| 🔁 **Restauração Segura** | CLI para restaurar qualquer snapshot com safety backup do estado atual |
-| 🛡️ **Deduplicação** | Previne entradas duplicadas quando um jogo é detectado por múltiplas fontes |
+| :--- | :--- |
+| 🔍 **Discovery Multilocalizador** | Identifica jogos via Steam (`.acf`/`.vdf`), GOG Galaxy (Registro 32/64-bit), emuladores (Dolphin, PCSX2, PPSSPP, RetroArch) e heurística genérica para jogos isolados. |
+| 📖 **Catálogo Ludusavi (+53.000 Jogos)** | Mapeamento automático de caminhos de save com resolução de variáveis Win32 (`<winAppData>`, `<winDocuments>`). |
+| 🖼️ **Capas em Alta Definição (600x900)** | Resolução oficial de artes verticais da Steam tanto para títulos de loja quanto para jogos genéricos via Steam Store Search API e cache persistente (`steam_covers.json`). |
+| 🧹 **Filtro Inteligente Anti-Ruído** | Poda preventiva de caches gráficos temporários (arquivos `.DDS`, subpastas `CACHE`, `SHADERCACHE`, `.crash`), evitando falsas notificações e spam no banco de dados. |
+| 👁️ **Monitoramento Não-Bloqueante** | Watcher Win32 (`ReadDirectoryChangesW`) com debouncing adaptativo e tolerância nativa a travas de escrita de jogos (`ERROR_SHARING_VIOLATION`). |
+| 🔐 **Integridade Criptográfica BLAKE3** | Cálculo de hash em streaming constante $O(1)$ de RAM (blocos de 64 KB) com deduplicação perfeita (*zero duplication*). |
+| ☁️ **Nuvem Híbrida & Disaster Recovery** | Sincronização automática para Google Drive (`G:\Meu Drive\checkpoint`) e Microsoft OneDrive, com manifesto central (`savevault_manifest.json`) para restaurar tudo em PCs novos. |
+| 🖥️ **Interface Desktop Nativa (Tauri v2)** | UI moderna frameless, temas claro e escuro, sem dependência de Node.js em produção, operando na bandeja do sistema (*System Tray*). |
+| ⚡ **Otimização de RAM (15MB - 25MB)** | Poda ativa de memória Working Set (`SetProcessWorkingSetSize`) do processo principal e subprocessos da WebView2 ao minimizar ou ficar ocioso. |
+| 🛡️ **Restauração Segura em 4 Etapas** | Geração obrigatória de **Safety Backups** (`.savevault_safety_*`) antes de tocar no arquivo ativo, com substituição atômica Win32 (`MoveFileExW`). |
 
 ---
 
-## Requisitos
+## 📋 Requisitos
 
-- **Windows 10 ou 11** (64-bit)
-- **Rust 1.80+** com Cargo (para compilar a partir do código-fonte)
+* **Sistema Operacional:** Windows 10 (Build 19041+) ou Windows 11 x64.
+* **Rust:** 1.75+ com toolchain MSVC (`stable-x86_64-pc-windows-msvc`).
+* **WebView2 Runtime:** Já instalado nativamente no Windows 10/11.
 
 ---
 
-## Instalação
+## ⚡ Instalação & Compilação
+
+Clone o repositório e compile o projeto com o Cargo:
 
 ```powershell
-git clone https://github.com/pedrojunior01/Savevalt.git
-cd Savevalt
-cargo build --release
+git clone https://github.com/pedrojunior01/Savevalt.git checkpoint
+cd checkpoint
 ```
 
-O executável será gerado em `target/release/savevault.exe`.
-
----
-
-## Como Usar
-
-### 1. Iniciar o monitoramento contínuo
-
+### 1. Executar a Interface Desktop (Modo Padrão)
+A feature `desktop` já vem habilitada por padrão:
 ```powershell
 cargo run -p savevault-app
 ```
 
-Na primeira execução, o SaveVault irá automaticamente:
-1. Criar o arquivo de configuração em `%APPDATA%\SaveVault\config.toml`
-2. Inicializar o banco de dados SQLite em `%APPDATA%\SaveVault\savevault.db`
-3. Escanear os jogos instalados e mapear seus diretórios de save
-4. Entrar em modo **Watcher** — monitorando saves em tempo real
-
-### 2. Abrir o Dashboard Web (Dev UI)
-
+### 2. Compilar o Binário Release Standalone Otimizado
 ```powershell
-cargo run -p savevault-app -- ui
+cargo build -p savevault-app --release
+```
+O executável final independente será gerado em:
+```
+target\release\checkpoint.exe
 ```
 
-Acesse `http://127.0.0.1:4040` no navegador para ver:
-- Lista de jogos protegidos e seus locais de save
-- Status do sistema e da sincronização
-- Histórico dos últimos snapshots realizados
-
-### 3. Adicionar um jogo manualmente
-
+### 3. Executar em Modo Headless (Sem Interface Gráfica / CLI)
+Para servidores, terminais puros ou automações:
 ```powershell
-cargo run -p savevault-app -- add "Nome do Jogo" "C:\Caminho\Para\Saves"
-```
+# Executa apenas a varredura e imprime o relatório formatado
+cargo run -p savevault-app --bin scan_report
 
-### 4. Restaurar um save
-
-```powershell
-# Listar snapshots disponíveis
-cargo run -p savevault-app -- restore list
-
-# Restaurar um snapshot específico pelo ID
-cargo run -p savevault-app -- restore <id_do_snapshot>
-```
-
-A restauração cria automaticamente um **safety backup** do arquivo atual antes de sobrescrever.
-
----
-
-## Como funciona o Motor de 2 Pastas
-
-Quando o jogo salva, o SaveVault detecta a mudança e cria:
-
-```
-📁 SaveVault_Backups/
-└── 📁 ELDEN RING/
-    ├── 📁 latest/        ← Sobrescrito a cada save (o mais recente)
-    │   └── ER0000.sl2
-    └── 📁 daily/         ← Copiado uma vez por dia (segurança diária)
-        └── ER0000.sl2
-```
-
-**Por que essa estrutura?**
-- Ocupa espaço mínimo no disco (sem versões `v1`, `v2`, `v3`...)
-- A pasta `latest` sincroniza com o Google Drive, que mantém o **histórico de versões nativo** no servidor — você pode recuperar qualquer ponto no tempo pelo site do Google Drive
-- A pasta `daily` garante um ponto de restauração seguro mesmo sem internet
-
----
-
-## Configuração
-
-Edite o arquivo em `%APPDATA%\SaveVault\config.toml` para ajustar:
-
-```toml
-[general]
-log_level = "info"
-debounce_ms = 2000          # Espera X ms após o último save antes de fazer backup
-reconciliation_interval_secs = 300
-
-[paths]
-backup_dir = "C:\\Users\\SEU_USUARIO\\Google Drive\\SaveVault_Backups"
+# Executa o daemon contínuo em segundo plano no terminal
+cargo run -p savevault-app --no-default-features
 ```
 
 ---
 
-## Testes
+## 🧪 Bateria de Testes Automatizados
+
+O projeto conta com mais de 115 testes cobrindo todos os fluxos críticos de persistência, concorrência, caminhos Windows e sincronização:
 
 ```powershell
 cargo test --workspace
 ```
 
-Cobertura atual: **~120 testes** passando em todos os módulos (app, backup, sync, discovery, monitor, db).
-
 ---
 
-## Estrutura do Projeto
+## 📁 Estrutura do Workspace Cargo
+
+O ecossistema é particionado em 8 crates modulares altamente coesos e desacoplados:
 
 ```
-SaveValt/
+checkpoint/
 ├── crates/
-│   ├── savevault-app/        # Aplicação principal, CLI e Dev-UI
-│   ├── savevault-backup/     # Motor de snapshot (BLAKE3, latest/daily)
-│   ├── savevault-cloud/      # Integração Google Drive
-│   ├── savevault-core/       # Modelos de dados e utilitários de caminho
-│   ├── savevault-db/         # Repositórios SQLite e migrações
-│   ├── savevault-discovery/  # Detecção de jogos (Steam, GOG, Ludusavi, genérico)
-│   ├── savevault-monitor/    # Watcher de filesystem e debouncer
-│   └── savevault-sync/       # Motor de sincronização cloud com retry
-└── docs/
-    └── PROJECT_STATUS.md
+│   ├── savevault-core/       # Modelos canônicos de domínio, caminhos Windows e autostart
+│   ├── savevault-db/         # Persistência SQLite bundled em modo WAL com migrações
+│   ├── savevault-discovery/  # Detectores Steam, GOG, Emuladores, Heurística e Ludusavi
+│   ├── savevault-monitor/    # Watcher notify, debouncer, checagem de estabilidade e poda de cache
+│   ├── savevault-backup/     # Hashing BLAKE3 em streaming e gerenciador de snapshots
+│   ├── savevault-cloud/      # Abstração de nuvem, pastas locais (OneDrive/GDrive) e OAuth 2.0
+│   ├── savevault-sync/       # Motor assíncrono transacional de sincronização com retry
+│   └── savevault-app/        # Executável checkpoint.exe, Tauri v2 Desktop, IPC e CLI
+├── docs/                     # Documentação técnica e guias de arquitetura
+│   ├── ARCHITECTURE.md       # Diagrama de pipeline ponta a ponta e concorrência
+│   ├── CRATES_GUIDE.md       # Análise técnica aprofundada dos 8 crates
+│   ├── DATABASE_SCHEMA.md    # Esquema SQLite, migrações e chaves CASCADE
+│   ├── DEVELOPMENT_GUIDE.md  # Guia para novos desenvolvedores e boas práticas
+│   ├── FRONTEND_AND_IPC.md   # Catálogo completo dos comandos IPC e design system
+│   ├── PROJECT_STATUS.md     # Relatório de status e histórico de correções
+│   ├── README.md             # Índice da documentação técnica
+│   └── SPECIFICATION.md      # Especificação funcional e regras de negócio
+└── Cargo.toml                # Workspace Cargo raiz
 ```
 
 ---
 
-## Licença
+## 📖 Documentação Completa
 
-Distribuído sob a licença **MIT**. Consulte o arquivo `LICENSE` para detalhes.
+Para aprofundar nos detalhes de implementação, consulte a pasta [`docs/`](docs/):
+
+* [🏛️ Arquitetura do Sistema](docs/ARCHITECTURE.md)
+* [📦 Guia Detalhado dos Crates](docs/CRATES_GUIDE.md)
+* [🖥️ Frontend & Contrato IPC](docs/FRONTEND_AND_IPC.md)
+* [🗄️ Esquema do Banco de Dados](docs/DATABASE_SCHEMA.md)
+* [🛠️ Guia do Desenvolvedor](docs/DEVELOPMENT_GUIDE.md)
+* [📊 Status do Projeto & Roadmap](docs/PROJECT_STATUS.md)
+
+---
+
+## 📄 Licença
+
+Distribuído sob a licença **MIT**. Consulte o arquivo [LICENSE](LICENSE) para mais detalhes.

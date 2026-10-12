@@ -75,17 +75,19 @@ cargo test --workspace
 *(Todos os crates possuem cobertura automatizada com SQLite em memória e testes de concorrência).*
 
 ### 3. Executar o checkpoint com interface Desktop (Tauri v2)
+A feature `desktop` já vem habilitada por padrão:
 ```powershell
-cargo run --package savevault-app --features desktop
+cargo run --package savevault-app
 ```
+*(Para compilar a versão final release: `cargo build --package savevault-app --release`, gerando `target/release/checkpoint.exe`).*
 
 ### 4. Executar em modo headless (CLI / Scanner de relatório)
 ```powershell
 # Executa apenas a varredura e exibe o relatório no terminal
 cargo run --package savevault-app --bin scan_report
 
-# Inicia o daemon residente em modo texto
-cargo run --package savevault-app
+# Inicia o daemon residente em modo texto (sem GUI)
+cargo run --package savevault-app --no-default-features
 ```
 
 ---

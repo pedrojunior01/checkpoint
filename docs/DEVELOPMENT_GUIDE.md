@@ -19,24 +19,24 @@ Este guia orienta engenheiros de software e novos contribuidores sobre como conf
 O workspace Cargo suporta compilação em múltiplos modos através de feature flags:
 
 ### 2.1. Modo Desktop com Interface Gráfica (Tauri v2)
-Este é o modo padrão de produção e desenvolvimento da interface visual:
+Este é o modo padrão de produção e desenvolvimento da interface visual (a feature `desktop` é habilitada por padrão):
 ```powershell
 # Compila e roda em modo debug (com logs no console)
-cargo run --package savevault-app --features desktop
+cargo run --package savevault-app
 
 # Compila o binário release standalone altamente otimizado
-cargo build --package savevault-app --features desktop --release
+cargo build --package savevault-app --release
 ```
-O executável release gerado estará em `target/release/savevault.exe`.
+O executável release gerado estará em `target/release/checkpoint.exe`.
 
 ### 2.2. Modo Headless / Daemon Residente (CLI)
-Para servidores, testes em CI ou terminais sem dependência gráfica do WebView2:
+Para servidores, testes em CI ou terminais sem dependência gráfica do WebView2 (desativando os recursos visuais):
 ```powershell
-# Compila apenas a versão terminal
-cargo build --package savevault-app
+# Compila apenas a versão terminal headless
+cargo build --package savevault-app --no-default-features
 
 # Executa o daemon contínuo em background no terminal
-cargo run --package savevault-app
+cargo run --package savevault-app --no-default-features
 ```
 
 ### 2.3. Executáveis Utilitários e Diagnósticos
@@ -172,7 +172,7 @@ impl CloudProvider for NovoProvedor {
   * `error!`: Falhas não recuperáveis que exigem atenção imediata.
 * Para habilitar logs detalhados durante o desenvolvimento no PowerShell:
   ```powershell
-  $env:SAVEVAULT_LOG="debug"
-  cargo run --package savevault-app --features desktop
+  $env:CHECKPOINT_LOG="debug" # ou $env:SAVEVAULT_LOG="debug"
+  cargo run --package savevault-app
   ```
 

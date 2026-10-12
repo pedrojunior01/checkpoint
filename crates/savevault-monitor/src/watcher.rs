@@ -20,7 +20,10 @@ use tokio::sync::{mpsc, watch, Semaphore};
 use uuid::Uuid;
 
 use savevault_core::models::{SaveLocation, SaveLocationType};
-use savevault_core::path::{canonicalize_windows_path, is_internal_savevault_file};
+use savevault_core::path::{
+    canonicalize_windows_path, is_ignored_file_extension, is_ignored_relative_save_path,
+    is_internal_savevault_file,
+};
 
 use crate::debouncer::{DebounceConfig, FileDebouncer, InFlightTracker};
 use crate::events::{CoalescedFileEvent, RawFileEvent, RawFileEventKind, StableFileEvent, StableFileEventKind};
@@ -714,6 +717,15 @@ pub fn match_path_to_locations(
         return None;
     }
 
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(is_ignored_file_extension)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
     let canon_path = match canonicalize_windows_path(path) {
         Ok(p) => p,
         Err(_) => return None,
@@ -734,6 +746,11 @@ pub fn match_path_to_locations(
                         return Some((loc.id, SaveLocationType::File));
                     }
                     if canon_path != canon_loc && canon_path.starts_with(&canon_loc) {
+                        if let Ok(rel) = canon_path.strip_prefix(&canon_loc) {
+                            if is_ignored_relative_save_path(rel) {
+                                return None;
+                            }
+                        }
                         return Some((loc.id, SaveLocationType::Directory));
                     }
                 }
@@ -743,6 +760,9 @@ pub fn match_path_to_locations(
                     if let Ok(canon_base) = canonicalize_windows_path(&base_dir) {
                         if canon_path != canon_base && canon_path.starts_with(&canon_base) {
                             if let Ok(rel_path) = canon_path.strip_prefix(&canon_base) {
+                                if is_ignored_relative_save_path(rel_path) {
+                                    return None;
+                                }
                                 if match_glob_relative(&pattern, rel_path) {
                                     return Some((loc.id, SaveLocationType::Glob));
                                 }

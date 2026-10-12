@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use uuid::Uuid;
 use savevault_core::models::{SaveLocation, SaveLocationType};
-use savevault_core::path::{is_glob_pattern, is_internal_savevault_file};
+use savevault_core::path::{
+    is_glob_pattern, is_ignored_file_extension, is_ignored_relative_save_path,
+    is_internal_savevault_file,
+};
 use thiserror::Error;
 use walkdir::WalkDir;
 
@@ -82,8 +85,16 @@ impl SaveScanner {
             return Ok(vec![]);
         }
 
-        // Se existir mas for um diretório, ou se for arquivo interno do SaveVault, não tratar como arquivo
-        if !location.path.is_file() || is_internal_savevault_file(&location.path) {
+        // Se existir mas for um diretório, ou se for arquivo interno/ignorado, não tratar como arquivo
+        if !location.path.is_file()
+            || is_internal_savevault_file(&location.path)
+            || location
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(is_ignored_file_extension)
+                .unwrap_or(false)
+        {
             return Ok(vec![]);
         }
 
@@ -113,9 +124,22 @@ impl SaveScanner {
         }
 
         let mut files = Vec::new();
-        let walker = WalkDir::new(&location.path)
+        let base_path = &location.path;
+        let walker = WalkDir::new(base_path)
             .follow_links(false)
-            .max_depth(self.max_depth);
+            .max_depth(self.max_depth)
+            .into_iter()
+            .filter_entry(|entry| {
+                if entry.file_type().is_dir() {
+                    if let Ok(rel) = entry.path().strip_prefix(base_path) {
+                        !is_ignored_relative_save_path(rel)
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            });
 
         for entry in walker {
             let entry = match entry {
@@ -127,8 +151,17 @@ impl SaveScanner {
                 }
             };
 
-            // Ignorar diretórios, symlinks e arquivos internos do SaveVault (.savevault_safety_, .restore_tmp_, .tmp, etc.)
-            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
+            // Ignorar diretórios e symlinks
+            if entry.file_type().is_dir() || entry.path_is_symlink() {
+                continue;
+            }
+
+            // Ignorar caminhos relativos indesejados (cache, dumps, logs, internal safety files)
+            if let Ok(rel) = entry.path().strip_prefix(base_path) {
+                if is_ignored_relative_save_path(rel) {
+                    continue;
+                }
+            } else if is_internal_savevault_file(entry.path()) {
                 continue;
             }
 
@@ -168,7 +201,19 @@ impl SaveScanner {
         let mut files = Vec::new();
         let walker = WalkDir::new(&base_dir)
             .follow_links(false)
-            .max_depth(self.max_depth);
+            .max_depth(self.max_depth)
+            .into_iter()
+            .filter_entry(|entry| {
+                if entry.file_type().is_dir() {
+                    if let Ok(rel) = entry.path().strip_prefix(&base_dir) {
+                        !is_ignored_relative_save_path(rel)
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            });
 
         for entry in walker {
             let entry = match entry {
@@ -179,8 +224,8 @@ impl SaveScanner {
                 }
             };
 
-            // Ignorar diretórios, symlinks e arquivos internos do SaveVault
-            if entry.file_type().is_dir() || entry.path_is_symlink() || is_internal_savevault_file(entry.path()) {
+            // Ignorar diretórios e symlinks
+            if entry.file_type().is_dir() || entry.path_is_symlink() {
                 continue;
             }
 
@@ -188,6 +233,10 @@ impl SaveScanner {
                 Ok(p) => p,
                 Err(_) => continue,
             };
+
+            if is_ignored_relative_save_path(rel_path) {
+                continue;
+            }
 
             // Compara o caminho relativo contra o padrão glob
             if match_glob_relative(&pattern, rel_path) {

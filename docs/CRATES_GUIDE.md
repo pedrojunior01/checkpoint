@@ -41,6 +41,9 @@ Este guia fornece um mergulho técnico em cada um dos **8 crates** do workspace 
 * `normalize_windows_path_str(raw: &str)`: Normaliza strings de caminhos para persistência no banco sem depender da existência física no disco. Remove prefixos `\\?\` e `\\?\UNC\`, colapsa separadores duplicados (`\\` → `\`), garante letras de drive em maiúsculo (`c:` → `C:`) e trata UNC (`\\servidor\pasta`).
 * `canonicalize_windows_path_str(raw: &str)`: Cria representação única para chaves em tabelas hash (case-folded para minúsculas), respeitando a semântica case-insensitive do NTFS.
 * `is_internal_savevault_file(path: &Path)`: Detecta arquivos de trabalho gerados pelo próprio checkpoint (`.savevault_safety_*`, `.restore_tmp_*`, `.tmp`, `.crswap`), evitando que o watcher entre em loop recursivo.
+* `is_ignored_directory_name(dir_name: &str) -> bool`: Identifica diretórios transitórios de cache e shaders que não contêm progresso do jogador (ex: `cache`, `caches`, `shadercache`, `shaders`, `pip_cache`, `crashdump`, `logs`, `temp`, `tmp`).
+* `is_ignored_file_extension(ext: &str) -> bool`: Identifica extensões de arquivos espúrios ou temporários gerados por engines gráficas (ex: `.dds`, `.log`, `.tmp`, `.bak`, `.old`, `.dmp`, `.crash`, `.cache`).
+* `is_ignored_relative_save_path(relative_path: &Path) -> bool`: Avalia se qualquer componente de diretório relativo corresponde a uma pasta ignorada ou se o arquivo possui extensão espúria. Opera estritamente com caminhos relativos ao diretório raiz de saves (`location.path`), prevenindo falsos positivos com pastas temporárias do SO (como `AppData\Local\Temp`).
 
 ### Gerenciamento de Autostart (`autostart.rs`)
 * Manipula a chave `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` através da crate `winreg`.
@@ -116,6 +119,7 @@ Pipeline em tempo real de vigilância do sistema de arquivos e validação de es
 ### Componentes Internos
 * **`SaveScanner` (`scanner.rs`):**
   * Realiza varreduras físicas de arquivos, diretórios e padrões glob.
+  * Poda de Ruído e Caches (`filter_entry`): Durante a caminhada de diretórios (`scan_directory` e `scan_glob`), diretórios inteiros de cache (ex: `CACHE`, `SHADERCACHE`) e arquivos com extensões espúrias (ex: `.dds`, `.log`, `.crash`) são podados antes de qualquer leitura ou cálculo de hash, eliminando poluição no banco e economizando I/O (essencial para jogos com engines complexas como No Man's Sky).
   * Proteção contra traversal: impõe profundidade máxima (`max_depth = 10`), ignora links simbólicos e junction points e rejeita componentes `..` em padrões glob.
   * Suporta detecção de arquivos únicos (ex: `S0000.sl2` do Sekiro) e diretórios completos.
 * **`FileDebouncer` (`debouncer.rs`):**
@@ -130,6 +134,7 @@ Pipeline em tempo real de vigilância do sistema de arquivos e validação de es
   * Limita concorrência a no máximo 8 verificações simultâneas via `tokio::sync::Semaphore`.
 * **`SaveWatcherService` (`watcher.rs`):**
   * Orquestra o watcher do `notify` em canal `mpsc` assíncrono.
+  * Filtragem de Ruído em Tempo Real: No mapeamento de eventos (`match_path_to_locations`), descarta instantaneamente eventos de arquivos com extensões ignoradas ou que pertençam a subpastas ignoradas relativas à raiz do save.
   * Suporte a pastas ainda não criadas: se um diretório de save ainda não existe, registra um watch no ancestral existente mais próximo e promove o watch assim que o jogo cria a subpasta.
 
 ---
@@ -217,9 +222,15 @@ Motor transacional de sincronização em segundo plano. Consome a tabela `sync_q
 Orquestrador central do **checkpoint**. Une os componentes de persistência, monitoramento, reconciliação e sincronização em uma aplicação unificada, disponibilizando tanto interface desktop gráfica nativa (Tauri v2) quanto modo daemon/CLI.
 
 ### Modos de Operação
-* **Desktop GUI (Tauri v2):** Executado por padrão no Windows quando compilado com `--features desktop`. Renderiza a WebView2 ultraleve sem decorações nativas, ícone persistente na bandeja do sistema (*System Tray*) e controle de ciclo de vida da janela.
-* **Headless Daemon (CLI):** Executado em servidores ou terminais sem dependência do WebView2. Monitora o filesystem e executa a reconciliação em loop perpétuo.
+* **Desktop GUI (Tauri v2):** Habilitado por padrão no `Cargo.toml` (`default = ["desktop"]`), executado diretamente via `cargo run -p savevault-app`. O executável final é nomeado `checkpoint.exe`. Renderiza a WebView2 ultraleve sem decorações nativas, com ícone persistente na bandeja do sistema (*System Tray*), atalhos de janela e limpeza periódica de memória RAM.
+* **Headless Daemon (CLI):** Executado em servidores ou terminais sem dependência do WebView2 usando `cargo run -p savevault-app --no-default-features`. Monitora o filesystem e executa a reconciliação em loop perpétuo.
 * **Ferramentas Especializadas:**
   * `scan_report` (`src/bin/scan_report.rs`): Utilitário de diagnóstico que varre os jogos instalados e exibe um relatório formatado de saves no terminal.
   * Subcomandos CLI de restauração e listagem (`checkpoint restore <id>`, `checkpoint list`).
+
+### Resolução de Arte de Capas Steam (`ui/state.rs`)
+* `map_game_name_to_steam_id(raw_name: &str) -> Option<&'static str>`: Mapeamento heurístico de títulos e executáveis conhecidos para Steam AppIDs oficiais (ex: `KOFXV` → 1498570, `MortalShell2` → 1110910, `RSDragonwilds` → 1790600, `PioneerGame` → 1808500 / ARC Raiders, `DYSMANTLE` → 846770).
+* `resolve_cover_by_name(client, name: &str) -> Option<String>`: Busca títulos na Steam Store Search API (`https://store.steampowered.com/api/storesearch/?term={clean_name}`), limpando numerações romanas ou sufixos comuns.
+* `resolve_cover(...)`: Orquestrador de 3 níveis: consulta cache em memória, arquivo local `steam_covers.json`, e rede. Resolve a arte vertical de alta resolução (`library_600x900_2x.jpg` com fallback `header.jpg`) e persiste no cache local.
+
 

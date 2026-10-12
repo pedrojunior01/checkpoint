@@ -1181,3 +1181,51 @@ async fn test_16_clean_shutdown_terminates_all_tasks() {
     assert!(shutdown_result.is_ok(), "Shutdown deve completar prontamente sem travar");
 }
 
+#[test]
+fn test_17_scanner_skips_cache_directories_and_dds_files() {
+    let dir = tempdir().unwrap();
+    let save_dir = dir.path().join("GameSaves");
+    let cache_dir = save_dir.join("st_123456").join("cache");
+    let crash_dir = save_dir.join("CrashDumps");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::create_dir_all(&crash_dir).unwrap();
+
+    // Saves legítimos
+    let save1 = save_dir.join("st_123456").join("save.hg");
+    let save2 = save_dir.join("st_123456").join("accountdata.hg");
+    File::create(&save1).unwrap().write_all(b"save_data").unwrap();
+    File::create(&save2).unwrap().write_all(b"account_data").unwrap();
+
+    // Arquivos transitórios e de cache (devem ser ignorados)
+    let cache_dds = cache_dir.join("thumbnail.dds");
+    let cache_json = cache_dir.join("SEASON_DATA_CACHE.JSON");
+    let root_dds = save_dir.join("texture.DDS");
+    let crash_dump = crash_dir.join("crash.dmp");
+    File::create(&cache_dds).unwrap().write_all(b"dds_data").unwrap();
+    File::create(&cache_json).unwrap().write_all(b"json_cache").unwrap();
+    File::create(&root_dds).unwrap().write_all(b"root_dds_data").unwrap();
+    File::create(&crash_dump).unwrap().write_all(b"dump_data").unwrap();
+
+    let loc = SaveLocation::new(
+        Uuid::new_v4(),
+        save_dir.clone(),
+        SaveLocationType::Directory,
+    );
+
+    let scanner = SaveScanner::default();
+    let discovered = scanner.scan(&loc).unwrap();
+
+    // Apenas os 2 saves legítimos devem ter sido encontrados!
+    assert_eq!(discovered.len(), 2, "Deveria descobrir apenas os 2 saves reais");
+    let discovered_names: Vec<String> = discovered
+        .iter()
+        .map(|f| f.path.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert!(discovered_names.contains(&"save.hg".to_string()));
+    assert!(discovered_names.contains(&"accountdata.hg".to_string()));
+    assert!(!discovered_names.contains(&"thumbnail.dds".to_string()));
+    assert!(!discovered_names.contains(&"SEASON_DATA_CACHE.JSON".to_string()));
+    assert!(!discovered_names.contains(&"texture.DDS".to_string()));
+    assert!(!discovered_names.contains(&"crash.dmp".to_string()));
+}
+

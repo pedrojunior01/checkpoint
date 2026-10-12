@@ -227,6 +227,31 @@ pub struct DevUiState {
     pub steam_cover_cache: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
+/// Mapeia nomes conhecidos de jogos, abreviações ou nomes de projeto UE para seus respectivos AppIDs Steam.
+pub fn map_game_name_to_steam_id(name: &str) -> Option<&'static str> {
+    let lower = name.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "kofxv" | "kof xv" | "the king of fighters xv" => Some("1498570"),
+        "mortalshell2" | "mortal shell ii" | "mortal shell 2" => Some("2584270"),
+        "mortalshell" | "mortal shell" => Some("1110910"),
+        "rsdragonwilds" | "dragonwilds" | "runescape: dragonwilds" | "runescape dragonwilds" => Some("1374490"),
+        "pioneergame" | "pioneer" | "arc raiders" => Some("1808500"),
+        "dysmantle" => Some("846770"),
+        "sekiro" | "sekiro: shadows die twice" | "sekiro shadows die twice" => Some("814380"),
+        "elden ring" | "eldenring" => Some("1245620"),
+        "no man's sky" | "no mans sky" | "nomanssky" | "nms" => Some("275850"),
+        "warhammer 40,000: space marine 2" | "space marine 2" | "spacemarine2" => Some("2183900"),
+        "street fighter 6" | "streetfighter6" | "sf6" => Some("1364780"),
+        "the witcher 3" | "the witcher 3: wild hunt" | "witcher 3" | "witcher3" => Some("292030"),
+        "armored core vi" | "armored core 6" | "armored core vi fires of rubicon" | "armoredcorevi" => Some("1888160"),
+        "aion 2" | "aion2" => Some("3393110"),
+        "iron nest" | "iron nest: heavy turret simulator" | "iron nest heavy turret simulator" => Some("2950790"),
+        "wallpaper engine" => Some("431960"),
+        "albion online" => Some("761890"),
+        _ => None,
+    }
+}
+
 impl DevUiState {
     pub fn new(
         db: Arc<Mutex<Connection>>,
@@ -334,6 +359,87 @@ impl DevUiState {
             "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
             app_id
         ))
+    }
+
+    /// Resolve a capa oficial de um jogo pelo nome (dicionário de aliases ou busca no Steam Store).
+    pub async fn resolve_cover_by_name(&self, game_name: &str) -> Option<String> {
+        let name_trimmed = game_name.trim();
+        if name_trimmed.is_empty() {
+            return None;
+        }
+
+        // 1. Dicionário de aliases conhecidos
+        if let Some(app_id) = map_game_name_to_steam_id(name_trimmed) {
+            return self.resolve_steam_cover(app_id).await;
+        }
+
+        // 2. Cache em memória
+        let norm_key = format!("name:{}", name_trimmed.to_ascii_lowercase());
+        {
+            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = lock.get(&norm_key) {
+                return Some(cached.clone());
+            }
+        }
+
+        // 3. Consulta à API de busca da loja do Steam
+        let search_term = if name_trimmed.ends_with("Game") && name_trimmed.len() > 4 {
+            &name_trimmed[..name_trimmed.len() - 4]
+        } else {
+            name_trimmed
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(4000))
+            .build()
+            .ok()?;
+
+        let search_url = "https://store.steampowered.com/api/storesearch/";
+        if let Ok(resp) = client
+            .get(search_url)
+            .query(&[("term", search_term), ("l", "english"), ("cc", "US")])
+            .send()
+            .await
+        {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+                    if let Some(first) = items.first() {
+                        if let Some(id_val) = first.get("id") {
+                            let app_id = id_val.to_string();
+                            if let Some(cover) = self.resolve_steam_cover(&app_id).await {
+                                {
+                                    let mut lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+                                    lock.insert(norm_key, cover.clone());
+                                }
+                                self.persist_cover_cache();
+                                return Some(cover);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a capa de um jogo por AppID ou Nome do jogo com persistência de cache.
+    pub async fn resolve_cover(&self, app_id: Option<&str>, game_name: Option<&str>) -> Option<String> {
+        if let Some(id) = app_id {
+            if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                if let Some(cover) = self.resolve_steam_cover(id).await {
+                    return Some(cover);
+                }
+            }
+        }
+
+        if let Some(name) = game_name {
+            if let Some(cover) = self.resolve_cover_by_name(name).await {
+                return Some(cover);
+            }
+        }
+
+        None
     }
 
     /// Registra um evento no log em memória da DEV-UI.
@@ -562,30 +668,34 @@ impl DevUiState {
             let files = files_repo.list_by_location(loc.id).unwrap_or_default();
 
             // Resolução de capa do jogo:
-            // 1. Se Steam, usa platform_id.
-            // 2. Se DYSMANTLE, associa com AppID 846770.
+            // 1. Se Steam com platform_id numérico, usa diretamente.
+            // 2. Se Genérico ou sem platform_id, resolve pelo nome via dicionário de aliases ou cache.
             let steam_id = if let Some(ref g) = game {
                 if g.platform == Platform::Steam {
-                    g.platform_id.as_deref().filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
-                } else if game_name.eq_ignore_ascii_case("DYSMANTLE") {
-                    Some("846770")
+                    g.platform_id
+                        .as_deref()
+                        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+                        .or_else(|| map_game_name_to_steam_id(&game_name))
                 } else {
-                    None
+                    map_game_name_to_steam_id(&game_name)
                 }
             } else {
-                None
+                map_game_name_to_steam_id(&game_name)
             };
 
-            let cover_url = steam_id.map(|id| {
+            let cover_url = if let Some(id) = steam_id {
                 if let Some(cached_url) = cached_covers.get(id) {
-                    cached_url.clone()
+                    Some(cached_url.clone())
                 } else {
-                    format!(
+                    Some(format!(
                         "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg",
                         id
-                    )
+                    ))
                 }
-            });
+            } else {
+                let norm_key = format!("name:{}", game_name.trim().to_ascii_lowercase());
+                cached_covers.get(&norm_key).cloned()
+            };
 
             let last_backup_time = last_backups.get(&loc.id).cloned();
 

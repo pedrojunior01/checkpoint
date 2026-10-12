@@ -58,6 +58,9 @@ cargo test --workspace
 | **FIX-04** | `cloud` | Falta de suporte simples a nuvem local para usuários sem conta ou chaves de API do Google Cloud. | Implementado `LocalFolderProvider` e detecção automática de pastas locais do **Microsoft OneDrive** (`detect_cloud_folders`). |
 | **FIX-05** | `desktop` | Consumo de RAM da WebView2 ultrapassando a proposta leve do projeto. | Implementada rotina `trim_process_memory` que descarta o Working Set do processo principal e de todos os subprocessos filhos da WebView2 em minimizações, ocultações e a cada 30 segundos, além de flags rígidas no Chromium V8 (32MB max heap). |
 | **FIX-06** | `frontend` | Falhas visuais em modo escuro (textos sumindo e falta de contraste) e ícones de nuvem genéricos. | Correção de variáveis CSS de contraste no `.dark` e inclusão de ícones vetoriais SVG oficiais para Google Drive e Microsoft OneDrive. |
+| **FIX-07** | `branding` / `cloud` | Renomeação global de SaveVault para **checkpoint**, necessitando migração transparente de dados legados no Google Drive e `%APPDATA%`. | Implementada migração automática e retrocompatibilidade (`savevault_cloud::auto_migrate_legacy_cloud_folder` para `G:\Meu Drive\checkpoint`), suporte unificado a `%APPDATA%\checkpoint` e `%APPDATA%\SaveVault`, e definição da feature `desktop` como padrão no `Cargo.toml`. |
+| **FIX-08** | `core` / `monitor` | O No Man's Sky acumulava 46 arquivos monitorados e inundava a aba "Atividade" com backups de miniaturas e texturas transitórias `.DDS` em subpastas de cache (`st_...\cache`). | Adicionada filtragem inteligente com `is_ignored_relative_save_path` e `filter_entry` no `SaveScanner` e `SaveWatcherService` (ignorando pastas `cache`, `CrashDumps`, `crashes`, `shadercache` e arquivos `.dds`, `.dmp`, `.mdmp`, `.crash`). Realizada limpeza do banco e do disco, reduzindo o NMS para estritamente seus 8 saves reais. |
+| **FIX-09** | `state.rs` / `frontend` | Jogos genéricos (`KOFXV`, `MortalShell2`, `RSDragonwilds`, `PioneerGame`) exibiam apenas crachás com iniciais (KO, MO, RS, PI) sem capas oficiais. | Implementado dicionário inteligente de aliases (`map_game_name_to_steam_id`), motor dinâmico assíncrono de busca na Steam Store Search API (`resolve_cover_by_name`), persistência em `steam_covers.json` e substituição dinâmica de crachás no Vanilla JS. |
 
 ---
 
@@ -65,9 +68,12 @@ cargo test --workspace
 
 - [x] Interface Desktop Definitiva com Tauri v2 (`checkpoint.exe`).
 - [x] Ícone na bandeja do Windows (System Tray) para monitoramento silencioso minimizado.
-- [x] Suporte integrado a Microsoft OneDrive e Google Drive.
+- [x] Suporte integrado a Microsoft OneDrive e Google Drive (`G:\Meu Drive\checkpoint`).
 - [x] Otimização rigorosa de consumo de RAM (15MB - 25MB).
 - [x] Suporte a saves de arquivo único e diretórios completos.
 - [x] Ordenação dinâmica da tela inicial e feed de atividades em tempo real.
+- [x] Filtragem inteligente anti-ruído de caches e dumps de engines (`cache/`, `.dds`, `.dmp`).
+- [x] Resolução automática de capas oficiais em alta resolução para jogos genéricos e abreviações.
 - [ ] Empacotamento de instalador Windows (`.msi` ou executável com NSIS).
 - [ ] Suporte a múltiplos perfis de save por jogo (slots independentes).
+

@@ -63,12 +63,16 @@ flowchart TD
 3. **Ludusavi Manifest Integration:** Cruza o AppID/Product ID ou o título com o manifesto do Ludusavi (~17MB, +53.000 jogos), expandindo variáveis Windows (`<winAppData>`, `<winDocuments>`).
 4. **Normalização Lógica Windows:** Os caminhos são limpos de prefixos estendidos Win32 (`\\?\`, `\\?\UNC\`) e normalizados sem consultar o disco físico.
 5. **Persistência Idempotente:** Registra o jogo e locais no SQLite via `SaveLocationsRepo::upsert`, preservando UUIDs caso a localização já tenha sido registrada previamente.
+6. **Resolução de Capas em Alta Definição:** Durante a descoberta e renderização na interface, títulos com AppID recebem a arte vertical oficial da CDN Steam (600x900). Títulos genéricos sem AppID passam pelo pipeline de equivalências determinísticas (`map_game_name_to_steam_id`) ou busca dinâmica na Steam Store Search API (`resolve_cover_by_name`), com cache persistente em `%APPDATA%\SaveVault\steam_covers.json`.
 
 ### Estágio 2: Monitoramento em Tempo Real & Estabilização (Monitor)
 1. **Watcher Dinâmico:** Usa a crate `notify` sobre a API nativa `ReadDirectoryChangesW`. Se o diretório do save ainda não existe no disco (jogo nunca foi aberto), monitora a pasta pai e promove para o local de save no momento em que ele é criado pelo jogo.
 2. **Coalescência & Debouncing (`FileDebouncer`):** Jogos frequentemente escrevem arquivos temporários ou emitem dezenas de eventos de escrita durante o processo de autosave. O debouncer unifica eventos repetidos dentro de uma janela configurável (`debounce_ms`, padrão 2000ms).
 3. **Cancelamento In-Flight (`InFlightTracker`):** Se um novo evento de escrita ocorrer para um arquivo que já estava sendo verificado, o token atômico da tarefa anterior é cancelado (`cancel_token = true`), descartando snapshots intermediários obsoletos.
 4. **Resiliência a Arquivos Bloqueados (`StabilityChecker`):** Enquanto o jogo mantém o arquivo aberto exclusivamente (`ERROR_SHARING_VIOLATION`, códigos Win32 32 e 33), o verificador entra em backoff exponencial com jitter sem emitir erros falsos. Apenas quando o handle é fechado pelo jogo e os metadados (tamanho e data de modificação) permanecem estáveis, o `StableFileEvent` é gerado.
+5. **Filtragem de Ruído e Caches de Shaders (`filter_entry` & `is_ignored_relative_save_path`):** Para jogos modernos que gravam centenas de arquivos transitórios de textura ou compilação gráfica junto aos saves (ex: No Man's Sky com arquivos `.DDS` e pastas `CACHE`), o pipeline executa poda em dois pontos:
+   - *No Scanner:* Interrompe a caminhada ao encontrar pastas nomeadas `cache`, `shadercache`, `shaders`, etc. e descarta extensões `.dds`, `.log`, `.crash` antes do cálculo de hash BLAKE3.
+   - *No Watcher:* O evento de filesystem é imediatamente filtrado e descartado caso o caminho relativo à raiz da localização aponte para uma subpasta ignorada ou extensão espúria, garantindo que o debouncer e o banco processem estritamente saves genuínos.
 
 ### Estágio 3: Hashing, Snapshotting & Deduplicação (Backup)
 1. **Cálculo de Assinatura BLAKE3:** O arquivo é lido assincronamente através de streaming em blocos fixos de 64 KB, garantindo consumo de memória $O(1)$ mesmo para arquivos de centenas de megabytes.
@@ -125,6 +129,7 @@ O checkpoint foi projetado para contornar uma restrição arquitetural essencial
 | **Crash durante a restauração** | A restauração ocorre em arquivo de staging (`.restore_tmp_<uuid>`). Se o processo morrer antes do rename atômico (`MoveFileExW`), o save original não é afetado. |
 | **Queda de internet durante upload em nuvem** | O `SyncEngine` implementa backoff exponencial (até 5 tentativas). O arquivo permanece na fila `sync_queue` com status `pending` até restabelecimento da rede. |
 | **App fechado enquanto o usuário jogava** | O **Reconciler Periódico** executa no início de cada sessão, comparando o hash de cada save do disco contra o banco e gerando os snapshots das partidas realizadas offline. |
+| **Spam de caches/shaders pelo jogo (ex: `.DDS` em `CACHE`)** | O pipeline filtra pastas de cache relativas à raiz e extensões gráficas transitórias tanto no scanner quanto no watcher, evitando falsas notificações e poluição no disco/nuvem. |
 | **Duplo clique acidental no executável** | Um `CreateMutexW` nomeado (`Local\SaveVault_checkpoint_Mutex`) garante que apenas uma instância execute por sessão de usuário. |
 
 ---

@@ -183,6 +183,60 @@ pub fn is_internal_savevault_file(path: &Path) -> bool {
         || filename.ends_with(".crswap")
 }
 
+/// Determina se o nome de um diretório dentro de um local de save deve ser ignorado.
+///
+/// Ignora pastas de cache, shader caches, crash dumps e logs transitórios gerados por engines (Unreal, Unity, etc.).
+pub fn is_ignored_directory_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "cache"
+            | "caches"
+            | "shadercache"
+            | "shader_cache"
+            | "webcache"
+            | "gpucache"
+            | "crashdumps"
+            | "crashes"
+            | "dumps"
+    )
+}
+
+/// Determina se uma extensão de arquivo deve ser ignorada por ser dump de memória, crash ou textura transitória.
+pub fn is_ignored_file_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "dds" | "dmp" | "mdmp" | "crash" | "etl"
+    )
+}
+
+/// Determina se um caminho relativo dentro de um SaveLocation deve ser ignorado para fins de salvamento e backup.
+///
+/// Ignora:
+/// 1. Arquivos internos do checkpoint (`.checkpoint_safety_`, `.tmp`, etc.);
+/// 2. Pastas de cache e crash dumps (`cache`, `shadercache`, `crashdumps`, `crashes`, etc.);
+/// 3. Extensões de arquivos não-save (`.dds`, `.dmp`, `.mdmp`, `.crash`, `.etl`).
+pub fn is_ignored_relative_save_path(relative_path: &Path) -> bool {
+    if is_internal_savevault_file(relative_path) {
+        return true;
+    }
+
+    if let Some(ext) = relative_path.extension().and_then(|e| e.to_str()) {
+        if is_ignored_file_extension(ext) {
+            return true;
+        }
+    }
+
+    for comp in relative_path.components() {
+        if let std::path::Component::Normal(c) = comp {
+            if is_ignored_directory_name(&c.to_string_lossy()) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +326,44 @@ mod tests {
         assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav")));
         assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.dat")));
         assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\savegame")));
+    }
+
+    #[test]
+    fn test_is_ignored_relative_save_path() {
+        // NMS cache and DDS texture files
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"st_12345\cache\thumb.dds"
+        )));
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"st_12345\cache\SEASON_DATA_CACHE.JSON"
+        )));
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"subfolder\texture.DDS"
+        )));
+
+        // Crash dumps
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"Saved\CrashDumps\crash.dmp"
+        )));
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"Saved\Crashes\crash.mdmp"
+        )));
+
+        // Internal files
+        assert!(is_ignored_relative_save_path(Path::new(r"slot1.sav.checkpoint_safety_1234")));
+        assert!(is_ignored_relative_save_path(Path::new(r"slot1.tmp")));
+
+        // Real save files must NOT be ignored
+        assert!(!is_ignored_relative_save_path(Path::new(
+            r"st_12345\save.hg"
+        )));
+        assert!(!is_ignored_relative_save_path(Path::new(
+            r"st_12345\accountdata.hg"
+        )));
+        assert!(!is_ignored_relative_save_path(Path::new(
+            r"st_12345\steam_autocloud.vdf"
+        )));
+        assert!(!is_ignored_relative_save_path(Path::new(r"slot1.sav")));
+        assert!(!is_ignored_relative_save_path(Path::new(r"data.bin")));
     }
 }

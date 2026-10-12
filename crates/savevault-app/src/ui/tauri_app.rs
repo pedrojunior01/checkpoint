@@ -289,9 +289,10 @@ pub async fn update_cloud_config(
 #[tauri::command]
 pub async fn resolve_game_cover(
     state: State<'_, Arc<DevUiState>>,
-    app_id: String,
+    app_id: Option<String>,
+    game_name: Option<String>,
 ) -> Result<Option<String>, String> {
-    Ok(state.resolve_steam_cover(&app_id).await)
+    Ok(state.resolve_cover(app_id.as_deref(), game_name.as_deref()).await)
 }
 
 // ── App Setup ────────────────────────────────────────────────────────────────

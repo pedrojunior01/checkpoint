@@ -429,15 +429,23 @@ mod tests {
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let worker_clone = worker.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _ = worker_clone.start(shutdown_rx).await;
         });
 
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(worker.is_running());
+        // Aguarda o worker iniciar de forma determinística
+        let mut started = false;
+        for _ in 0..50 {
+            if worker.is_running() {
+                started = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(started, "Worker deve ter iniciado");
 
         // Segunda tentativa deve falhar com AlreadyRunning
-        let (shutdown_tx2, shutdown_rx2) = watch::channel(false);
+        let (_shutdown_tx2, shutdown_rx2) = watch::channel(false);
         let err = worker.start(shutdown_rx2).await.unwrap_err();
         match err {
             SyncWorkerError::AlreadyRunning => {}
@@ -445,8 +453,7 @@ mod tests {
         }
 
         let _ = shutdown_tx.send(true);
-        let _ = shutdown_tx2.send(true);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = handle.await;
         assert!(!worker.is_running());
     }
 }

@@ -249,12 +249,15 @@ function identifyCloudProvider(providerType, path = "", name = "") {
     return "none";
 }
 
-// Resolução de imagem de capa quando a URL estática 404
-window.handleCoverError = async function(img, appId, initials, gradClass) {
-    if (appId && !img.dataset.retried) {
+// Resolução de imagem de capa quando a URL estática falha (404 ou erro de rede)
+window.handleCoverError = async function(img, appId, gameName, initials, gradClass) {
+    if (!img.dataset.retried) {
         img.dataset.retried = "1";
         try {
-            const resolvedUrl = await invoke("resolve_game_cover", { appId });
+            const resolvedUrl = await invoke("resolve_game_cover", { 
+                appId: appId || null, 
+                gameName: gameName || null 
+            });
             if (resolvedUrl && resolvedUrl !== img.src) {
                 img.src = resolvedUrl;
                 return;
@@ -354,9 +357,10 @@ function renderJogosRecentes(locations) {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
         const appId = (loc.cover_url?.match(/\/apps\/(\d+)\//)?.[1]) || "";
+        const safeGameName = (loc.game_name || "").replace(/'/g, "\\'");
         const avatarHtml = loc.cover_url
-            ? `<img src="${loc.cover_url}" class="game-cover-art game-cover-art-sm" style="width:38px;height:38px;" onerror="window.handleCoverError(this, '${appId}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
-            : `<div class="game-avatar ${gradClass}" style="width:38px;height:38px;">${initials}</div>`;
+            ? `<img src="${loc.cover_url}" class="game-cover-art game-cover-art-sm" style="width:38px;height:38px;" onerror="window.handleCoverError(this, '${appId}', '${safeGameName}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
+            : `<div class="game-avatar ${gradClass}" data-loc-id="${loc.id}" style="width:38px;height:38px;">${initials}</div>`;
 
         const timeSubtext = loc.last_backup_time ? `Backup ${timeAgo(loc.last_backup_time)}` : (loc.platform || "PC");
         const statusBadge = loc.last_backup_time
@@ -373,6 +377,31 @@ function renderJogosRecentes(locations) {
             ${statusBadge}
         </div>`;
     }).join("");
+
+    // Resolução dinâmica em segundo plano para jogos que ainda não possuem URL estática
+    locations.forEach((loc, i) => {
+        if (!loc.cover_url && loc.game_name) {
+            const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
+            const gradClass = `grad-${i % 6}`;
+            const safeGameName = (loc.game_name || "").replace(/'/g, "\\'");
+            invoke("resolve_game_cover", { appId: null, gameName: loc.game_name }).then(url => {
+                if (url) {
+                    loc.cover_url = url;
+                    const avatarEl = container.querySelector(`.game-avatar[data-loc-id="${loc.id}"]`);
+                    if (avatarEl) {
+                        const img = document.createElement("img");
+                        img.src = url;
+                        img.className = "game-cover-art game-cover-art-sm";
+                        img.style.width = "38px";
+                        img.style.height = "38px";
+                        img.alt = loc.game_name;
+                        img.onerror = () => window.handleCoverError(img, "", safeGameName, initials, gradClass);
+                        avatarEl.replaceWith(img);
+                    }
+                }
+            }).catch(() => {});
+        }
+    });
 }
 
 // ── Aba: Jogos ────────────────────────────────────────────────────────────────
@@ -416,9 +445,10 @@ function renderJogosList(query = "") {
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
         const appId = (loc.cover_url?.match(/\/apps\/(\d+)\//)?.[1]) || "";
+        const safeGameName = (loc.game_name || "").replace(/'/g, "\\'");
         const avatarHtml = loc.cover_url
-            ? `<img src="${loc.cover_url}" class="game-cover-art" onerror="window.handleCoverError(this, '${appId}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
-            : `<div class="game-avatar ${gradClass}" style="width:44px;height:44px;font-size:14px;">${initials}</div>`;
+            ? `<img src="${loc.cover_url}" class="game-cover-art" onerror="window.handleCoverError(this, '${appId}', '${safeGameName}', '${initials}', '${gradClass}')" alt="${loc.game_name}" />`
+            : `<div class="game-avatar ${gradClass}" data-loc-id="${loc.id}" style="width:44px;height:44px;font-size:14px;">${initials}</div>`;
 
         return `
         <div class="content-card game-card-clickable" style="display:flex;align-items:center;gap:14px;margin-bottom:10px;padding:14px;" onclick="window.openGameDetails('${loc.id}')">
@@ -431,6 +461,29 @@ function renderJogosList(query = "") {
             <span class="badge-synced">Monitorado</span>
         </div>`;
     }).join("");
+
+    // Resolução dinâmica em segundo plano para jogos da lista geral
+    filtered.forEach((loc, i) => {
+        if (!loc.cover_url && loc.game_name) {
+            const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
+            const gradClass = `grad-${i % 6}`;
+            const safeGameName = (loc.game_name || "").replace(/'/g, "\\'");
+            invoke("resolve_game_cover", { appId: null, gameName: loc.game_name }).then(url => {
+                if (url) {
+                    loc.cover_url = url;
+                    const avatarEl = container.querySelector(`.game-avatar[data-loc-id="${loc.id}"]`);
+                    if (avatarEl) {
+                        const img = document.createElement("img");
+                        img.src = url;
+                        img.className = "game-cover-art";
+                        img.alt = loc.game_name;
+                        img.onerror = () => window.handleCoverError(img, "", safeGameName, initials, gradClass);
+                        avatarEl.replaceWith(img);
+                    }
+                }
+            }).catch(() => {});
+        }
+    });
 }
 
 // Filtro em tempo real no campo de busca
