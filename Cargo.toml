@@ -69,9 +69,13 @@ winreg = "0.52"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = { version = "2", features = [] }
 
+[profile.dev]
+debug = 1
+
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+

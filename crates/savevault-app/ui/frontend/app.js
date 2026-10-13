@@ -315,6 +315,19 @@ document.getElementById("cloud-status-badge")?.addEventListener("click", () => {
 });
 
 async function loadInicio() {
+    let latestLocBackup = null;
+    try {
+        const locs = await invoke("get_locations");
+        cachedLocations = locs;
+        latestLocBackup = locs.find(l => l.last_backup_time)?.last_backup_time;
+
+        // Jogos recentes: prioriza jogos que possuem histórico de backup ou arquivos monitorados
+        const comAtividade = locs.filter(l => l.last_backup_time || (l.monitored_files_count > 0));
+        renderJogosRecentes((comAtividade.length > 0 ? comAtividade : locs).slice(0, 4));
+    } catch (e) {
+        console.error("Erro ao carregar jogos recentes:", e);
+    }
+
     try {
         const data = await invoke("get_dashboard_status");
 
@@ -323,7 +336,15 @@ async function loadInicio() {
         const elTime = document.getElementById("kpi-time");
         if (elGames) elGames.textContent = data.save_locations_count ?? 0;
         if (elSaves) elSaves.textContent = data.snapshots_count ?? 0;
-        if (elTime) elTime.textContent = formatHour(data.last_reconciliation_time);
+        if (elTime) {
+            if (data.last_reconciliation_time) {
+                elTime.textContent = formatHour(data.last_reconciliation_time);
+            } else if (latestLocBackup) {
+                elTime.textContent = timeAgo(latestLocBackup);
+            } else {
+                elTime.textContent = "—";
+            }
+        }
 
         const bannerText = document.getElementById("status-text");
         if (data.sync_pending_count > 0) {
@@ -333,14 +354,6 @@ async function loadInicio() {
         }
     } catch (e) {
         console.error("Erro ao carregar dashboard:", e);
-    }
-
-    try {
-        const locs = await invoke("get_locations");
-        cachedLocations = locs;
-        renderJogosRecentes(locs.slice(0, 4));
-    } catch (e) {
-        console.error("Erro ao carregar jogos recentes:", e);
     }
 
     updateCloudBadge();

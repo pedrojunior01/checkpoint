@@ -251,7 +251,7 @@ pub fn validate_destination_security(
 pub fn validate_snapshot_security(
     backup_root: &Path,
     game_name: &str,
-    _version: u32,
+    version: u32,
     filename: &str,
 ) -> Result<PathBuf, RestoreError> {
     if filename.is_empty()
@@ -268,19 +268,153 @@ pub fn validate_snapshot_security(
 
     let safe_game_name = savevault_backup::snapshot::sanitize_name(game_name);
 
-    let version_dir = backup_root
-        .join(&safe_game_name)
-        .join("latest");
-    let source_path = version_dir.join(filename);
+    // Candidatos comuns por versão, prefixo e latest/daily
+    let candidates = [
+        backup_root.join(&safe_game_name).join(format!("v{}", version)).join(filename),
+        backup_root.join(&safe_game_name).join(format!("v{}_{}", version, filename)),
+        backup_root.join(&safe_game_name).join("latest").join(filename),
+        backup_root.join(&safe_game_name).join("daily").join(filename),
+    ];
 
-    if !source_path.starts_with(backup_root) {
+    for cand in &candidates {
+        if cand.starts_with(backup_root) && cand.exists() {
+            return Ok(cand.clone());
+        }
+    }
+
+    let default_path = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    if !default_path.starts_with(backup_root) {
         return Err(RestoreError::PathSecurityViolation(format!(
             "Caminho do snapshot escapa do backup_root: '{}'",
-            source_path.display()
+            default_path.display()
         )));
     }
 
-    Ok(source_path)
+    Ok(default_path)
+}
+
+/// Localiza e valida o caminho físico do snapshot no backup_root.
+/// Suporta resolução em múltiplos layouts:
+/// 1. `cloud_path` armazenado no banco SQLite (ex.: `<loc_id>/<file_id>/v46_S0000.sl2`);
+/// 2. Layout hierárquico por UUIDs (`<loc_id>/<file_id>/v<ver>_<filename>`);
+/// 3. Layout por pasta de versão (`<safe_game_name>/v<ver>/<filename>`);
+/// 4. Layout por prefixo de versão (`<safe_game_name>/v<ver>_<filename>`);
+/// 5. Layout `latest` (`<safe_game_name>/latest/<filename>`);
+/// 6. Layout `daily` (`<safe_game_name>/daily/<filename>`);
+/// 7. Layout legado SaveVault (`SaveVault/Steam` ou `Other`).
+pub fn resolve_snapshot_source_path(
+    backup_root: &Path,
+    metadata: &RestoreMetadata,
+    filename: &str,
+) -> Result<PathBuf, RestoreError> {
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+        || filename.contains('\0')
+    {
+        return Err(RestoreError::PathSecurityViolation(format!(
+            "Nome de arquivo de snapshot inseguro: '{}'",
+            filename
+        )));
+    }
+
+    let safe_game_name = savevault_backup::snapshot::sanitize_name(&metadata.game.name);
+    let ver = metadata.backup.version;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. Candidato direto por cloud_path armazenado nos metadados do banco
+    if let Some(ref cp) = metadata.backup.cloud_path {
+        let norm_cp = cp.replace('/', std::path::MAIN_SEPARATOR_STR);
+        let path = backup_root.join(&norm_cp);
+        candidates.push(path);
+    }
+
+    // 2. Candidato hierárquico por UUIDs
+    let id_hierarchical = backup_root
+        .join(metadata.save_location.id.to_string())
+        .join(metadata.file_entry.id.to_string())
+        .join(format!("v{}_{}", ver, filename));
+    candidates.push(id_hierarchical);
+
+    // 3. Candidato com pasta de versão no nome do jogo
+    let ver_folder = backup_root
+        .join(&safe_game_name)
+        .join(format!("v{}", ver))
+        .join(filename);
+    candidates.push(ver_folder);
+
+    // 4. Candidato com arquivo prefixado por versão
+    let ver_prefixed = backup_root
+        .join(&safe_game_name)
+        .join(format!("v{}_{}", ver, filename));
+    candidates.push(ver_prefixed);
+
+    // 5. Candidato `latest`
+    let latest_candidate = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+    candidates.push(latest_candidate);
+
+    // 6. Candidato `daily`
+    let daily_candidate = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(filename);
+    candidates.push(daily_candidate);
+
+    // 7. Candidatos legados SaveVault/Steam ou SaveVault/Other
+    candidates.push(
+        backup_root
+            .join("SaveVault")
+            .join("Steam")
+            .join(&safe_game_name)
+            .join(format!("v{}_{}", ver, filename)),
+    );
+    candidates.push(
+        backup_root
+            .join("SaveVault")
+            .join("Steam")
+            .join(&safe_game_name)
+            .join("latest")
+            .join(filename),
+    );
+    candidates.push(
+        backup_root
+            .join("SaveVault")
+            .join("Other")
+            .join(&safe_game_name)
+            .join(format!("v{}_{}", ver, filename)),
+    );
+    candidates.push(
+        backup_root
+            .join("SaveVault")
+            .join("Other")
+            .join(&safe_game_name)
+            .join("latest")
+            .join(filename),
+    );
+
+    // Procura o primeiro candidato que existe fisicamente e cumpre segurança contra path traversal
+    for cand in &candidates {
+        if cand.starts_with(backup_root) && cand.exists() && cand.is_file() {
+            return Ok(cand.clone());
+        }
+    }
+
+    // Se nenhum arquivo existir, escolhe o candidato mais representativo para mensagem de erro clara
+    let fallback = candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| backup_root.join(&safe_game_name).join(filename));
+
+    Err(RestoreError::PhysicalSnapshotMissing(fallback))
 }
 
 /// Restaura um snapshot para o caminho de destino correspondente de forma atômica e segura.
@@ -383,12 +517,7 @@ pub async fn execute_restore_filesystem(
             ))
         })?;
 
-    let source_path = validate_snapshot_security(
-        backup_root,
-        metadata.game.name.as_str(),
-        metadata.backup.version,
-        filename,
-    )?;
+    let source_path = resolve_snapshot_source_path(backup_root, metadata, filename)?;
 
     // 5. Validação da existência do snapshot físico no disco
     if !source_path.exists() {

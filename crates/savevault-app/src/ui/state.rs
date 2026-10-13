@@ -588,6 +588,27 @@ impl DevUiState {
             [],
         );
 
+        // Auto-limpeza de duplicatas genéricas vazias onde o mesmo caminho já é monitorado por um launcher oficial (Steam/GOG)
+        let _ = conn.execute(
+            "DELETE FROM save_locations 
+             WHERE id IN (
+                 SELECT sl1.id 
+                 FROM save_locations sl1
+                 JOIN games g1 ON sl1.game_id = g1.id
+                 JOIN save_locations sl2 ON LOWER(TRIM(sl1.path)) = LOWER(TRIM(sl2.path)) AND sl1.id != sl2.id
+                 JOIN games g2 ON sl2.game_id = g2.id
+                 WHERE g1.platform = 'generic' AND g2.platform != 'generic'
+                   AND NOT EXISTS (SELECT 1 FROM files f WHERE f.save_location_id = sl1.id)
+             )",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM games 
+             WHERE platform = 'generic' 
+               AND NOT EXISTS (SELECT 1 FROM save_locations sl WHERE sl.game_id = games.id)",
+            [],
+        );
+
         let loc_repo = SaveLocationsRepo::new(&conn);
         let games_repo = GamesRepo::new(&conn);
         let files_repo = FilesRepo::new(&conn);
@@ -714,18 +735,38 @@ impl DevUiState {
             });
         }
 
+        // Deduplica entradas que apontem exatamente para o mesmo caminho físico de save
+        let mut deduped_views: Vec<LocationView> = Vec::new();
+        for v in views {
+            let norm_path = v.path.trim().to_ascii_lowercase();
+            if let Some(existing) = deduped_views.iter_mut().find(|e| e.path.trim().to_ascii_lowercase() == norm_path) {
+                // Se a entrada nova tem mais arquivos, tem backup ou é Steam/GOG, substitui a genérica/vazia
+                let replace = (v.monitored_files_count > existing.monitored_files_count)
+                    || (v.last_backup_time.is_some() && existing.last_backup_time.is_none())
+                    || (existing.platform == "Generic" && v.platform != "Generic");
+                if replace {
+                    *existing = v;
+                }
+            } else {
+                deduped_views.push(v);
+            }
+        }
+
         // Ordena por atividade mais recente (último backup/modificação decrescente)
         // Jogos sem backup ficam no final ordenados alfabeticamente
-        views.sort_by(|a, b| {
-            match (&b.last_backup_time, &a.last_backup_time) {
-                (Some(tb), Some(ta)) => tb.cmp(ta),
+        deduped_views.sort_by(|a, b| {
+            match (&a.last_backup_time, &b.last_backup_time) {
+                (Some(ta), Some(tb)) => tb.cmp(ta),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.game_name.to_lowercase().cmp(&b.game_name.to_lowercase()),
+                (None, None) => match b.monitored_files_count.cmp(&a.monitored_files_count) {
+                    std::cmp::Ordering::Equal => a.game_name.to_lowercase().cmp(&b.game_name.to_lowercase()),
+                    other => other,
+                },
             }
         });
 
-        Ok(views)
+        Ok(deduped_views)
     }
 
     /// Executa varredura sob demanda de um `SaveLocation` utilizando o `SaveScanner` existente.
@@ -1103,6 +1144,17 @@ impl DevUiState {
                     )),
                 )
                 .await;
+
+                // Notificação no Windows Toast
+                let game_name = {
+                    let conn = self.db.lock().await;
+                    if let Ok(meta) = crate::restore::load_restore_metadata(&conn, snapshot_id) {
+                        meta.game.name
+                    } else {
+                        "Jogo".to_string()
+                    }
+                };
+                crate::notifications::notify_restore_success(&game_name, report.version);
 
                 RestoreApiResponse {
                     success: true,
