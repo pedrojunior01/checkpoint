@@ -10,7 +10,7 @@ pub mod restore;
 pub mod sync_worker;
 pub mod ui;
 
-pub use orchestrator::{discover_and_persist_saves, DiscoverySyncReport};
+pub use orchestrator::{discover_and_persist_saves, run_full_discovery, DiscoverySyncReport};
 pub use pipeline::{handle_stable_event, process_file, run_pipeline};
 pub use sync_worker::{SyncWorker, SyncWorkerConfig};
 pub use reconciler::{

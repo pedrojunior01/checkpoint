@@ -130,8 +130,6 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     savevault_app::notifications::init_from_config(&config.notifications);
 
     let db = savevault_db::Database::open(&config.paths.database_path)?;
-    let locations_repo = savevault_db::repositories::SaveLocationsRepo::new(&db.conn);
-    let all_locations = locations_repo.list_all().unwrap_or_default();
     let db_conn = Arc::new(tokio::sync::Mutex::new(db.conn));
 
     let reconciler = Arc::new(savevault_app::Reconciler::new(
@@ -163,6 +161,7 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     // Sobe o tokio em uma thread separada para o backend (watcher, reconciler, sync worker, servidor HTTP)
     let state_bg = state.clone();
     let config_bg = config.clone();
+    let config_dir_bg = config_dir.clone();
     let db_conn_bg = db_conn.clone();
     let reconciler_bg = reconciler.clone();
     let sync_worker_bg = sync_worker.clone();
@@ -180,6 +179,32 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
             rt.block_on(async move {
                 // Registra o worker no DevUiState
                 state_bg.set_sync_worker(sync_worker_bg.clone()).await;
+
+                // Executa a descoberta automática de jogos instalados na máquina
+                match savevault_app::run_full_discovery(&db_conn_bg, &config_dir_bg).await {
+                    Ok((games_count, locs_count)) => {
+                        tracing::info!(
+                            "Descoberta inicial concluída: {} jogo(s), {} local(is) de save.",
+                            games_count, locs_count
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Erro durante descoberta inicial de jogos: {}", e);
+                    }
+                }
+
+                // Lê as localizações cadastradas para o watcher e reconciliação
+                let all_locations = {
+                    let conn = db_conn_bg.lock().await;
+                    SaveLocationsRepo::new(&conn)
+                        .list_all()
+                        .unwrap_or_default()
+                };
+
+                // Reconciliação inicial se houver localizações
+                if !all_locations.is_empty() {
+                    let _ = reconciler_bg.reconcile().await;
+                }
 
                 let reconciler_config = savevault_app::ReconciliationConfig::new(
                     std::time::Duration::from_secs(config_bg.general.reconciliation_interval_secs),

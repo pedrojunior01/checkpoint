@@ -1030,3 +1030,9 @@ body.dark .game-path-text {
 body.dark #modal-details-files {
   color: #f8fafc;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

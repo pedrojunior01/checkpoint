@@ -68,3 +68,64 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
 
     Ok(report)
 }
+
+/// Executa a varredura completa de todos os launchers e heurísticas,
+/// persistindo os jogos e locais de save no banco de dados de forma idempotente.
+pub async fn run_full_discovery(
+    db_conn: &std::sync::Arc<tokio::sync::Mutex<rusqlite::Connection>>,
+    config_dir: &std::path::Path,
+) -> Result<(usize, usize)> {
+    tracing::info!("Iniciando varredura e discovery de jogos...");
+    let result = savevault_discovery::run_all(config_dir).await?;
+
+    let conn = db_conn.lock().await;
+    let games_repo = savevault_db::repositories::GamesRepo::new(&conn);
+    let locations_repo = savevault_db::repositories::SaveLocationsRepo::new(&conn);
+
+    let mut real_ids = std::collections::HashMap::new();
+    for game in &result.games {
+        let mut existing_opt = None;
+
+        if let Some(ref platform_id) = game.platform_id {
+            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id) {
+                existing_opt = Some(existing);
+            }
+        }
+
+        if existing_opt.is_none() {
+            if let Ok(Some(existing)) = games_repo.find_by_name_and_platform(&game.name, &game.platform) {
+                existing_opt = Some(existing);
+            }
+        }
+
+        let real_id = match existing_opt {
+            Some(existing) => existing.id,
+            None => {
+                games_repo.insert(game)?;
+                game.id
+            }
+        };
+
+        real_ids.insert(game.id, real_id);
+    }
+
+    let mut new_locations = 0usize;
+    for loc in &result.save_locations {
+        if let Some(&real_id) = real_ids.get(&loc.game_id) {
+            let mut loc_to_insert = loc.clone();
+            loc_to_insert.game_id = real_id;
+            if locations_repo.upsert(&loc_to_insert).is_ok() {
+                new_locations += 1;
+            }
+        }
+    }
+
+    tracing::info!(
+        "checkpoint — Discovery concluído: {} jogo(s) catalogado(s), {} caminho(s) de save registrado(s).",
+        result.games.len(),
+        new_locations
+    );
+
+    Ok((result.games.len(), new_locations))
+}
+

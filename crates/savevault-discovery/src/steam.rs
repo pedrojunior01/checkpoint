@@ -87,16 +87,65 @@ impl SteamDetector {
 
 /// Localiza a pasta raiz do Steam no Windows.
 fn find_steam_root() -> Option<PathBuf> {
-    let default = PathBuf::from("C:\\Program Files (x86)\\Steam");
-    if default.exists() {
-        return Some(default);
-    }
     if let Ok(path) = std::env::var("STEAM_ROOT") {
         let p = PathBuf::from(path);
         if p.exists() {
             return Some(p);
         }
     }
+
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        use winreg::RegKey;
+
+        // 1. Consulta HKCU\Software\Valve\Steam -> SteamPath
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(steam_key) = hkcu.open_subkey(r"Software\Valve\Steam") {
+            if let Ok(val) = steam_key.get_value::<String, _>("SteamPath") {
+                let p = PathBuf::from(val.replace('/', "\\"));
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+
+        // 2. Consulta HKLM\SOFTWARE\WOW6432Node\Valve\Steam / HKLM\SOFTWARE\Valve\Steam -> InstallPath
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        for subkey in &[
+            r"SOFTWARE\WOW6432Node\Valve\Steam",
+            r"SOFTWARE\Valve\Steam",
+        ] {
+            if let Ok(steam_key) = hklm.open_subkey(subkey) {
+                if let Ok(val) = steam_key.get_value::<String, _>("InstallPath") {
+                    let p = PathBuf::from(val.replace('/', "\\"));
+                    if p.exists() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Fallbacks de caminhos comuns em múltiplos discos
+    let candidate_dirs = [
+        r"C:\Program Files (x86)\Steam",
+        r"C:\Program Files\Steam",
+        r"C:\Steam",
+        r"D:\Steam",
+        r"D:\Program Files (x86)\Steam",
+        r"D:\Program Files\Steam",
+        r"E:\Steam",
+        r"F:\Steam",
+    ];
+
+    for dir in candidate_dirs {
+        let p = PathBuf::from(dir);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
     None
 }
 

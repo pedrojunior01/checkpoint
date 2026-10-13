@@ -350,7 +350,14 @@ function renderJogosRecentes(locations) {
     const container = document.getElementById("jogos-recentes-list");
     if (!container) return;
     if (!locations || locations.length === 0) {
-        container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:8px 0;">Nenhum jogo detectado ainda.</p>`;
+        container.innerHTML = `
+        <div style="text-align:center;padding:16px 8px;">
+            <p style="font-size:13px;color:#94a3b8;margin-bottom:10px;">Nenhum jogo monitorado no momento.</p>
+            <button onclick="window.triggerScanGames()" class="btn-secondary" style="font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;margin:0 auto;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <span>Buscar Jogos Instalados</span>
+            </button>
+        </div>`;
         return;
     }
     container.innerHTML = locations.map((loc, i) => {
@@ -436,7 +443,20 @@ function renderJogosList(query = "") {
         if (query) {
             container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:12px 0;">Nenhum jogo encontrado para "${query}".</p>`;
         } else {
-            container.innerHTML = `<p style="font-size:13px;color:#94a3b8;padding:12px 0;">Nenhum jogo cadastrado. Clique em "+ Adicionar Jogo" para incluir uma pasta.</p>`;
+            container.innerHTML = `
+            <div style="text-align:center;padding:36px 16px;background:rgba(255,255,255,0.03);border:1px dashed #cbd5e1;border-radius:12px;margin-top:8px;">
+                <p style="font-size:14px;font-weight:600;color:#64748b;margin-bottom:6px;">Nenhum jogo detectado nesta máquina</p>
+                <p style="font-size:12.5px;color:#94a3b8;margin-bottom:16px;">Você pode fazer uma varredura automática agora ou adicionar uma pasta de save manualmente.</p>
+                <div style="display:inline-flex;gap:10px;">
+                    <button onclick="window.triggerScanGames()" class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px;">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                        <span>Escanear Jogos Instalados</span>
+                    </button>
+                    <button onclick="document.getElementById('btn-open-add-game')?.click()" class="btn-secondary" style="font-size:13px;padding:8px 14px;">
+                        + Adicionar Pasta
+                    </button>
+                </div>
+            </div>`;
         }
         return;
     }
@@ -490,6 +510,34 @@ function renderJogosList(query = "") {
 document.getElementById("jogos-search-input")?.addEventListener("input", (e) => {
     renderJogosList(e.target.value.trim());
 });
+
+window.triggerScanGames = async function() {
+    const btn = document.getElementById("btn-scan-games");
+    const originalContent = btn ? btn.innerHTML : "";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span style="width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span><span>Buscando...</span>`;
+    }
+    showToast("Varrendo Steam e launchers por novos jogos...", "info");
+    try {
+        const [gamesCount, locsCount] = await invoke("scan_games");
+        showToast(`Varredura concluída! ${gamesCount} jogo(s) encontrado(s), ${locsCount} local(is) monitorado(s).`, "success");
+        await loadJogos();
+        loadInicio();
+    } catch (err) {
+        showToast(`Erro ao escanear jogos: ${err}`, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+        }
+    }
+};
+
+document.getElementById("btn-scan-games")?.addEventListener("click", () => {
+    window.triggerScanGames();
+});
+
 
 // ── Modal: Detalhes do Jogo ──────────────────────────────────────────────────
 

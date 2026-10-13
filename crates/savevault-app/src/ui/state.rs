@@ -1033,6 +1033,31 @@ impl DevUiState {
         }
     }
 
+    /// Executa uma varredura completa de discovery para encontrar jogos e saves instalados no sistema.
+    pub async fn scan_games(&self) -> anyhow::Result<(usize, usize)> {
+        self.record_event(
+            DevUiEventLevel::Info,
+            "Iniciando varredura e detecção de jogos no sistema...".to_string(),
+            None,
+        ).await;
+
+        let config_dir = self.db_path.parent().unwrap_or(std::path::Path::new("."));
+        let (games, locs) = crate::orchestrator::run_full_discovery(&self.db, config_dir).await?;
+
+        // Executa reconciliação imediata para gerar snapshots dos novos jogos encontrados
+        if let Some(ref reconciler) = self.reconciler {
+            let _ = reconciler.reconcile().await;
+        }
+
+        self.record_event(
+            DevUiEventLevel::Success,
+            format!("Varredura concluída: {} jogo(s) detectado(s), {} local(is) de save registrado(s).", games, locs),
+            None,
+        ).await;
+
+        Ok((games, locs))
+    }
+
     /// Executa a restauração de um snapshot com safety backup através da API real.
     pub async fn trigger_restore(
         &self,

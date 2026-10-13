@@ -234,6 +234,23 @@ pub async fn trigger_reconcile(state: State<'_, Arc<DevUiState>>) -> Result<Stri
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct ScanResultView {
+    pub games_count: usize,
+    pub locations_count: usize,
+}
+
+#[tauri::command]
+pub async fn scan_games(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<ScanResultView, String> {
+    let (games_count, locations_count) = state.scan_games().await.map_err(|e| e.to_string())?;
+    Ok(ScanResultView {
+        games_count,
+        locations_count,
+    })
+}
+
 #[tauri::command]
 pub async fn restore_snapshot(
     state: State<'_, Arc<DevUiState>>,
@@ -323,6 +340,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_safety_backups,
             get_reconciliation_status,
             trigger_reconcile,
+            scan_games,
             restore_snapshot,
             add_game,
             optimize_database,
