@@ -75,5 +75,8 @@ cargo test --workspace
 - [x] Filtragem inteligente anti-ruído de caches e dumps de engines (`cache/`, `.dds`, `.dmp`).
 - [x] Resolução automática de capas oficiais em alta resolução para jogos genéricos e abreviações.
 - [ ] Empacotamento de instalador Windows (`.msi` ou executável com NSIS).
+- [x] Script de instalador Windows Inno Setup (`installer/checkpoint.iss`) e script de empacotamento (`scripts/package-release.ps1`).
+- [x] Pipeline de CI/CD automatizado no GitHub Actions (`.github/workflows/ci.yml` e `release.yml`).
+- [x] Licença aberta canônica MIT (`LICENSE`).
 - [ ] Suporte a múltiplos perfis de save por jogo (slots independentes).
 
