@@ -27,22 +27,25 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "[2/5] Localizando binario checkpoint.exe..." -ForegroundColor Yellow
 $CandidatePaths = @(
-    (Join-Path $RootDir "target\release\checkpoint.exe"),
-    "C:\svt\release\checkpoint.exe"
+    "C:\svt\release\checkpoint.exe",
+    (Join-Path $RootDir "target\release\checkpoint.exe")
 )
-$ExePath = $null
-foreach ($p in $CandidatePaths) {
-    if (Test-Path $p) {
-        $ExePath = $p
-        break
-    }
-}
+$ExePath = $CandidatePaths | Where-Object { Test-Path $_ } | Sort-Object { (Get-Item $_).LastWriteTime } -Descending | Select-Object -First 1
 
 if (-not $ExePath) {
-    Write-Error "Executavel checkpoint.exe nao encontrado em target\release nem em C:\svt\release."
+    Write-Error "Executavel checkpoint.exe nao encontrado em C:\svt\release nem em target\release."
 }
-$ExeLen = (Get-Item $ExePath).Length
-Write-Host "  Encontrado: $ExePath ($ExeLen bytes)" -ForegroundColor Green
+$ExeItem = Get-Item $ExePath
+$ExeLen = $ExeItem.Length
+$ExeTime = $ExeItem.LastWriteTime
+Write-Host "  Encontrado (mais recente): $ExePath ($ExeLen bytes, modificado em $ExeTime)" -ForegroundColor Green
+
+# Sincroniza target\release para garantir que execucoes diretas usem o binario novo
+$TargetExe = Join-Path $RootDir "target\release\checkpoint.exe"
+if ($ExePath -ne $TargetExe) {
+    Copy-Item $ExePath $TargetExe -Force
+    Write-Host "  Sincronizado para $TargetExe" -ForegroundColor Cyan
+}
 
 # 3. Preparar diretorio de distribuicao
 Write-Host ""
