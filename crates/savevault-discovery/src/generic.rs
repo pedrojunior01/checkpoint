@@ -23,10 +23,8 @@ use walkdir::WalkDir;
 
 /// Extensões de arquivo que indicam save games com alta probabilidade.
 const SAVE_EXTENSIONS: &[&str] = &[
-    "sav", "save", "sg", "sg0", "sg1", "sg2", "sg3",
+    "sav", "save", "sl2", "sg", "sg0", "sg1", "sg2", "sg3",
     "slot", "gam", "savegame", "sfs",
-    // FromSoftware (Sekiro, Dark Souls, Elden Ring) e outros motores populares
-    "sl2", "dat", "bin", "vdf", "xml", "json", "profile", "esl", "gsv", "rsv",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
@@ -39,7 +37,7 @@ const SAVE_DIR_HINTS: &[&str] = &[
 const MIN_SAVE_FILES: usize = 2;
 
 /// Profundidade máxima de varredura dentro de cada pasta-raiz.
-const MAX_SCAN_DEPTH: usize = 4;
+const MAX_SCAN_DEPTH: usize = 3;
 
 /// Resultado de um jogo detectado pelo heuristic scanner.
 pub struct GenericGameInfo {
@@ -195,16 +193,6 @@ fn build_scan_roots() -> Vec<PathBuf> {
         for d in doc_candidates {
             if d.exists() && !roots.contains(&d) {
                 roots.push(d);
-            }
-        }
-    }
-
-    // Pastas de jogos em discos comuns onde saves de jogos sem DRM podem estar salvos
-    for drive in &["C", "D", "E", "F", "G"] {
-        for sub in &["Games", "Jogos", "SteamLibrary", "Steam"] {
-            let p = PathBuf::from(format!(r"{}:\{}", drive, sub));
-            if p.exists() && !roots.contains(&p) {
-                roots.push(p);
             }
         }
     }
