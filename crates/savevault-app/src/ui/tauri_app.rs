@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use savevault_core::config::Config;
 use crate::ui::state::{
-    CloudConfigView, DashboardSummary, DevUiState, ExportResult, LocationView, OptimizationResult,
-    ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SnapshotView,
+    CleanResult, CloudConfigView, DashboardSummary, DevUiState, ExportResult, LocationView,
+    OptimizationResult, ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SnapshotView,
 };
 
 // ── Utilitário de Limpeza de Memória (Working Set Trim) ───────────────────────
@@ -252,6 +252,13 @@ pub async fn scan_games(
 }
 
 #[tauri::command]
+pub async fn clean_unrecognized_games(
+    state: State<'_, Arc<DevUiState>>,
+) -> Result<CleanResult, String> {
+    state.clean_unrecognized_games().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn restore_snapshot(
     state: State<'_, Arc<DevUiState>>,
     snapshot_id: String,
@@ -341,6 +348,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             get_reconciliation_status,
             trigger_reconcile,
             scan_games,
+            clean_unrecognized_games,
             restore_snapshot,
             add_game,
             optimize_database,

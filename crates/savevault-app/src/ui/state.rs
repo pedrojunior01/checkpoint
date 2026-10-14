@@ -185,6 +185,13 @@ pub struct ExportResult {
     pub file_size_formatted: String,
 }
 
+/// Resultado da limpeza de jogos e locais não reconhecidos / órfãos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanResult {
+    pub locations_removed: usize,
+    pub games_removed: usize,
+}
+
 /// DTO para transferência de configurações com o frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigDto {
@@ -1097,6 +1104,64 @@ impl DevUiState {
         ).await;
 
         Ok((games, locs))
+    }
+
+    /// Limpa entradas de jogos e locais genéricos que não possuem nenhum backup registrado,
+    /// eliminando resíduos de detecções antigas incorretas.
+    pub async fn clean_unrecognized_games(&self) -> Result<CleanResult> {
+        let conn = self.db.lock().await;
+
+        // 1. Identifica IDs de save_locations da plataforma 'generic' que NÃO possuem backups
+        let mut target_loc_ids = Vec::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT sl.id FROM save_locations sl
+                 JOIN games g ON sl.game_id = g.id
+                 WHERE g.platform = 'generic'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM files f
+                       JOIN backups b ON b.file_id = f.id
+                       WHERE f.save_location_id = sl.id
+                   )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            for r in rows.flatten() {
+                target_loc_ids.push(r);
+            }
+        }
+
+        let mut locations_removed = 0;
+        for loc_id in &target_loc_ids {
+            // Remove arquivos associados sem backup
+            let _ = conn.execute(
+                "DELETE FROM files WHERE save_location_id = ?1 AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.file_id = files.id)",
+                [loc_id],
+            );
+            // Remove o local de save
+            if let Ok(affected) = conn.execute("DELETE FROM save_locations WHERE id = ?1", [loc_id]) {
+                locations_removed += affected;
+            }
+        }
+
+        // 2. Remove jogos que ficaram sem nenhuma save_location
+        let games_removed = conn.execute(
+            "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
+            [],
+        ).unwrap_or(0);
+
+        self.record_event(
+            DevUiEventLevel::Info,
+            format!(
+                "Limpeza de jogos concluída: {} local(is) e {} jogo(s) não reconhecidos removidos.",
+                locations_removed, games_removed
+            ),
+            None,
+        ).await;
+
+        Ok(CleanResult {
+            locations_removed,
+            games_removed,
+        })
     }
 
     /// Executa a restauração de um snapshot com safety backup através da API real.

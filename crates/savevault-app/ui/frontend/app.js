@@ -323,7 +323,7 @@ async function loadInicio() {
 
         // Jogos recentes: prioriza jogos que possuem histórico de backup ou arquivos monitorados
         const comAtividade = locs.filter(l => l.last_backup_time || (l.monitored_files_count > 0));
-        renderJogosRecentes((comAtividade.length > 0 ? comAtividade : locs).slice(0, 4));
+        renderJogosRecentes((comAtividade.length > 0 ? comAtividade : locs).slice(0, 6));
     } catch (e) {
         console.error("Erro ao carregar jogos recentes:", e);
     }
@@ -547,7 +547,6 @@ window.openAddGameModal = function() {
 window.triggerScanGames = async function() {
     const buttons = [
         document.getElementById("btn-scan-games"),
-        document.getElementById("btn-scan-games-home"),
         document.getElementById("btn-scan-games-recentes"),
     ].filter(Boolean);
 
@@ -559,8 +558,8 @@ window.triggerScanGames = async function() {
 
     showToast("Varrendo Steam, GOG e pastas locais por jogos...", "info");
     try {
-        const [gamesCount, locsCount] = await invoke("scan_games");
-        showToast(`Varredura concluída! ${gamesCount} jogo(s) detectado(s), ${locsCount} local(is) monitorado(s).`, "success");
+        const res = await invoke("scan_games");
+        showToast(`Varredura concluída! ${res.games_count} jogo(s) detectado(s), ${res.locations_count} local(is) monitorado(s).`, "success");
         await loadJogos();
         await loadInicio();
     } catch (err) {
@@ -576,11 +575,34 @@ window.triggerScanGames = async function() {
 document.getElementById("btn-scan-games")?.addEventListener("click", () => {
     window.triggerScanGames();
 });
-document.getElementById("btn-scan-games-home")?.addEventListener("click", () => {
-    window.triggerScanGames();
-});
 document.getElementById("btn-scan-games-recentes")?.addEventListener("click", () => {
     window.triggerScanGames();
+});
+
+document.getElementById("btn-clean-games")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-clean-games");
+    const originalHtml = btn ? btn.innerHTML : "";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span><span>Limpando...</span>`;
+    }
+    try {
+        const res = await invoke("clean_unrecognized_games");
+        if (res.locations_removed > 0 || res.games_removed > 0) {
+            showToast(`Limpeza concluída! ${res.games_removed} jogo(s) e ${res.locations_removed} local(is) não reconhecidos foram removidos.`, "success");
+        } else {
+            showToast("Nenhum registro antigo ou órfão encontrado para remover.", "info");
+        }
+        await loadJogos();
+        await loadInicio();
+    } catch (err) {
+        showToast(`Erro na limpeza: ${err}`, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
 });
 
 
