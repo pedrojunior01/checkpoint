@@ -2,7 +2,7 @@
 # Uso: powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
 
 $ErrorActionPreference = "Stop"
-$Version = "0.9.0"
+$Version = "0.9.1"
 $DistName = "checkpoint-v" + $Version + "-windows-x64"
 $RootDir = Split-Path -Parent $PSScriptRoot
 $DistDir = Join-Path $RootDir "dist"
