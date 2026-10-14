@@ -45,6 +45,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("003_save_locations_nocase_index", MIGRATION_003),
     ("004_backups_drive_file_id", MIGRATION_004),
     ("005_games_unique_name_platform", MIGRATION_005),
+    ("006_ignored_locations", MIGRATION_006),
 ];
 
 const MIGRATION_001: &str = "
@@ -154,6 +155,16 @@ WHERE id NOT IN (
 -- 4. Cria índice único por (name COLLATE NOCASE, platform)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_games_name_platform
     ON games(name COLLATE NOCASE, platform);
+";
+
+const MIGRATION_006: &str = "
+CREATE TABLE IF NOT EXISTS ignored_locations (
+    id          TEXT PRIMARY KEY,
+    path        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    game_name   TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ignored_locations_path ON ignored_locations(path COLLATE NOCASE);
 ";
 
 

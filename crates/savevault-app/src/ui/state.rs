@@ -1106,37 +1106,76 @@ impl DevUiState {
         Ok((games, locs))
     }
 
-    /// Limpa entradas de jogos e locais genéricos que não possuem nenhum backup registrado,
-    /// eliminando resíduos de detecções antigas incorretas.
+    /// Limpa entradas de jogos e locais genéricos que não possuem backups reais ou que são pastas
+    /// de sistema/apps detectadas incorretamente no passado (ex: DriveFS, SaveVault, WebView).
     pub async fn clean_unrecognized_games(&self) -> Result<CleanResult> {
         let conn = self.db.lock().await;
 
-        // 1. Identifica IDs de save_locations da plataforma 'generic' que NÃO possuem backups
-        let mut target_loc_ids = Vec::new();
+        // 1. Identifica IDs de save_locations da plataforma 'generic' que:
+        //    a) NÃO possuem backups; OU
+        //    b) Apontam para pastas de sistema/aplicativos conhecidas (DriveFS, SaveVault, etc)
+        let mut target_locs: Vec<(String, String, String)> = Vec::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT sl.id FROM save_locations sl
+                "SELECT sl.id, sl.path, g.name FROM save_locations sl
                  JOIN games g ON sl.game_id = g.id
                  WHERE g.platform = 'generic'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM files f
-                       JOIN backups b ON b.file_id = f.id
-                       WHERE f.save_location_id = sl.id
+                   AND (
+                       NOT EXISTS (
+                           SELECT 1 FROM files f
+                           JOIN backups b ON b.file_id = f.id
+                           WHERE f.save_location_id = sl.id
+                       )
+                       OR LOWER(sl.path) LIKE '%drivefs%'
+                       OR LOWER(sl.path) LIKE '%savevault%'
+                       OR LOWER(sl.path) LIKE '%checkpoint%'
+                       OR LOWER(sl.path) LIKE '%ebwebview%'
+                       OR LOWER(sl.path) LIKE '%smash-soda%'
                    )",
             )?;
-            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
             for r in rows.flatten() {
-                target_loc_ids.push(r);
+                target_locs.push(r);
             }
         }
 
         let mut locations_removed = 0;
-        for loc_id in &target_loc_ids {
-            // Remove arquivos associados sem backup
+        for (loc_id, path, game_name) in &target_locs {
+            // Adiciona aos ignorados para não ser re-detectado em scans futuros
             let _ = conn.execute(
-                "DELETE FROM files WHERE save_location_id = ?1 AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.file_id = files.id)",
+                "INSERT OR IGNORE INTO ignored_locations (id, path, game_name, created_at)
+                 VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), path, game_name],
+            );
+
+            // Remove backups e fila de sync associados
+            let _ = conn.execute(
+                "DELETE FROM sync_queue WHERE backup_id IN (
+                    SELECT b.id FROM backups b
+                    JOIN files f ON b.file_id = f.id
+                    WHERE f.save_location_id = ?1
+                )",
                 [loc_id],
             );
+            let _ = conn.execute(
+                "DELETE FROM backups WHERE file_id IN (
+                    SELECT id FROM files WHERE save_location_id = ?1
+                )",
+                [loc_id],
+            );
+
+            // Remove arquivos associados
+            let _ = conn.execute(
+                "DELETE FROM files WHERE save_location_id = ?1",
+                [loc_id],
+            );
+
             // Remove o local de save
             if let Ok(affected) = conn.execute("DELETE FROM save_locations WHERE id = ?1", [loc_id]) {
                 locations_removed += affected;
@@ -1152,7 +1191,7 @@ impl DevUiState {
         self.record_event(
             DevUiEventLevel::Info,
             format!(
-                "Limpeza de jogos concluída: {} local(is) e {} jogo(s) não reconhecidos removidos.",
+                "Limpeza de histórico concluída: {} local(is) e {} jogo(s) não reconhecidos removidos.",
                 locations_removed, games_removed
             ),
             None,
@@ -1162,6 +1201,82 @@ impl DevUiState {
             locations_removed,
             games_removed,
         })
+    }
+
+    /// Remove um jogo/local de save do monitoramento a pedido do usuário.
+    /// Registra o caminho na lista de locais ignorados para que futuras varreduras automáticas
+    /// não o re-adicionem involuntariamente.
+    pub async fn remove_game_location(&self, location_id: Uuid) -> Result<()> {
+        let conn = self.db.lock().await;
+
+        let loc_id_str = location_id.to_string();
+
+        // Obtém caminho e nome do jogo para persistir nos ignorados
+        let mut loc_info: Option<(String, String)> = None;
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT sl.path, g.name
+             FROM save_locations sl
+             JOIN games g ON sl.game_id = g.id
+             WHERE sl.id = ?1"
+        ) {
+            if let Ok(mut rows) = stmt.query([&loc_id_str]) {
+                if let Ok(Some(row)) = rows.next() {
+                    let path: String = row.get(0).unwrap_or_default();
+                    let name: String = row.get(1).unwrap_or_default();
+                    loc_info = Some((path, name));
+                }
+            }
+        }
+
+        if let Some((path, game_name)) = loc_info {
+            // Salva na lista de caminhos ignorados
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO ignored_locations (id, path, game_name, created_at)
+                 VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), path, game_name],
+            );
+
+            // Remove itens da fila de sincronização
+            let _ = conn.execute(
+                "DELETE FROM sync_queue WHERE backup_id IN (
+                    SELECT b.id FROM backups b
+                    JOIN files f ON b.file_id = f.id
+                    WHERE f.save_location_id = ?1
+                )",
+                [&loc_id_str],
+            );
+
+            // Remove snapshots/backups associados a este local
+            let _ = conn.execute(
+                "DELETE FROM backups WHERE file_id IN (
+                    SELECT id FROM files WHERE save_location_id = ?1
+                )",
+                [&loc_id_str],
+            );
+
+            // Remove arquivos monitorados
+            let _ = conn.execute(
+                "DELETE FROM files WHERE save_location_id = ?1",
+                [&loc_id_str],
+            );
+
+            // Remove o local de save
+            conn.execute("DELETE FROM save_locations WHERE id = ?1", [&loc_id_str])?;
+
+            // Remove o jogo caso não possua nenhum outro local de save
+            let _ = conn.execute(
+                "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
+                [],
+            );
+
+            self.record_event(
+                DevUiEventLevel::Info,
+                format!("Jogo/Local '{}' removido do monitoramento", game_name),
+                Some(path),
+            ).await;
+        }
+
+        Ok(())
     }
 
     /// Executa a restauração de um snapshot com safety backup através da API real.
@@ -1311,6 +1426,7 @@ impl DevUiState {
 
         let (game_id, loc) = {
             let conn = self.db.lock().await;
+            let _ = conn.execute("DELETE FROM ignored_locations WHERE LOWER(path) = LOWER(?1)", [path_str]);
             let games_repo = GamesRepo::new(&conn);
             let locations_repo = SaveLocationsRepo::new(&conn);
 

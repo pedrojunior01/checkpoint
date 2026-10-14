@@ -133,8 +133,26 @@ pub async fn run_full_discovery(
         real_ids.insert(game.id, real_id);
     }
 
+    let ignored_paths: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT path FROM ignored_locations") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for p in rows.flatten() {
+                    set.insert(p.trim().to_ascii_lowercase());
+                }
+            }
+        }
+        set
+    };
+
     let mut new_locations = 0usize;
     for loc in &result.save_locations {
+        let norm_loc_path = loc.path.to_string_lossy().trim().to_ascii_lowercase();
+        if ignored_paths.contains(&norm_loc_path) {
+            tracing::debug!("Ignorando save location explicitamente excluído pelo usuário: {:?}", loc.path);
+            continue;
+        }
+
         if let Some(&real_id) = real_ids.get(&loc.game_id) {
             let mut loc_to_insert = loc.clone();
             loc_to_insert.game_id = real_id;
@@ -143,6 +161,12 @@ pub async fn run_full_discovery(
             }
         }
     }
+
+    // Limpa jogos que ficaram sem nenhuma save_location cadastrada
+    let _ = conn.execute(
+        "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
+        [],
+    );
 
     tracing::info!(
         "checkpoint — Discovery concluído: {} jogo(s) catalogado(s), {} caminho(s) de save registrado(s).",

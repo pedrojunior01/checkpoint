@@ -502,7 +502,12 @@ function renderJogosList(query = "") {
                 <p class="game-subtext game-path-text">${loc.path || ""}</p>
                 <p class="game-subtext">${loc.monitored_files_count ?? 0} arquivo(s) monitorado(s) · Plataforma: ${loc.platform || "Genérica"}${loc.last_backup_time ? ` · Backup ${timeAgo(loc.last_backup_time)}` : ""}</p>
             </div>
-            <span class="badge-synced">Monitorado</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="badge-synced">Monitorado</span>
+                <button class="btn-secondary" style="padding:5px 8px;font-size:12px;color:#ef4444;border-color:rgba(239,68,68,0.25);display:inline-flex;align-items:center;" title="Remover jogo do monitoramento" onclick="event.stopPropagation(); window.confirmDeleteGame('${loc.id}', '${safeGameName}')">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+            </div>
         </div>`;
     }).join("");
 
@@ -637,7 +642,30 @@ window.openGameDetails = function(locationId) {
         };
     }
 
+    const deleteBtn = document.getElementById("btn-details-delete-game");
+    if (deleteBtn) {
+        deleteBtn.onclick = () => {
+            window.confirmDeleteGame(loc.id, loc.game_name);
+        };
+    }
+
     modal?.classList.remove("hidden");
+};
+
+window.confirmDeleteGame = async function(locationId, gameName) {
+    const displayName = gameName || "este jogo";
+    if (!confirm(`Deseja remover "${displayName}" do checkpoint?\n\nEste jogo deixará de ser monitorado e seus saves não serão sincronizados.`)) {
+        return;
+    }
+    try {
+        await invoke("remove_game_location", { locationId: String(locationId) });
+        showToast(`"${displayName}" foi removido do monitoramento.`, "success");
+        document.getElementById("modal-game-details")?.classList.add("hidden");
+        await loadJogos();
+        await loadInicio();
+    } catch (err) {
+        showToast(`Erro ao remover jogo: ${err}`, "error");
+    }
 };
 
 document.getElementById("btn-close-details")?.addEventListener("click", () => {

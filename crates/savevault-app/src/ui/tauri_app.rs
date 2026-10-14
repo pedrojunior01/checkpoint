@@ -259,6 +259,15 @@ pub async fn clean_unrecognized_games(
 }
 
 #[tauri::command]
+pub async fn remove_game_location(
+    state: State<'_, Arc<DevUiState>>,
+    location_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
+    state.remove_game_location(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn restore_snapshot(
     state: State<'_, Arc<DevUiState>>,
     snapshot_id: String,
@@ -349,6 +358,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             trigger_reconcile,
             scan_games,
             clean_unrecognized_games,
+            remove_game_location,
             restore_snapshot,
             add_game,
             optimize_database,

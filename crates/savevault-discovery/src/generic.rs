@@ -335,7 +335,8 @@ fn should_skip_dir(path: &Path, root: &Path) -> bool {
         ".git", "node_modules", "target", "debug", "release",
         "assembly", "icloud", "dropbox", "onedrive", "utorrent", "bittorrent",
         "telegram", "obs-studio", "obs", "comfy", "wtablet", "whatsapp",
-        "postman", "vlc", "docker"
+        "postman", "vlc", "docker", "google", "drivefs", "savevault", "checkpoint",
+        "ebwebview", "webview2", "electron", "cursor", "code", "vscode"
     ];
 
     for comp in relative.components() {
