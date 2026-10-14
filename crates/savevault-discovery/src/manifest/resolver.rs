@@ -14,12 +14,24 @@ impl PathContext {
     /// Constrói PathContext a partir das variáveis de ambiente do Windows.
     pub fn from_env(install_path: Option<&PathBuf>) -> Self {
         let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\User".into());
+        let docs = {
+            let onedrive_docs = PathBuf::from(&home).join("OneDrive").join("Documents");
+            let onedrive_pt = PathBuf::from(&home).join("OneDrive").join("Documentos");
+            let direct = PathBuf::from(&home).join("Documents");
+            if onedrive_docs.exists() {
+                onedrive_docs.to_string_lossy().to_string()
+            } else if onedrive_pt.exists() {
+                onedrive_pt.to_string_lossy().to_string()
+            } else {
+                direct.to_string_lossy().to_string()
+            }
+        };
         Self {
             appdata: std::env::var("APPDATA")
                 .unwrap_or_else(|_| format!("{}\\AppData\\Roaming", home)),
             local_appdata: std::env::var("LOCALAPPDATA")
                 .unwrap_or_else(|_| format!("{}\\AppData\\Local", home)),
-            documents: format!("{}\\Documents", home),
+            documents: docs,
             home: home.clone(),
             game_install_path: install_path
                 .map(|p| p.to_string_lossy().to_string()),

@@ -25,6 +25,8 @@ use walkdir::WalkDir;
 const SAVE_EXTENSIONS: &[&str] = &[
     "sav", "save", "sg", "sg0", "sg1", "sg2", "sg3",
     "slot", "gam", "savegame", "sfs",
+    // FromSoftware (Sekiro, Dark Souls, Elden Ring) e outros motores populares
+    "sl2", "dat", "bin", "vdf", "xml", "json", "profile", "esl", "gsv", "rsv",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
@@ -173,11 +175,38 @@ fn build_scan_roots() -> Vec<PathBuf> {
         roots.push(PathBuf::from(&localappdata));
     }
 
-    // Documents — jogos como Dark Souls, Witcher, etc.
+    // AppData/LocalLow — usado por centenas de jogos feitos em Unity (ex: Subnautica, Cult of the Lamb, Valheim)
     if !userprofile.is_empty() {
-        roots.push(PathBuf::from(&userprofile).join("Documents"));
-        roots.push(PathBuf::from(&userprofile).join("Saved Games"));
-        roots.push(PathBuf::from(&userprofile).join("My Games"));
+        let locallow = PathBuf::from(&userprofile).join("AppData").join("LocalLow");
+        if locallow.exists() {
+            roots.push(locallow);
+        }
+
+        // Documents (incluindo redirecionamentos do OneDrive comuns no Windows PT-BR e EN)
+        let doc_candidates = [
+            PathBuf::from(&userprofile).join("Documents"),
+            PathBuf::from(&userprofile).join("OneDrive").join("Documents"),
+            PathBuf::from(&userprofile).join("OneDrive").join("Documentos"),
+            PathBuf::from(&userprofile).join("Saved Games"),
+            PathBuf::from(&userprofile).join("Jogos Salvos"),
+            PathBuf::from(&userprofile).join("My Games"),
+        ];
+
+        for d in doc_candidates {
+            if d.exists() && !roots.contains(&d) {
+                roots.push(d);
+            }
+        }
+    }
+
+    // Pastas de jogos em discos comuns onde saves de jogos sem DRM podem estar salvos
+    for drive in &["C", "D", "E", "F", "G"] {
+        for sub in &["Games", "Jogos", "SteamLibrary", "Steam"] {
+            let p = PathBuf::from(format!(r"{}:\{}", drive, sub));
+            if p.exists() && !roots.contains(&p) {
+                roots.push(p);
+            }
+        }
     }
 
     roots

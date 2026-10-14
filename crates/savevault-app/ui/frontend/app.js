@@ -363,37 +363,21 @@ function renderJogosRecentes(locations) {
     const container = document.getElementById("jogos-recentes-list");
     if (!container) return;
     if (!locations || locations.length === 0) {
-        // Se ainda não há jogos, pode ser que o discovery ainda esteja rodando em background.
-        // Exibe um indicador de carregamento e tenta novamente automaticamente.
-        const isFirstLoad = !window._discoveryAutoRefreshCount;
-        window._discoveryAutoRefreshCount = (window._discoveryAutoRefreshCount || 0) + 1;
-        const maxRetries = 10;
-
-        if (window._discoveryAutoRefreshCount <= maxRetries) {
-            container.innerHTML = `
-            <div style="text-align:center;padding:20px 8px;">
-                <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" style="animation:spin 1.2s linear infinite;">
-                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                    </svg>
-                    <p style="font-size:13px;color:#94a3b8;margin:0;">Detectando jogos instalados... (${window._discoveryAutoRefreshCount}/${maxRetries})</p>
-                </div>
-                <p style="font-size:11px;color:#64748b;">O discovery roda automaticamente ao iniciar o app.</p>
-            </div>`;
-            // Retry automático após 3 segundos
-            setTimeout(() => loadInicio(), 3000);
-        } else {
-            // Esgotou as tentativas automáticas — mostra botão manual
-            window._discoveryAutoRefreshCount = 0;
-            container.innerHTML = `
-            <div style="text-align:center;padding:16px 8px;">
-                <p style="font-size:13px;color:#94a3b8;margin-bottom:10px;">Nenhum jogo detectado automaticamente.</p>
-                <button onclick="window.triggerScanGames()" class="btn-secondary" style="font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;margin:0 auto;">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                    <span>Buscar Jogos Instalados</span>
+        container.innerHTML = `
+        <div style="text-align:center;padding:26px 16px;background:rgba(255,255,255,0.02);border:1px dashed var(--border-color, #334155);border-radius:12px;">
+            <div style="font-size:28px;margin-bottom:8px;">🎮</div>
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:6px;color:var(--text-primary, #f1f5f9);">Nenhum jogo monitorado no momento</h3>
+            <p style="font-size:13px;color:#94a3b8;max-width:440px;margin:0 auto 16px auto;">O Checkpoint busca jogos instalados da Steam, GOG e pastas locais de saves. Clique no botão abaixo para escanear seu computador.</p>
+            <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+                <button onclick="window.triggerScanGames()" class="btn-primary" style="display:inline-flex;align-items:center;gap:8px;padding:8px 18px;font-size:13px;">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <span>Escanear Jogos Agora</span>
                 </button>
-            </div>`;
-        }
+                <button onclick="window.openAddGameModal()" class="btn-secondary" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;font-size:13px;">
+                    <span>+ Adicionar Manualmente</span>
+                </button>
+            </div>
+        </div>`;
         return;
     }
     // Jogos encontrados — reseta o contador de auto-refresh
@@ -551,30 +535,51 @@ document.getElementById("jogos-search-input")?.addEventListener("input", (e) => 
     renderJogosList(e.target.value.trim());
 });
 
+window.openAddGameModal = function() {
+    const nameInput = document.getElementById("add-game-name");
+    const pathInput = document.getElementById("add-game-path");
+    if (nameInput) nameInput.value = "";
+    if (pathInput) pathInput.value = "";
+    document.getElementById("modal-add-game")?.classList.remove("hidden");
+    if (nameInput) nameInput.focus();
+};
+
 window.triggerScanGames = async function() {
-    const btn = document.getElementById("btn-scan-games");
-    const originalContent = btn ? btn.innerHTML : "";
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `<span style="width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span><span>Buscando...</span>`;
-    }
-    showToast("Varrendo Steam e launchers por novos jogos...", "info");
+    const buttons = [
+        document.getElementById("btn-scan-games"),
+        document.getElementById("btn-scan-games-home"),
+        document.getElementById("btn-scan-games-recentes"),
+    ].filter(Boolean);
+
+    const savedState = buttons.map(b => ({ btn: b, html: b.innerHTML }));
+    buttons.forEach(b => {
+        b.disabled = true;
+        b.innerHTML = `<span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin 0.8s linear infinite;"></span><span>Buscando...</span>`;
+    });
+
+    showToast("Varrendo Steam, GOG e pastas locais por jogos...", "info");
     try {
         const [gamesCount, locsCount] = await invoke("scan_games");
-        showToast(`Varredura concluída! ${gamesCount} jogo(s) encontrado(s), ${locsCount} local(is) monitorado(s).`, "success");
+        showToast(`Varredura concluída! ${gamesCount} jogo(s) detectado(s), ${locsCount} local(is) monitorado(s).`, "success");
         await loadJogos();
-        loadInicio();
+        await loadInicio();
     } catch (err) {
         showToast(`Erro ao escanear jogos: ${err}`, "error");
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalContent;
-        }
+        savedState.forEach(s => {
+            s.btn.disabled = false;
+            s.btn.innerHTML = s.html;
+        });
     }
 };
 
 document.getElementById("btn-scan-games")?.addEventListener("click", () => {
+    window.triggerScanGames();
+});
+document.getElementById("btn-scan-games-home")?.addEventListener("click", () => {
+    window.triggerScanGames();
+});
+document.getElementById("btn-scan-games-recentes")?.addEventListener("click", () => {
     window.triggerScanGames();
 });
 

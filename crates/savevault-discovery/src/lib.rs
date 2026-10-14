@@ -107,11 +107,30 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         let app_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
 
-                        let paths = if let Some(id) = app_id {
+                        let mut paths = if let Some(id) = app_id {
                             detector.find_save_paths(id, &ctx)
                         } else {
                             detector.find_save_paths_by_title(&game.name, &ctx)
                         };
+
+                        // Fallback: se o manifest não mapeou, procura subpastas de save no diretório de instalação
+                        // ou usa o diretório de instalação para garantir que o jogo seja monitorado e visível na UI
+                        if paths.is_empty() {
+                            if let Some(ref install_path) = info.install_path {
+                                let mut found_subfolder = false;
+                                for sub in &["saves", "save", "saved", "savegames", "SaveData", "savedgames"] {
+                                    let sub_p = install_path.join(sub);
+                                    if sub_p.exists() {
+                                        paths.push(sub_p);
+                                        found_subfolder = true;
+                                        break;
+                                    }
+                                }
+                                if !found_subfolder && install_path.exists() {
+                                    paths.push(install_path.clone());
+                                }
+                            }
+                        }
 
                         for path in paths {
                             let location_type = if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
@@ -171,6 +190,14 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                 Err(e) => {
                     tracing::warn!("Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.", e);
                     for info in &steam_infos {
+                        if let Some(ref install_path) = info.install_path {
+                            save_locations.push(SaveLocation {
+                                id: Uuid::new_v4(),
+                                game_id: info.game.id,
+                                path: install_path.clone(),
+                                location_type: SaveLocationType::Directory,
+                            });
+                        }
                         games.push(info.game.clone());
                     }
                     for info in &gog_infos {
@@ -183,6 +210,14 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
         Err(e) => {
             tracing::warn!("Manifest indisponível: {}. Saves serão detectados apenas localmente.", e);
             for info in &steam_infos {
+                if let Some(ref install_path) = info.install_path {
+                    save_locations.push(SaveLocation {
+                        id: Uuid::new_v4(),
+                        game_id: info.game.id,
+                        path: install_path.clone(),
+                        location_type: SaveLocationType::Directory,
+                    });
+                }
                 games.push(info.game.clone());
             }
             for info in &gog_infos {
