@@ -363,17 +363,44 @@ function renderJogosRecentes(locations) {
     const container = document.getElementById("jogos-recentes-list");
     if (!container) return;
     if (!locations || locations.length === 0) {
-        container.innerHTML = `
-        <div style="text-align:center;padding:16px 8px;">
-            <p style="font-size:13px;color:#94a3b8;margin-bottom:10px;">Nenhum jogo monitorado no momento.</p>
-            <button onclick="window.triggerScanGames()" class="btn-secondary" style="font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;margin:0 auto;">
-                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <span>Buscar Jogos Instalados</span>
-            </button>
-        </div>`;
+        // Se ainda não há jogos, pode ser que o discovery ainda esteja rodando em background.
+        // Exibe um indicador de carregamento e tenta novamente automaticamente.
+        const isFirstLoad = !window._discoveryAutoRefreshCount;
+        window._discoveryAutoRefreshCount = (window._discoveryAutoRefreshCount || 0) + 1;
+        const maxRetries = 10;
+
+        if (window._discoveryAutoRefreshCount <= maxRetries) {
+            container.innerHTML = `
+            <div style="text-align:center;padding:20px 8px;">
+                <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" style="animation:spin 1.2s linear infinite;">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                    <p style="font-size:13px;color:#94a3b8;margin:0;">Detectando jogos instalados... (${window._discoveryAutoRefreshCount}/${maxRetries})</p>
+                </div>
+                <p style="font-size:11px;color:#64748b;">O discovery roda automaticamente ao iniciar o app.</p>
+            </div>`;
+            // Retry automático após 3 segundos
+            setTimeout(() => loadInicio(), 3000);
+        } else {
+            // Esgotou as tentativas automáticas — mostra botão manual
+            window._discoveryAutoRefreshCount = 0;
+            container.innerHTML = `
+            <div style="text-align:center;padding:16px 8px;">
+                <p style="font-size:13px;color:#94a3b8;margin-bottom:10px;">Nenhum jogo detectado automaticamente.</p>
+                <button onclick="window.triggerScanGames()" class="btn-secondary" style="font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;margin:0 auto;">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <span>Buscar Jogos Instalados</span>
+                </button>
+            </div>`;
+        }
         return;
     }
+    // Jogos encontrados — reseta o contador de auto-refresh
+    window._discoveryAutoRefreshCount = 0;
+
     container.innerHTML = locations.map((loc, i) => {
+
         const initials = (loc.game_name || "?").substring(0, 2).toUpperCase();
         const gradClass = `grad-${i % 6}`;
         const appId = (loc.cover_url?.match(/\/apps\/(\d+)\//)?.[1]) || "";

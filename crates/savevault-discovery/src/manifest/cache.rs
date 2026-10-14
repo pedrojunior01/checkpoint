@@ -51,7 +51,8 @@ pub async fn get_manifest_path(cache_dir: &Path) -> Result<PathBuf> {
 
 async fn download_manifest(dest: &Path) -> Result<()> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(8))
         .build()?;
 
     info!("Conectando a {}...", MANIFEST_URL);

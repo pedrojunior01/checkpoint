@@ -71,12 +71,36 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
 
 /// Executa a varredura completa de todos os launchers e heurísticas,
 /// persistindo os jogos e locais de save no banco de dados de forma idempotente.
+///
+/// Esta função é resiliente: mesmo que o download do manifest do Ludusavi falhe
+/// (sem internet na primeira execução), os jogos instalados ainda serão detectados
+/// via Steam, GOG e detector genérico.
 pub async fn run_full_discovery(
     db_conn: &std::sync::Arc<tokio::sync::Mutex<rusqlite::Connection>>,
     config_dir: &std::path::Path,
 ) -> Result<(usize, usize)> {
     tracing::info!("Iniciando varredura e discovery de jogos...");
-    let result = savevault_discovery::run_all(config_dir).await?;
+
+    // Garante que o diretório de config (usado para cache do manifest) existe
+    let _ = std::fs::create_dir_all(config_dir);
+
+    // run_all já é tolerante a falhas individuais de cada detector (Steam, GOG, Generic,
+    // Manifest). O único cenário em que retorna Err é uma falha crítica de I/O.
+    // Usamos map_err para logar e retornar 0 em vez de propagar o erro,
+    // pois o usuário não deve ver uma tela em branco por causa de um manifest.
+    let result = match savevault_discovery::run_all(config_dir).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                "run_all retornou erro inesperado: {}. Discovery parcial indisponível.",
+                e
+            );
+            savevault_discovery::DiscoveryResult {
+                games: vec![],
+                save_locations: vec![],
+            }
+        }
+    };
 
     let conn = db_conn.lock().await;
     let games_repo = savevault_db::repositories::GamesRepo::new(&conn);
