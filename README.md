@@ -1,82 +1,99 @@
 # checkpoint 🎮
 
-> **Motor inteligente de backup automático e sincronização de saves de jogos para Windows.**  
-> Escrito 100% em **Rust**, com interface Desktop nativa via **Tauri v2**, consumo ultraleve (**15MB a 25MB RAM**), residência silenciosa na bandeja do sistema (*System Tray*) e suporte híbrido à nuvem (**Google Drive** e **Microsoft OneDrive**).
+<div align="center">
+
+[![CI](https://github.com/pedrojunior01/Savevalt/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrojunior01/Savevalt/actions/workflows/ci.yml)
+[![Release](https://github.com/pedrojunior01/Savevalt/actions/workflows/release.yml/badge.svg)](https://github.com/pedrojunior01/Savevalt/releases)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
+[![Tauri](https://img.shields.io/badge/tauri-v2-blue.svg)](https://v2.tauri.app)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d7.svg)](https://microsoft.com/windows)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**English | [Português (Brasil)](README.pt-BR.md)**
+
+<p align="center">
+  <b>Smart, lightweight automatic game save backup & synchronization engine for Windows.</b><br>
+  Built 100% in <b>Rust</b> with a native <b>Tauri v2</b> desktop UI, ultra-light footprint (<b>15MB to 25MB RAM</b>), quiet <b>System Tray</b> operation, dual-layer restore protection (<b>Latest & Daily</b>), and hybrid cloud integration (<b>Google Drive</b> & <b>Microsoft OneDrive</b>).
+</p>
+
+</div>
 
 ---
 
-## 🚀 O que é o checkpoint?
+## 🚀 What is checkpoint?
 
-O **checkpoint** opera silenciosamente em segundo plano enquanto você joga, com uma missão simples: **garantir que nenhum minuto do seu progresso seja perdido**.
+**checkpoint** runs silently in the background while you game, driven by one primary mission: **to ensure that not a single minute of your progress is ever lost**.
 
-Ele detecta seus jogos instalados e seus respectivos diretórios de save, monitora gravações em tempo real com debouncing inteligente, calcula hashes criptográficos **BLAKE3** para eliminar duplicações, armazena snapshots locais versionados e sincroniza tudo de forma transacional com a nuvem (suportando tanto pastas locais sincronizadas como o Google Drive Desktop e OneDrive quanto APIs diretas).
+It automatically discovers your installed games and their save folders, monitors file writes in real time with adaptive debouncing, verifies integrity using **BLAKE3** cryptographic hashes, maintains versioned local snapshots across two safety tiers (**Latest** and **Daily**), and transactionally synchronizes backups to your personal cloud storage (Google Drive and Microsoft OneDrive).
 
 ---
 
-## ✨ Funcionalidades Principais
+## ✨ Key Features
 
-| Recurso | Descrição |
+| Feature | Description |
 | :--- | :--- |
-| 🔍 **Discovery Multilocalizador** | Identifica jogos via Steam (`.acf`/`.vdf`), GOG Galaxy (Registro 32/64-bit), emuladores (Dolphin, PCSX2, PPSSPP, RetroArch) e heurística genérica para jogos isolados. |
-| 📖 **Catálogo Ludusavi (+53.000 Jogos)** | Mapeamento automático de caminhos de save com resolução de variáveis Win32 (`<winAppData>`, `<winDocuments>`). |
-| 🖼️ **Capas em Alta Definição (600x900)** | Resolução oficial de artes verticais da Steam tanto para títulos de loja quanto para jogos genéricos via Steam Store Search API e cache persistente (`steam_covers.json`). |
-| 🧹 **Filtro Inteligente Anti-Ruído** | Poda preventiva de caches gráficos temporários (arquivos `.DDS`, subpastas `CACHE`, `SHADERCACHE`, `.crash`), evitando falsas notificações e spam no banco de dados. |
-| 👁️ **Monitoramento Não-Bloqueante** | Watcher Win32 (`ReadDirectoryChangesW`) com debouncing adaptativo e tolerância nativa a travas de escrita de jogos (`ERROR_SHARING_VIOLATION`). |
-| 🔐 **Integridade Criptográfica BLAKE3** | Cálculo de hash em streaming constante $O(1)$ de RAM (blocos de 64 KB) com deduplicação perfeita (*zero duplication*). |
-| ☁️ **Nuvem Híbrida & Disaster Recovery** | Sincronização automática para Google Drive (`G:\Meu Drive\checkpoint`) e Microsoft OneDrive, com manifesto central (`savevault_manifest.json`) para restaurar tudo em PCs novos. |
-| 🖥️ **Interface Desktop Nativa (Tauri v2)** | UI moderna frameless, temas claro e escuro, sem dependência de Node.js em produção, operando na bandeja do sistema (*System Tray*). |
-| ⚡ **Otimização de RAM (15MB - 25MB)** | Poda ativa de memória Working Set (`SetProcessWorkingSetSize`) do processo principal e subprocessos da WebView2 ao minimizar ou ficar ocioso. |
-| 🛡️ **Restauração Segura em 4 Etapas** | Geração obrigatória de **Safety Backups** (`.savevault_safety_*`) antes de tocar no arquivo ativo, com substituição atômica Win32 (`MoveFileExW`). |
+| 🔍 **Multi-Platform Discovery** | Automatically locates games via Steam (`.acf`/`.vdf`), GOG Galaxy (32/64-bit Registry), emulators (Dolphin, PCSX2, PPSSPP, RetroArch), and safe heuristic scanners restricted strictly to authentic save directories. |
+| 📖 **Ludusavi Manifest (+53,000 Games)** | Built-in offline mapping with dynamic Win32 path resolution (`<winAppData>`, `<winDocuments>`, `<winSavedGames>`). |
+| 🖼️ **High-Resolution Covers (600x900)** | Official Steam vertical artwork resolution for both store titles and generic games via Steam Store Search API and local persistent caching (`steam_covers.json`). |
+| 🧹 **Intelligent Anti-Noise Filtering** | Preventative pruning of transient engine caches (`.DDS` files, `cache`, `CrashDumps`, `shadercache`, `.crash`), avoiding false notifications and database bloat. |
+| 👁️ **Non-Blocking Win32 Watcher** | Real-time `ReadDirectoryChangesW` monitoring with adaptive debouncing and native resilience against file sharing locks (`ERROR_SHARING_VIOLATION`). |
+| 🔐 **BLAKE3 Cryptographic Integrity** | Constant $O(1)$ memory streaming hash computation (64 KB chunks) with zero data duplication. |
+| 🛡️ **Dual-Tier Protection: Latest & Daily** | Preserves the most recent snapshot in real-time (**Latest**) and automatically records a safety milestone at the start of each day (**Daily**), allowing you to revert in case of save corruption during today's session. |
+| ☁️ **Hybrid Cloud & Disaster Recovery** | Seamless synchronization to Google Drive (`G:\My Drive\checkpoint`) and Microsoft OneDrive with a central disaster recovery manifest (`savevault_manifest.json`) for effortless migration to new PCs. |
+| 🖥️ **Native Desktop Interface (Tauri v2)** | Frameless modern UI with custom titlebar, dark/light themes, zero NodeJS runtime overhead, and minimize-to-tray background operation. |
+| ⚡ **Aggressive RAM Trimming (15MB - 25MB)** | Active Working Set memory trimming (`SetProcessWorkingSetSize`) across the main process and WebView2 subprocesses on minimize, hide, and idle cycles. |
+| 🛡️ **4-Step Atomic Safe Restore** | Mandatory generation of safety backups (`.savevault_safety_*`) prior to touching live files, utilizing atomic Win32 filesystem replacements (`MoveFileExW`). |
+| 🚫 **Game Management & Blacklist** | Remove individual games from monitoring directly from their modal and automatically prevent unwanted rediscoveries via SQLite blacklists. |
 
 ---
 
-## 📋 Requisitos
+## 📋 System Requirements
 
-* **Sistema Operacional:** Windows 10 (Build 19041+) ou Windows 11 x64.
-* **Rust:** 1.75+ com toolchain MSVC (`stable-x86_64-pc-windows-msvc`).
-* **WebView2 Runtime:** Já instalado nativamente no Windows 10/11.
+* **Operating System:** Windows 10 (Build 19041+) or Windows 11 x64.
+* **Rust:** 1.75+ with the MSVC toolchain (`stable-x86_64-pc-windows-msvc`).
+* **WebView2 Runtime:** Pre-installed on Windows 10 and 11.
 
 ---
 
-## ⚡ Instalação & Compilação
+## ⚡ Installation & Build
 
-Clone o repositório e compile o projeto com o Cargo:
+Clone the repository and build using Cargo:
 
 ```powershell
 git clone https://github.com/pedrojunior01/Savevalt.git checkpoint
 cd checkpoint
 ```
 
-### 1. Executar a Interface Desktop (Modo Padrão)
-A feature `desktop` já vem habilitada por padrão:
+### 1. Run the Desktop Application (Default Mode)
+The `desktop` feature is enabled by default:
 ```powershell
 cargo run -p savevault-app
 ```
 
-### 2. Compilar o Binário Release Standalone Otimizado
+### 2. Build the Standalone Optimized Release Binary
 ```powershell
 cargo build -p savevault-app --release
 ```
-O executável final independente será gerado em:
+The standalone executable will be generated at:
 ```
 target\release\checkpoint.exe
 ```
 
-### 3. Executar em Modo Headless (Sem Interface Gráfica / CLI)
-Para servidores, terminais puros ou automações:
+### 3. Run in Headless Mode (CLI / Daemon)
+For servers, CI pipelines, or headless terminals without GUI dependencies:
 ```powershell
-# Executa apenas a varredura e imprime o relatório formatado
+# Run detection scanner and print a formatted terminal report
 cargo run -p savevault-app --bin scan_report
 
-# Executa o daemon contínuo em segundo plano no terminal
+# Run the background daemon continuously in the terminal
 cargo run -p savevault-app --no-default-features
 ```
 
 ---
 
-## 🧪 Bateria de Testes Automatizados
+## 🧪 Automated Test Suite
 
-O projeto conta com mais de 115 testes cobrindo todos os fluxos críticos de persistência, concorrência, caminhos Windows e sincronização:
+checkpoint features full end-to-end and unit test coverage with over 115 automated tests verifying persistence, concurrency, Win32 path normalization, and synchronization:
 
 ```powershell
 cargo test --workspace
@@ -84,48 +101,58 @@ cargo test --workspace
 
 ---
 
-## 📁 Estrutura do Workspace Cargo
+## 📁 Workspace Architecture
 
-O ecossistema é particionado em 8 crates modulares altamente coesos e desacoplados:
+The codebase is split into 8 modular, decoupled crates:
 
 ```
 checkpoint/
 ├── crates/
-│   ├── savevault-core/       # Modelos canônicos de domínio, caminhos Windows e autostart
-│   ├── savevault-db/         # Persistência SQLite bundled em modo WAL com migrações
-│   ├── savevault-discovery/  # Detectores Steam, GOG, Emuladores, Heurística e Ludusavi
-│   ├── savevault-monitor/    # Watcher notify, debouncer, checagem de estabilidade e poda de cache
-│   ├── savevault-backup/     # Hashing BLAKE3 em streaming e gerenciador de snapshots
-│   ├── savevault-cloud/      # Abstração de nuvem, pastas locais (OneDrive/GDrive) e OAuth 2.0
-│   ├── savevault-sync/       # Motor assíncrono transacional de sincronização com retry
-│   └── savevault-app/        # Executável checkpoint.exe, Tauri v2 Desktop, IPC e CLI
-├── docs/                     # Documentação técnica e guias de arquitetura
-│   ├── ARCHITECTURE.md       # Diagrama de pipeline ponta a ponta e concorrência
-│   ├── CRATES_GUIDE.md       # Análise técnica aprofundada dos 8 crates
-│   ├── DATABASE_SCHEMA.md    # Esquema SQLite, migrações e chaves CASCADE
-│   ├── DEVELOPMENT_GUIDE.md  # Guia para novos desenvolvedores e boas práticas
-│   ├── FRONTEND_AND_IPC.md   # Catálogo completo dos comandos IPC e design system
-│   ├── PROJECT_STATUS.md     # Relatório de status e histórico de correções
-│   ├── README.md             # Índice da documentação técnica
-│   └── SPECIFICATION.md      # Especificação funcional e regras de negócio
-└── Cargo.toml                # Workspace Cargo raiz
+│   ├── savevault-core/       # Domain models, Windows path canonicalization, autostart (HKCU)
+│   ├── savevault-db/         # Bundled SQLite in WAL mode with migrations 001-005
+│   ├── savevault-discovery/  # Steam, GOG, Emulators, Ludusavi manifest, and heuristic scanners
+│   ├── savevault-monitor/    # Non-blocking watcher, debouncing, and cache filter
+│   ├── savevault-backup/     # Streaming BLAKE3 hashing, snapshot manager, and 4-step safe restore
+│   ├── savevault-cloud/      # Cloud providers, local sync folder detection (OneDrive/GDrive), OAuth 2.0
+│   ├── savevault-sync/       # Async transactional sync engine with exponential backoff
+│   └── savevault-app/        # checkpoint.exe binary, Tauri v2 Desktop app, 24 IPC commands, CLI
+├── docs/                     # Technical documentation & architecture guides
+│   ├── ARCHITECTURE.md       # End-to-end pipeline architecture & concurrency model
+│   ├── CRATES_GUIDE.md       # Technical deep-dive into each workspace crate
+│   ├── DATABASE_SCHEMA.md    # SQLite tables, migrations, and cascade relationships
+│   ├── DEVELOPMENT_GUIDE.md  # Guide for contributors and development practices
+│   ├── FRONTEND_AND_IPC.md   # Complete catalog of all 24 IPC commands & design system
+│   ├── PROJECT_STATUS.md     # Current milestone status, test metrics, and bugfix history
+│   ├── README.md             # Technical documentation index
+│   └── SPECIFICATION.md      # Functional specifications and business rules
+└── Cargo.toml                # Root Cargo workspace manifest
 ```
 
 ---
 
-## 📖 Documentação Completa
+## 🤝 Contributing
 
-Para aprofundar nos detalhes de implementação, consulte a pasta [`docs/`](docs/):
+We welcome contributions! Whether you want to add support for new launchers/emulators, optimize memory performance, enhance the UI, or report issues:
 
-* [🏛️ Arquitetura do Sistema](docs/ARCHITECTURE.md)
-* [📦 Guia Detalhado dos Crates](docs/CRATES_GUIDE.md)
-* [🖥️ Frontend & Contrato IPC](docs/FRONTEND_AND_IPC.md)
-* [🗄️ Esquema do Banco de Dados](docs/DATABASE_SCHEMA.md)
-* [🛠️ Guia do Desenvolvedor](docs/DEVELOPMENT_GUIDE.md)
-* [📊 Status do Projeto & Roadmap](docs/PROJECT_STATUS.md)
+1. Read our [Contributing Guidelines (CONTRIBUTING.md)](CONTRIBUTING.md).
+2. Adhere to our [Code of Conduct (CODE_OF_CONDUCT.md)](CODE_OF_CONDUCT.md).
+3. Check the open issues or submit a Pull Request following our [PR Template](.github/PULL_REQUEST_TEMPLATE.md).
 
 ---
 
-## 📄 Licença
+## 📖 In-Depth Documentation
 
-Distribuído sob a licença **MIT**. Consulte o arquivo [LICENSE](LICENSE) para mais detalhes.
+For architectural specifications and developer details, check the [`docs/`](docs/) directory:
+
+* [🏛️ System Architecture](docs/ARCHITECTURE.md)
+* [📦 Crates Guide](docs/CRATES_GUIDE.md)
+* [🖥️ Frontend & IPC Contract](docs/FRONTEND_AND_IPC.md)
+* [🗄️ Database Schema](docs/DATABASE_SCHEMA.md)
+* [🛠️ Developer Guide](docs/DEVELOPMENT_GUIDE.md)
+* [📊 Project Status & Roadmap](docs/PROJECT_STATUS.md)
+
+---
+
+## 📄 License
+
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.

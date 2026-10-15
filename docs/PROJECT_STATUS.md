@@ -1,8 +1,8 @@
 # 📊 Relatório de Implementação e Status do Projeto — checkpoint
 
-**Versão Atual:** v0.9.0-rc (Release Candidate)  
+**Versão Atual:** v0.9.1 (Release Candidate)  
 **Data do Relatório:** Outubro 2026  
-**Status do Projeto:** Pipeline Core + Interface Desktop Tauri v2 + System Tray + Multi-Cloud (Google Drive & OneDrive) + Single-File Saves + Monitoramento Otimizado
+**Status do Projeto:** Pipeline Core + Interface Desktop Tauri v2 + System Tray + Multi-Cloud (Google Drive & OneDrive) + Single-File Saves + Monitoramento Otimizado + Camadas Latest/Daily de Restauração Segura
 
 ---
 
@@ -61,6 +61,11 @@ cargo test --workspace
 | **FIX-07** | `branding` / `cloud` | Renomeação global de SaveVault para **checkpoint**, necessitando migração transparente de dados legados no Google Drive e `%APPDATA%`. | Implementada migração automática e retrocompatibilidade (`savevault_cloud::auto_migrate_legacy_cloud_folder` para `G:\Meu Drive\checkpoint`), suporte unificado a `%APPDATA%\checkpoint` e `%APPDATA%\SaveVault`, e definição da feature `desktop` como padrão no `Cargo.toml`. |
 | **FIX-08** | `core` / `monitor` | O No Man's Sky acumulava 46 arquivos monitorados e inundava a aba "Atividade" com backups de miniaturas e texturas transitórias `.DDS` em subpastas de cache (`st_...\cache`). | Adicionada filtragem inteligente com `is_ignored_relative_save_path` e `filter_entry` no `SaveScanner` e `SaveWatcherService` (ignorando pastas `cache`, `CrashDumps`, `crashes`, `shadercache` e arquivos `.dds`, `.dmp`, `.mdmp`, `.crash`). Realizada limpeza do banco e do disco, reduzindo o NMS para estritamente seus 8 saves reais. |
 | **FIX-09** | `state.rs` / `frontend` | Jogos genéricos (`KOFXV`, `MortalShell2`, `RSDragonwilds`, `PioneerGame`) exibiam apenas crachás com iniciais (KO, MO, RS, PI) sem capas oficiais. | Implementado dicionário inteligente de aliases (`map_game_name_to_steam_id`), motor dinâmico assíncrono de busca na Steam Store Search API (`resolve_cover_by_name`), persistência em `steam_covers.json` e substituição dinâmica de crachás no Vanilla JS. |
+| **FIX-10** | `restore` / `frontend` | Comportamento e distinção opaca entre saves `latest` e `daily`, gerando incerteza ao usuário final sobre qual versão restaurar em caso de corrupção. | Implementada diferenciação explícita no backend (`target_type: Option<String>`), comandos dedicados de restauração (`restore_game_saves`) e botões claros no modal de detalhes do jogo (**Restaurar Último Save** vs **Restaurar Save Diário**) e na aba Atividade, acompanhados de banner informativo e Safety Backup prévio. |
+| **FIX-11** | `discovery` / `state` | A Steam incluía indevidamente a pasta inteira de instalação (`steamapps\common\<Game>`) como save location quando o manifest não mapeava o jogo, resultando em backups de arquivos de 18 GB (`.pak`) e DLLs. | Removido o fallback perigoso no `savevault-discovery`, restringindo a busca estritamente a pastas de save autênticas (`Steam/userdata/<id>/<app_id>` e pastas `saves/savedata`). Adicionada rotina de auto-limpeza em `DevUiState::get_locations` que expurga registros antigos apontando para `steamapps\common`. |
+| **FIX-12** | `jogos` / `state` | Impossibilidade de remover jogos indesejados detectados automaticamente ou limpar o histórico de jogos monitorados. | Adicionado comando `remove_game_location` e `clean_unrecognized_games`, botão de remoção individual com confirmação no modal do jogo e tabela de blacklist (`ignored_locations`) no SQLite para evitar re-detecção involuntária. |
+| **FIX-13** | `discovery` | O botão de varredura executava busca profunda excessiva em todo o sistema de arquivos, causando lentidão perceptível. | O scanner de descoberta heurística foi refatorado para restringir a busca exclusivamente aos diretórios legítimos de saves (subpastas de AppData Local/Roaming, Saved Games, Documents, emuladores e pastas de plataformas suportadas). |
+| **FIX-14** | `frontend` | A seção de jogos recentes mostrava apenas 4 itens e o botão de varredura ficava travado em animação caso houvesse duplicidade de chamadas. | Expandida a lista de jogos recentes na tela inicial para 6-8 títulos e unificados os gatilhos de varredura com debounce e feedback via toast. |
 
 ---
 
@@ -74,9 +79,11 @@ cargo test --workspace
 - [x] Ordenação dinâmica da tela inicial e feed de atividades em tempo real.
 - [x] Filtragem inteligente anti-ruído de caches e dumps de engines (`cache/`, `.dds`, `.dmp`).
 - [x] Resolução automática de capas oficiais em alta resolução para jogos genéricos e abreviações.
-- [ ] Empacotamento de instalador Windows (`.msi` ou executável com NSIS).
+- [x] Restauração granular segura em 4 etapas com separação visual de camadas (`latest` e `daily`).
+- [x] Prevenção de falso-positivo de instalação Steam e exclusão individual de jogos indesejados.
 - [x] Script de instalador Windows Inno Setup (`installer/checkpoint.iss`) e script de empacotamento (`scripts/package-release.ps1`).
 - [x] Pipeline de CI/CD automatizado no GitHub Actions (`.github/workflows/ci.yml` e `release.yml`).
 - [x] Licença aberta canônica MIT (`LICENSE`).
-- [ ] Suporte a múltiplos perfis de save por jogo (slots independentes).
+- [x] Documentação bilíngue e guias comunitários de contribuição (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`).
+- [ ] Suporte a múltiplos perfis de save por jogo (slots manuais customizados).
 

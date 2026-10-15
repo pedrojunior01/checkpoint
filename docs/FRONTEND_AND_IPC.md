@@ -31,7 +31,7 @@ const { invoke } = window.__TAURI__.core;
 const resultado = await invoke("nome_do_comando", { parametro: valor });
 ```
 
-Abaixo está a especificação completa de todos os **20 comandos IPC** registrados no backend (`tauri_app.rs`):
+Abaixo está a especificação completa de todos os **24 comandos IPC** registrados no backend (`tauri_app.rs`):
 
 | Comando | Parâmetros Rust / JS | Retorno (Rust / JS) | Descrição e Comportamento |
 | :--- | :--- | :--- | :--- |
@@ -43,12 +43,16 @@ Abaixo está a especificação completa de todos os **20 comandos IPC** registra
 | `open_path_in_explorer` | `path: String` | `Result<(), String>` | Abre o diretório no Windows Explorer (`explorer.exe`), criando a pasta se ela ainda não existir. |
 | `open_folder` | `path: String` | `Result<(), String>` | Alias ergonômico para `open_path_in_explorer`. |
 | `get_dashboard_status` | *(State Arc<DevUiState>)* | `Result<DashboardSummary, String>` | Retorna contadores agregados para os KPIs (total de jogos, saves monitorados, pendências em nuvem). |
-| `get_locations` | *(State Arc<DevUiState>)* | `Result<Vec<LocationView>, String>` | Retorna os jogos monitorados ordenados pela **data do backup mais recente decrescente**, associando capas da Steam. |
+| `get_locations` | *(State Arc<DevUiState>)* | `Result<Vec<LocationView>, String>` | Retorna os jogos monitorados ordenados pela **data do backup mais recente decrescente**, associando capas da Steam e aplicando auto-limpeza de pastas de instalação indevidas. |
 | `get_snapshots` | *(State Arc<DevUiState>)* | `Result<Vec<SnapshotView>, String>` | Lista todos os snapshots versionados ordenados cronologicamente do mais novo para o mais antigo. |
 | `get_safety_backups` | *(State Arc<DevUiState>)* | `Result<Vec<SafetyBackupGroup>, String>` | Varre o disco procurando cópias de escape automáticas (`.savevault_safety_*`) geradas para cada jogo. |
 | `get_reconciliation_status`| *(State Arc<DevUiState>)* | `Result<ReconciliationView, String>` | Informa se o reconciliador está rodando, o intervalo e os resultados da última varredura. |
 | `trigger_reconcile` | *(State Arc<DevUiState>)* | `Result<String, String>` | Dispara manualmente uma varredura de reconciliação sob demanda e reporta os arquivos processados. |
-| `restore_snapshot` | `snapshot_id: String` | `Result<RestoreApiResponse, String>` | Executa a rotina de restauração segura em 4 etapas (validação de hash, Safety Backup e rename atômico). |
+| `scan_games` | *(State Arc<DevUiState>)* | `Result<Vec<LocationView>, String>` | Executa a varredura e descoberta multi-plataforma (Steam, GOG, emuladores, Ludusavi) restrita a diretórios autênticos de save, retornando a lista atualizada. |
+| `clean_unrecognized_games` | *(State Arc<DevUiState>)* | `Result<usize, String>` | Remove registros órfãos ou de jogos genéricos não mapeados do histórico da interface. |
+| `remove_game_location` | `location_id: String` | `Result<(), String>` | Remove o monitoramento de um jogo específico da base de dados e o adiciona à blacklist de ignorados. |
+| `restore_snapshot` | `snapshot_id: String`, `target_type: Option<String>` | `Result<RestoreApiResponse, String>` | Executa a rotina de restauração segura em 4 etapas (validação de hash, Safety Backup e rename atômico), priorizando a pasta `latest` ou `daily` conforme `target_type`. |
+| `restore_game_saves` | `location_id: String`, `target_type: String` | `Result<RestoreApiResponse, String>` | Restaura todos os arquivos de save de um jogo específico buscando diretamente a pasta `latest` (mais recente) ou `daily` (marco do início do dia). |
 | `add_game` | `name: String`, `path: String` | `Result<LocationView, String>` | Cadastra manualmente um novo jogo (`Platform::Generic`) e seu local de save no SQLite. |
 | `optimize_database` | *(State Arc<DevUiState>)* | `Result<OptimizationResult, String>` | Remove itens concluídos antigos (>30 dias) da fila de sync e executa `VACUUM` no SQLite. |
 | `export_backup_zip` | *(State Arc<DevUiState>)* | `Result<ExportResult, String>` | Compacta todo o diretório de backups em um arquivo `.zip` na pasta Downloads do usuário via PowerShell. |

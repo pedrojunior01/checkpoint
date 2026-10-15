@@ -1,6 +1,6 @@
 # 🎮 checkpoint — Documentação Técnica & Guia de Desenvolvimento
 
-Bem-vindo à documentação oficial do **checkpoint** (versão `v0.9.0-rc`).  
+Bem-vindo à documentação oficial do **checkpoint** (versão `v0.9.1`).  
 Este conjunto de documentos foi elaborado para desenvolvedores, arquitetos de software e contribuidores que desejam entender, estender ou manter o ecossistema do **checkpoint**.
 
 ---
@@ -10,7 +10,7 @@ Este conjunto de documentos foi elaborado para desenvolvedores, arquitetos de so
 O **checkpoint** (estruturado a partir dos crates internos `savevault-*`) é um ecossistema nativo e modular escrito em **Rust**, desenvolvido prioritariamente para Windows (10/11 x64), com o objetivo de:
 1. **Detectar automaticamente jogos instalados e seus saves** (Steam, GOG Galaxy, Emuladores e heurística genérica, enriquecidos com o catálogo de +53.000 títulos do Ludusavi Manifest).
 2. **Monitorar alterações em tempo real no filesystem** de forma não-bloqueante, tolerante a arquivos bloqueados temporariamente pelo jogo (`ERROR_SHARING_VIOLATION`) e com coalescência inteligente (*debouncing*).
-3. **Gerar snapshots versionados locais** com garantia de integridade criptográfica via **BLAKE3**, eliminando backups duplicados (*zero-duplication*) e oferecendo rotinas seguras de restauração com **Safety Backups**.
+3. **Gerar snapshots versionados locais** com garantia de integridade criptográfica via **BLAKE3**, eliminando backups duplicados (*zero-duplication*) e oferecendo rotinas seguras de restauração com **Safety Backups** e seleção entre *Latest* e *Daily*.
 4. **Sincronizar snapshots de forma assíncrona com a nuvem** através de pastas sincronizadas locais (Microsoft OneDrive, Google Drive Desktop, Dropbox) ou APIs na nuvem (Google Drive e OneDrive via OAuth 2.0 PKCE).
 5. **Oferecer uma interface Desktop nativa e ultraleve** baseada em **Tauri v2** + Vanilla JS/CSS (sem NodeJS em tempo de execução), consumindo entre 15MB e 25MB de RAM e operando em segundo plano na bandeja do sistema (*System Tray*).
 
@@ -25,10 +25,10 @@ A documentação está subdividida em guias temáticos para facilitar a navegaç
 | **[Arquitetura do Sistema](ARCHITECTURE.md)** | Visão geral da arquitetura de software, diagrama de pipeline ponta a ponta, modelo de concorrência e decisões de design do checkpoint. |
 | **[Guia Detalhado dos Crates](CRATES_GUIDE.md)** | Análise módulo a módulo dos 8 crates do workspace Cargo, com tipos públicos, responsabilidades e casos de borda. |
 | **[Esquema do Banco de Dados](DATABASE_SCHEMA.md)** | Estrutura completa do SQLite (tabelas, chaves estrangeiras com `CASCADE`, migrações 001 a 005, índices `NOCASE` e integridade ACID). |
-| **[Frontend & Contrato IPC](FRONTEND_AND_IPC.md)** | Camada Desktop Tauri v2 do checkpoint, catálogo completo dos 20 comandos IPC, gerenciamento de estado (`DevUiState`), design system, modais e poda de memória. |
+| **[Frontend & Contrato IPC](FRONTEND_AND_IPC.md)** | Camada Desktop Tauri v2 do checkpoint, catálogo completo dos 24 comandos IPC, gerenciamento de estado (`DevUiState`), design system, modais e poda de memória. |
 | **[Guia do Desenvolvedor & Contribuidor](DEVELOPMENT_GUIDE.md)** | Como configurar o ambiente, compilar (Desktop vs. Headless), rodar a suíte de testes, adicionar novos detectores de jogos e novos provedores de nuvem. |
 | **[Especificação & Requisitos](SPECIFICATION.md)** | Especificação canônica do produto checkpoint, proposta de valor, regras de negócio e limites de escopo. |
-| **[Status do Projeto & Roadmap](PROJECT_STATUS.md)** | Relatório do estado atual de entrega (`v0.9.0-rc`), auditoria de qualidade, correções recentes e próximos passos. |
+| **[Status do Projeto & Roadmap](PROJECT_STATUS.md)** | Relatório do estado atual de entrega (`v0.9.1`), auditoria de qualidade, correções recentes e próximos passos. |
 
 ---
 
