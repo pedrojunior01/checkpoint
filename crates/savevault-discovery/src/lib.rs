@@ -114,20 +114,40 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         };
 
                         // Fallback: se o manifest não mapeou, procura subpastas de save no diretório de instalação
-                        // ou usa o diretório de instalação para garantir que o jogo seja monitorado e visível na UI
+                        // ou no diretório de userdata da Steam. NUNCA adiciona a pasta raiz de instalação
+                        // para evitar monitorar DLLs e arquivos de assets gigantes (ex: .pak de 18GB).
                         if paths.is_empty() {
                             if let Some(ref install_path) = info.install_path {
-                                let mut found_subfolder = false;
                                 for sub in &["saves", "save", "saved", "savegames", "SaveData", "savedgames"] {
                                     let sub_p = install_path.join(sub);
                                     if sub_p.exists() {
                                         paths.push(sub_p);
-                                        found_subfolder = true;
                                         break;
                                     }
                                 }
-                                if !found_subfolder && install_path.exists() {
-                                    paths.push(install_path.clone());
+                            }
+                            if paths.is_empty() {
+                                if let Some(id) = app_id {
+                                    let steam_root = std::env::var("ProgramFiles(x86)")
+                                        .map(|p| std::path::PathBuf::from(p).join("Steam"))
+                                        .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Program Files (x86)\Steam"));
+                                    let userdata = steam_root.join("userdata");
+                                    if userdata.exists() {
+                                        if let Ok(entries) = std::fs::read_dir(&userdata) {
+                                            for e in entries.flatten() {
+                                                let save_folder = e.path().join(id.to_string());
+                                                if save_folder.exists() {
+                                                    let remote_sub = save_folder.join("remote");
+                                                    if remote_sub.exists() {
+                                                        paths.push(remote_sub);
+                                                    } else {
+                                                        paths.push(save_folder);
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

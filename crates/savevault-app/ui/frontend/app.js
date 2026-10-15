@@ -649,7 +649,45 @@ window.openGameDetails = function(locationId) {
         };
     }
 
+    const btnRestoreLatest = document.getElementById("btn-details-restore-latest");
+    const btnRestoreDaily = document.getElementById("btn-details-restore-daily");
+    if (btnRestoreLatest) {
+        btnRestoreLatest.onclick = () => window.handleRestoreGame(loc.id, loc.game_name, "latest");
+    }
+    if (btnRestoreDaily) {
+        btnRestoreDaily.onclick = () => window.handleRestoreGame(loc.id, loc.game_name, "daily");
+    }
+
     modal?.classList.remove("hidden");
+};
+
+window.handleRestoreGame = async function(locationId, gameName, targetType) {
+    const isDaily = targetType === "daily";
+    const typeLabel = isDaily ? "Save Diário (Daily)" : "Último Save (Latest)";
+    const typeDesc = isDaily 
+        ? "Você está prestes a reverter o jogo para o marco congelado no início do dia. Isso desfará qualquer problema ou alteração ocorrida durante as sessões de hoje."
+        : "Você está prestes a restaurar a cópia mais recente salva pelo jogo.";
+
+    const confirmed = await showConfirmDialog(
+        `Restaurar: ${typeLabel}`,
+        `${typeDesc}\n\nJogo: "${gameName}"\n\nFique tranquilo: um Safety Backup do seu save atual será criado antes da substituição.`
+    );
+    if (!confirmed) return;
+
+    try {
+        const result = await invoke("restore_game_saves", { locationId: String(locationId), targetType });
+        if (result.success) {
+            showToast(`Restauração de "${gameName}" (${typeLabel}) concluída com sucesso!`, "success");
+            document.getElementById("modal-game-details")?.classList.add("hidden");
+            await loadInicio();
+            await loadJogos();
+            await loadAtividade();
+        } else {
+            showToast(`Falha na restauração: ${result.error || "Erro desconhecido"}`, "error");
+        }
+    } catch (e) {
+        showToast(`Erro ao restaurar: ${e}`, "error");
+    }
 };
 
 window.confirmDeleteGame = async function(locationId, gameName) {
@@ -777,11 +815,18 @@ function renderAtividadeList() {
                 <p class="game-subtext" style="font-family:ui-monospace, monospace;">${s.file_name || s.short_hash || ""}</p>
                 <p class="game-subtext">${s.size_formatted || formatBytes(s.size_bytes)} · Versão ${s.version} · ${timeAgo(s.created_at)}</p>
             </div>
-            <button
-                onclick="window.handleRestoreSnapshot('${s.id}', '${(s.game_name || "").replace(/'/g, "")}', ${s.version})"
-                class="btn-restore">
-                Restaurar
-            </button>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <button
+                    onclick="window.handleRestoreSnapshot('${s.id}', '${(s.game_name || "").replace(/'/g, "")}', ${s.version}, 'latest')"
+                    class="btn-restore" title="Restaurar a partir do Último Save (Latest)">
+                    Latest
+                </button>
+                <button
+                    onclick="window.handleRestoreSnapshot('${s.id}', '${(s.game_name || "").replace(/'/g, "")}', ${s.version}, 'daily')"
+                    class="btn-secondary" style="font-size:12px;padding:5px 9px;" title="Restaurar a partir do Ponto Diário (Daily)">
+                    Daily
+                </button>
+            </div>
         </div>`).join("");
 }
 
@@ -789,17 +834,19 @@ document.getElementById("atividade-game-filter")?.addEventListener("change", () 
     renderAtividadeList();
 });
 
-window.handleRestoreSnapshot = async function(id, gameName, version) {
+window.handleRestoreSnapshot = async function(id, gameName, version, targetType = "latest") {
+    const isDaily = targetType === "daily";
+    const typeLabel = isDaily ? "Marco Diário (Daily - Início do Dia)" : "Último Save (Latest - Tempo Real)";
     const confirmed = await showConfirmDialog(
-        "Confirmar Restauração",
-        `Deseja restaurar a versão ${version} do save de "${gameName}"?\n\nUm Safety Backup do save ativo atual será criado antes da substituição.`
+        `Restaurar: ${typeLabel}`,
+        `Deseja restaurar a versão ${version} do save de "${gameName}" usando ${typeLabel}?\n\n${isDaily ? 'Isso reverterá para a cópia segura do início do dia.' : 'Isso usará a cópia mais recente gravada.'}\nFique tranquilo: um Safety Backup do save ativo atual será criado antes da substituição.`
     );
     if (!confirmed) return;
 
     try {
-        const result = await invoke("restore_snapshot", { snapshotId: id });
+        const result = await invoke("restore_snapshot", { snapshotId: id, targetType: targetType || null });
         if (result.success) {
-            showToast(`Restauração concluída! Save revertido para a versão ${version}.`, "success");
+            showToast(`Restauração concluída! Save revertido usando ${typeLabel}.`, "success");
             loadAtividade();
         } else {
             showToast(`Falha na restauração: ${result.error || "Erro desconhecido"}`, "error");

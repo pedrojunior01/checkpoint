@@ -190,11 +190,15 @@
         <div class="section-header">
           <div>
             <h2 class="section-title">Histórico de Snapshots</h2>
-            <span class="section-subtitle">Clique em Restaurar para reverter um save</span>
+            <span class="section-subtitle">Pontos de restauração protegidos em duas camadas</span>
           </div>
           <select id="atividade-game-filter" class="config-select" style="max-width: 200px; padding: 6px 10px; font-size: 12px;">
             <option value="">Todos os jogos</option>
           </select>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:14px;padding:10px 14px;background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.15);border-radius:8px;font-size:12px;color:#94a3b8;align-items:center;">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="flex-shrink:0;color:#38bdf8;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <span><strong>Proteção em Duas Camadas:</strong> <strong>Latest</strong> (save mais recente atualizado em tempo real) e <strong>Daily</strong> (marco de segurança gravado no início de cada dia, ideal caso o save corrompa durante o gameplay).</span>
         </div>
         <div id="atividade-list">
           <p style="font-size: 13px; color: #94a3b8;">Carregando...</p>
@@ -396,6 +400,25 @@
       </div>
       <div>
         <button id="btn-details-open-folder" class="btn-secondary" style="width:100%;">Abrir Pasta no Windows Explorer</button>
+      </div>
+      <div style="border-top:1px solid rgba(148,163,184,0.15);padding-top:12px;margin-top:6px;">
+        <span class="config-label" style="display:block;margin-bottom:8px;">Opções de Restauração Segura</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <button id="btn-details-restore-latest" class="btn-primary" style="display:flex;flex-direction:column;align-items:flex-start;padding:10px 12px;gap:3px;text-align:left;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <span>Restaurar Último Save</span>
+            </div>
+            <span style="font-size:11px;opacity:0.85;">Mais recente (tempo real)</span>
+          </button>
+          <button id="btn-details-restore-daily" class="btn-secondary" style="display:flex;flex-direction:column;align-items:flex-start;padding:10px 12px;gap:3px;text-align:left;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>Restaurar Save Diário</span>
+            </div>
+            <span style="font-size:11px;opacity:0.85;">Marco do início do dia</span>
+          </button>
+        </div>
       </div>
     </div>
     <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;">

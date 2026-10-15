@@ -616,6 +616,30 @@ impl DevUiState {
             [],
         );
 
+        // Auto-limpeza de falsos-positivos da pasta de instalação (steamapps/common contendo DLLs ou .pak)
+        let _ = conn.execute(
+            "DELETE FROM save_locations 
+             WHERE id IN (
+                 SELECT sl.id FROM save_locations sl
+                 JOIN files f ON f.save_location_id = sl.id
+                 WHERE (LOWER(sl.path) LIKE '%steamapps%common%' OR LOWER(sl.path) LIKE '%steamapps\\common%')
+                   AND (LOWER(f.path) LIKE '%.dll' OR LOWER(f.path) LIKE '%.pak' OR LOWER(f.path) LIKE '%.exe')
+             )",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM files WHERE save_location_id NOT IN (SELECT id FROM save_locations)",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM backups WHERE file_id NOT IN (SELECT id FROM files)",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
+            [],
+        );
+
         let loc_repo = SaveLocationsRepo::new(&conn);
         let games_repo = GamesRepo::new(&conn);
         let files_repo = FilesRepo::new(&conn);
@@ -1284,17 +1308,19 @@ impl DevUiState {
         &self,
         snapshot_id: Uuid,
         expected_hash: Option<String>,
+        target_type: Option<String>,
     ) -> RestoreApiResponse {
-        let req = match expected_hash {
+        let mut req = match expected_hash {
             Some(h) => RestoreRequest::with_expected_hash(snapshot_id, h),
             None => RestoreRequest::new(snapshot_id),
         };
+        req.target_type = target_type.clone();
 
         self.record_event(
             DevUiEventLevel::Info,
             format!(
-                "Iniciando restauração do snapshot {} via DEV-UI",
-                snapshot_id
+                "Iniciando restauração do snapshot {} via DEV-UI (alvo: {:?})",
+                snapshot_id, target_type
             ),
             None,
         )
@@ -1400,6 +1426,36 @@ impl DevUiState {
                 }
             }
         }
+    }
+
+    /// Restaura o save ativo de um jogo a partir da versão "latest" (mais recente) ou "daily" (início do dia).
+    pub async fn restore_location_saves(
+        &self,
+        location_id: Uuid,
+        target_type: &str,
+    ) -> Result<RestoreApiResponse> {
+        let conn = self.db.lock().await;
+
+        // Busca o snapshot mais recente desse location
+        let snapshot_id_opt: Option<String> = conn.query_row(
+            "SELECT b.id FROM backups b
+             JOIN files f ON b.file_id = f.id
+             WHERE f.save_location_id = ?1
+             ORDER BY b.created_at DESC LIMIT 1",
+            [location_id.to_string()],
+            |r| r.get(0),
+        ).ok();
+
+        drop(conn);
+
+        if let Some(s_id_str) = snapshot_id_opt {
+            if let Ok(s_id) = Uuid::parse_str(&s_id_str) {
+                let res = self.trigger_restore(s_id, None, Some(target_type.to_string())).await;
+                return Ok(res);
+            }
+        }
+
+        anyhow::bail!("Nenhum snapshot registrado para este jogo.")
     }
 
     fn config_path(&self) -> PathBuf {

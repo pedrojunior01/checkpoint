@@ -17,6 +17,7 @@ use super::state::{DevUiEventLevel, DevUiState};
 struct RestorePayload {
     snapshot_id: Uuid,
     expected_hash: Option<String>,
+    target_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -410,7 +411,7 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         ("POST", "/api/restore") => match serde_json::from_str::<RestorePayload>(body) {
             Ok(payload) => {
                 let resp = state
-                    .trigger_restore(payload.snapshot_id, payload.expected_hash)
+                    .trigger_restore(payload.snapshot_id, payload.expected_hash, payload.target_type)
                     .await;
                 let json = serde_json::to_string(&resp)?;
                 send_response(&mut stream, 200, "OK", "application/json", &json).await?;

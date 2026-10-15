@@ -271,9 +271,20 @@ pub async fn remove_game_location(
 pub async fn restore_snapshot(
     state: State<'_, Arc<DevUiState>>,
     snapshot_id: String,
+    target_type: Option<String>,
 ) -> Result<RestoreApiResponse, String> {
     let id = Uuid::parse_str(&snapshot_id).map_err(|e| e.to_string())?;
-    Ok(state.trigger_restore(id, None).await)
+    Ok(state.trigger_restore(id, None, target_type).await)
+}
+
+#[tauri::command]
+pub async fn restore_game_saves(
+    state: State<'_, Arc<DevUiState>>,
+    location_id: String,
+    target_type: String,
+) -> Result<RestoreApiResponse, String> {
+    let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
+    state.restore_location_saves(id, &target_type).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -360,6 +371,7 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
             clean_unrecognized_games,
             remove_game_location,
             restore_snapshot,
+            restore_game_saves,
             add_game,
             optimize_database,
             export_backup_zip,

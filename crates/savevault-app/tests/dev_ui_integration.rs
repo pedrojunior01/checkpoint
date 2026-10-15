@@ -223,7 +223,7 @@ async fn test_dev_ui_restore_success_and_safety_backup() {
     let state = DevUiState::new(db_mutex, db_path, backup_dir, None, Duration::from_secs(30));
 
     // Executa Restore via DEV-UI
-    let resp = state.trigger_restore(snapshot_id, None).await;
+    let resp = state.trigger_restore(snapshot_id, None, None).await;
     assert!(resp.success);
     assert_eq!(resp.version, Some(1));
     assert!(resp.safety_backup_path.is_some());
@@ -252,7 +252,7 @@ async fn test_dev_ui_restore_error_handling() {
     let state = DevUiState::new(db_mutex, db_path, backup_dir, None, Duration::from_secs(30));
 
     let nonexistent_id = Uuid::new_v4();
-    let resp = state.trigger_restore(nonexistent_id, None).await;
+    let resp = state.trigger_restore(nonexistent_id, None, None).await;
 
     assert!(!resp.success);
     assert!(resp.error.is_some());

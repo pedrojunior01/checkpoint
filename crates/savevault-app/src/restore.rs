@@ -71,6 +71,8 @@ pub struct RestoreRequest {
     pub snapshot_id: Uuid,
     /// Hash BLAKE3 esperado opcional para validação antecipada de integridade.
     pub expected_hash: Option<String>,
+    /// Alvo específico de restauração ("latest" para mais recente ou "daily" para marco diário).
+    pub target_type: Option<String>,
 }
 
 impl RestoreRequest {
@@ -78,6 +80,7 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: None,
+            target_type: None,
         }
     }
 
@@ -85,6 +88,15 @@ impl RestoreRequest {
         Self {
             snapshot_id,
             expected_hash: Some(expected_hash.into()),
+            target_type: None,
+        }
+    }
+
+    pub fn with_target(snapshot_id: Uuid, target_type: Option<String>) -> Self {
+        Self {
+            snapshot_id,
+            expected_hash: None,
+            target_type,
         }
     }
 }
@@ -310,6 +322,7 @@ pub fn resolve_snapshot_source_path(
     backup_root: &Path,
     metadata: &RestoreMetadata,
     filename: &str,
+    target_type: Option<&str>,
 ) -> Result<PathBuf, RestoreError> {
     if filename.is_empty()
         || filename.contains('/')
@@ -327,6 +340,23 @@ pub fn resolve_snapshot_source_path(
     let ver = metadata.backup.version;
 
     let mut candidates: Vec<PathBuf> = Vec::new();
+
+    let daily_candidate = backup_root
+        .join(&safe_game_name)
+        .join("daily")
+        .join(filename);
+
+    let latest_candidate = backup_root
+        .join(&safe_game_name)
+        .join("latest")
+        .join(filename);
+
+    // Se o usuário solicitou especificamente a versão diária ("daily"), prioriza daily
+    if target_type == Some("daily") {
+        candidates.push(daily_candidate.clone());
+    } else if target_type == Some("latest") {
+        candidates.push(latest_candidate.clone());
+    }
 
     // 1. Candidato direto por cloud_path armazenado nos metadados do banco
     if let Some(ref cp) = metadata.backup.cloud_path {
@@ -356,17 +386,9 @@ pub fn resolve_snapshot_source_path(
     candidates.push(ver_prefixed);
 
     // 5. Candidato `latest`
-    let latest_candidate = backup_root
-        .join(&safe_game_name)
-        .join("latest")
-        .join(filename);
     candidates.push(latest_candidate);
 
     // 6. Candidato `daily`
-    let daily_candidate = backup_root
-        .join(&safe_game_name)
-        .join("daily")
-        .join(filename);
     candidates.push(daily_candidate);
 
     // 7. Candidatos legados SaveVault/Steam ou SaveVault/Other
@@ -517,7 +539,7 @@ pub async fn execute_restore_filesystem(
             ))
         })?;
 
-    let source_path = resolve_snapshot_source_path(backup_root, metadata, filename)?;
+    let source_path = resolve_snapshot_source_path(backup_root, metadata, filename, request.target_type.as_deref())?;
 
     // 5. Validação da existência do snapshot físico no disco
     if !source_path.exists() {
