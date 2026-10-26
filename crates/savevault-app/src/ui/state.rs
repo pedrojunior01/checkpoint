@@ -1181,14 +1181,13 @@ impl DevUiState {
         Ok((games, locs))
     }
 
-    /// Limpa entradas de jogos e locais genéricos que não possuem backups reais ou que são pastas
-    /// de sistema/apps detectadas incorretamente no passado (ex: DriveFS, SaveVault, WebView).
+    /// Limpa entradas de pastas de sistema/apps detectadas incorretamente no passado
+    /// (ex: DriveFS, SaveVault, WebView, Smash-Soda).
     pub async fn clean_unrecognized_games(&self) -> Result<CleanResult> {
         let conn = self.db.lock().await;
 
         // 1. Identifica IDs de save_locations da plataforma 'generic' que:
-        //    a) NÃO possuem backups; OU
-        //    b) Apontam para pastas de sistema/aplicativos conhecidas (DriveFS, SaveVault, etc)
+        //    Apontam especificamente para pastas de sistema/aplicativos conhecidas (DriveFS, SaveVault, etc)
         let mut target_locs: Vec<(String, String, String)> = Vec::new();
         {
             let mut stmt = conn.prepare(
@@ -1196,12 +1195,7 @@ impl DevUiState {
                  JOIN games g ON sl.game_id = g.id
                  WHERE g.platform = 'generic'
                    AND (
-                       NOT EXISTS (
-                           SELECT 1 FROM files f
-                           JOIN backups b ON b.file_id = f.id
-                           WHERE f.save_location_id = sl.id
-                       )
-                       OR LOWER(sl.path) LIKE '%drivefs%'
+                       LOWER(sl.path) LIKE '%drivefs%'
                        OR LOWER(sl.path) LIKE '%savevault%'
                        OR LOWER(sl.path) LIKE '%checkpoint%'
                        OR LOWER(sl.path) LIKE '%ebwebview%'

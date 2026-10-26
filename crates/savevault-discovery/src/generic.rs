@@ -24,6 +24,7 @@ use walkdir::WalkDir;
 /// Extensões de arquivo que indicam save games com alta probabilidade.
 const SAVE_EXTENSIONS: &[&str] = &[
     "sav", "save", "sl2", "sg", "sg0", "sg1", "sg2", "sg3", "slot", "gam", "savegame", "sfs",
+    "dat",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
@@ -444,8 +445,8 @@ pub fn infer_game_name(save_path: &Path) -> String {
             .iter()
             .any(|h| name.to_lowercase().contains(h));
 
-        // Se o nome da pasta é puramente numérico (ex: "0", "1", slot de save) ou um hint de save (ex: "saves"), sobe um nível
-        if is_numeric || has_save_hint {
+        // Se o nome da pasta é puramente numérico (ex: "0", "1", slot de save), um hint de save (ex: "saves"), ou empresa genérica da Unity ("DefaultCompany"), sobe um nível
+        if is_numeric || has_save_hint || name.eq_ignore_ascii_case("defaultcompany") {
             match current.parent() {
                 Some(p) if p != current => {
                     current = p;
