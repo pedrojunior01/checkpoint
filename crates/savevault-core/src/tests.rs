@@ -55,22 +55,36 @@ mod tests {
     // ------------------------------------------------------------------
     mod model_tests {
         use crate::models::{
-            Confidence, Game, Platform, SaveLocation, SaveLocationType,
-            SyncStatus,
+            Confidence, Game, Platform, SaveLocation, SaveLocationType, SyncStatus,
         };
         use std::path::PathBuf;
         use uuid::Uuid;
 
         #[test]
         fn game_new_generates_unique_ids() {
-            let g1 = Game::new("Jogo A", Platform::Steam, Some("123".into()), Confidence::High);
-            let g2 = Game::new("Jogo A", Platform::Steam, Some("123".into()), Confidence::High);
+            let g1 = Game::new(
+                "Jogo A",
+                Platform::Steam,
+                Some("123".into()),
+                Confidence::High,
+            );
+            let g2 = Game::new(
+                "Jogo A",
+                Platform::Steam,
+                Some("123".into()),
+                Confidence::High,
+            );
             assert_ne!(g1.id, g2.id, "IDs devem ser únicos");
         }
 
         #[test]
         fn game_fields_are_set_correctly() {
-            let game = Game::new("Stardew Valley", Platform::Steam, Some("413150".into()), Confidence::High);
+            let game = Game::new(
+                "Stardew Valley",
+                Platform::Steam,
+                Some("413150".into()),
+                Confidence::High,
+            );
             assert_eq!(game.name, "Stardew Valley");
             assert_eq!(game.platform, Platform::Steam);
             assert_eq!(game.platform_id, Some("413150".into()));

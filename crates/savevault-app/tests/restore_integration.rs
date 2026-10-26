@@ -347,7 +347,5 @@ fn test_cli_restore_binary_execution() {
 }
 
 fn backup_root_dir(backup_root: &std::path::Path, _file_id: Uuid, version: u32) -> PathBuf {
-    backup_root
-        .join("RPG Hero")
-        .join(format!("v{}", version))
+    backup_root.join("RPG Hero").join(format!("v{}", version))
 }

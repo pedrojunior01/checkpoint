@@ -85,13 +85,14 @@ fn main() -> anyhow::Result<()> {
 fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     use std::sync::Arc;
 
-    let _single_instance = match savevault_app::SingleInstanceGuard::acquire("Local\\checkpoint_Mutex") {
-        Some(guard) => guard,
-        None => {
-            eprintln!("checkpoint já está em execução no sistema.");
-            return Ok(());
-        }
-    };
+    let _single_instance =
+        match savevault_app::SingleInstanceGuard::acquire("Local\\checkpoint_Mutex") {
+            Some(guard) => guard,
+            None => {
+                eprintln!("checkpoint já está em execução no sistema.");
+                return Ok(());
+            }
+        };
 
     dotenvy::dotenv().ok();
 
@@ -185,7 +186,8 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                     Ok((games_count, locs_count)) => {
                         tracing::info!(
                             "Descoberta inicial concluída: {} jogo(s), {} local(is) de save.",
-                            games_count, locs_count
+                            games_count,
+                            locs_count
                         );
                     }
                     Err(e) => {
@@ -196,9 +198,7 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                 // Lê as localizações cadastradas para o watcher e reconciliação
                 let all_locations = {
                     let conn = db_conn_bg.lock().await;
-                    SaveLocationsRepo::new(&conn)
-                        .list_all()
-                        .unwrap_or_default()
+                    SaveLocationsRepo::new(&conn).list_all().unwrap_or_default()
                 };
 
                 // Reconciliação inicial se houver localizações
@@ -228,12 +228,9 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
                 });
 
                 // Servidor HTTP (fallback dev-ui e API)
-                let _ = savevault_app::start_dev_ui_server(
-                    state_bg.clone(),
-                    4040,
-                    server_shutdown_rx,
-                )
-                .await;
+                let _ =
+                    savevault_app::start_dev_ui_server(state_bg.clone(), 4040, server_shutdown_rx)
+                        .await;
 
                 // Watcher + Pipeline com notificação instantânea para o SyncWorker
                 let file_access = Arc::new(savevault_monitor::file_access::OsFileAccess);
@@ -279,7 +276,6 @@ fn run_desktop_main(_args: Vec<String>) -> anyhow::Result<()> {
     savevault_app::ui::tauri_app::run_tauri_app(state)
 }
 
-
 async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
     // Inicializa o tracing
     let log_level = std::env::var("SAVEVAULT_LOG").unwrap_or_else(|_| "info".into());
@@ -319,8 +315,6 @@ async fn run_async(args: Vec<String>) -> anyhow::Result<()> {
 
     // Roteia os subcomandos antes de abrir o banco (login não precisa de DB)
     match args.as_slice() {
-
-
         // ----------------------------------------------------------------
         // savevault restore — restaura um snapshot para o save original
         // ----------------------------------------------------------------
@@ -378,20 +372,23 @@ async fn run_resident_daemon(
     config_dir: PathBuf,
     args: &[String],
 ) -> anyhow::Result<()> {
-
     tracing::info!("checkpoint iniciando...");
 
     // Abre o banco de dados
     let db = Database::open(&config.paths.database_path)?;
-    
+
     // Limpeza de Banco de Dados (Pruning)
     let backups_repo = savevault_db::repositories::BackupsRepo::new(&db.conn);
     let sync_queue_repo = savevault_db::repositories::SyncQueueRepo::new(&db.conn);
     if let Ok(count) = backups_repo.prune_old_records(30) {
-        if count > 0 { tracing::info!("Pruning: {} backups antigos removidos do DB.", count); }
+        if count > 0 {
+            tracing::info!("Pruning: {} backups antigos removidos do DB.", count);
+        }
     }
     if let Ok(count) = sync_queue_repo.prune_completed_or_old(30) {
-        if count > 0 { tracing::info!("Pruning: {} itens da fila de sync removidos.", count); }
+        if count > 0 {
+            tracing::info!("Pruning: {} itens da fila de sync removidos.", count);
+        }
     }
     let games_repo = GamesRepo::new(&db.conn);
     let locations_repo = SaveLocationsRepo::new(&db.conn);
@@ -413,13 +410,16 @@ async fn run_resident_daemon(
         let mut existing_opt = None;
 
         if let Some(ref platform_id) = game.platform_id {
-            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id) {
+            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id)
+            {
                 existing_opt = Some(existing);
             }
         }
 
         if existing_opt.is_none() {
-            if let Ok(Some(existing)) = games_repo.find_by_name_and_platform(&game.name, &game.platform) {
+            if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(&game.name, &game.platform)
+            {
                 existing_opt = Some(existing);
             }
         }
@@ -460,8 +460,6 @@ async fn run_resident_daemon(
         result.save_locations.len()
     );
 
-
-
     // Se for solicitado modo pontual (--once ou scan), finaliza aqui
     if args.iter().any(|a| a == "--once" || a == "scan") {
         tracing::info!("Execução pontual concluída com sucesso.");
@@ -483,7 +481,8 @@ async fn run_resident_daemon(
 
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
     let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
-    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
+    watcher_config.debounce.debounce_duration =
+        std::time::Duration::from_millis(config.general.debounce_ms);
 
     let (watcher, stable_rx) = match savevault_monitor::watcher::SaveWatcherService::start(
         watcher_config,
@@ -552,8 +551,6 @@ async fn run_resident_daemon(
 // Handlers de subcomandos
 // ---------------------------------------------------------------------------
 
-
-
 fn handle_add_game(config: &Config, name: &str, path_str: &str) -> anyhow::Result<()> {
     let raw_path = std::path::PathBuf::from(path_str);
     let location_type = if raw_path.is_file() {
@@ -619,7 +616,6 @@ fn handle_list_games(config: &Config) -> anyhow::Result<()> {
     println!("{:-<70}\n", "");
     Ok(())
 }
-
 
 async fn handle_restore_command(
     config: &Config,
@@ -856,7 +852,8 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     // Prepara watcher se houver locais
     let file_access = std::sync::Arc::new(savevault_monitor::file_access::OsFileAccess);
     let mut watcher_config = savevault_monitor::watcher::SaveWatcherConfig::default();
-    watcher_config.debounce.debounce_duration = std::time::Duration::from_millis(config.general.debounce_ms);
+    watcher_config.debounce.debounce_duration =
+        std::time::Duration::from_millis(config.general.debounce_ms);
     let mut watcher_opt = if !all_locations.is_empty() {
         match savevault_monitor::watcher::SaveWatcherService::start(
             watcher_config,
@@ -882,10 +879,16 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
 
     #[cfg(feature = "desktop")]
     {
-        println!("================================================================================");
-        println!("               checkpoint — Modo Desktop Ativo                                  ");
-        println!("================================================================================");
-        
+        println!(
+            "================================================================================"
+        );
+        println!(
+            "               checkpoint — Modo Desktop Ativo                                  "
+        );
+        println!(
+            "================================================================================"
+        );
+
         let state_clone = state.clone();
         std::thread::spawn(move || {
             if let Err(e) = savevault_app::ui::tauri_app::run_tauri_app(state_clone) {
@@ -899,7 +902,9 @@ async fn handle_ui_command(config: &Config) -> anyhow::Result<()> {
     {
         println!("  DEV-UI ativa em: {}", ui_url);
         println!("  Abrindo navegador... (Pressione Ctrl+C para encerrar)");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
 
         #[cfg(windows)]
         {

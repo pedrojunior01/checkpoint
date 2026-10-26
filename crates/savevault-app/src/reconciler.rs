@@ -138,7 +138,10 @@ impl Reconciler {
     }
 
     pub fn get_backup_root(&self) -> PathBuf {
-        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
+        self.backup_root
+            .read()
+            .map(|b| b.clone())
+            .unwrap_or_default()
     }
 
     /// Retorna se há uma reconciliação atualmente em execução.
@@ -300,7 +303,8 @@ impl Reconciler {
                         observed_at: disc.modified_at,
                     };
 
-                    match process_file(&self.db, &event, &self.get_backup_root(), self.max_versions).await
+                    match process_file(&self.db, &event, &self.get_backup_root(), self.max_versions)
+                        .await
                     {
                         Ok(Some((backup, _item))) => {
                             if is_new {

@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -63,7 +63,12 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(name: impl Into<String>, platform: Platform, platform_id: Option<String>, confidence: Confidence) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        platform: Platform,
+        platform_id: Option<String>,
+        confidence: Confidence,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),

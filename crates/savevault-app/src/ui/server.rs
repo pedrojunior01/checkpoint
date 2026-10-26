@@ -129,7 +129,9 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
                 // Origem permitida apenas de localhost/127.0.0.1
                 if !v.is_empty() {
                     let v_lower = v.to_ascii_lowercase();
-                    if !v_lower.starts_with("http://127.0.0.1") && !v_lower.starts_with("http://localhost") {
+                    if !v_lower.starts_with("http://127.0.0.1")
+                        && !v_lower.starts_with("http://localhost")
+                    {
                         origin_valid = false;
                     }
                 }
@@ -411,7 +413,11 @@ async fn handle_connection(state: Arc<DevUiState>, mut stream: TcpStream) -> any
         ("POST", "/api/restore") => match serde_json::from_str::<RestorePayload>(body) {
             Ok(payload) => {
                 let resp = state
-                    .trigger_restore(payload.snapshot_id, payload.expected_hash, payload.target_type)
+                    .trigger_restore(
+                        payload.snapshot_id,
+                        payload.expected_hash,
+                        payload.target_type,
+                    )
                     .await;
                 let json = serde_json::to_string(&resp)?;
                 send_response(&mut stream, 200, "OK", "application/json", &json).await?;

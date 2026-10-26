@@ -241,7 +241,9 @@ pub fn map_game_name_to_steam_id(name: &str) -> Option<&'static str> {
         "kofxv" | "kof xv" | "the king of fighters xv" => Some("1498570"),
         "mortalshell2" | "mortal shell ii" | "mortal shell 2" => Some("2584270"),
         "mortalshell" | "mortal shell" => Some("1110910"),
-        "rsdragonwilds" | "dragonwilds" | "runescape: dragonwilds" | "runescape dragonwilds" => Some("1374490"),
+        "rsdragonwilds" | "dragonwilds" | "runescape: dragonwilds" | "runescape dragonwilds" => {
+            Some("1374490")
+        }
         "pioneergame" | "pioneer" | "arc raiders" => Some("1808500"),
         "dysmantle" => Some("846770"),
         "sekiro" | "sekiro: shadows die twice" | "sekiro shadows die twice" => Some("814380"),
@@ -250,9 +252,14 @@ pub fn map_game_name_to_steam_id(name: &str) -> Option<&'static str> {
         "warhammer 40,000: space marine 2" | "space marine 2" | "spacemarine2" => Some("2183900"),
         "street fighter 6" | "streetfighter6" | "sf6" => Some("1364780"),
         "the witcher 3" | "the witcher 3: wild hunt" | "witcher 3" | "witcher3" => Some("292030"),
-        "armored core vi" | "armored core 6" | "armored core vi fires of rubicon" | "armoredcorevi" => Some("1888160"),
+        "armored core vi"
+        | "armored core 6"
+        | "armored core vi fires of rubicon"
+        | "armoredcorevi" => Some("1888160"),
         "aion 2" | "aion2" => Some("3393110"),
-        "iron nest" | "iron nest: heavy turret simulator" | "iron nest heavy turret simulator" => Some("2950790"),
+        "iron nest" | "iron nest: heavy turret simulator" | "iron nest heavy turret simulator" => {
+            Some("2950790")
+        }
         "wallpaper engine" => Some("431960"),
         "albion online" => Some("761890"),
         _ => None,
@@ -268,7 +275,10 @@ impl DevUiState {
         reconciliation_interval: Duration,
     ) -> Self {
         let initial_covers = {
-            let cache_file = db_path.parent().unwrap_or(std::path::Path::new(".")).join("steam_covers.json");
+            let cache_file = db_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("steam_covers.json");
             if let Ok(c) = std::fs::read_to_string(&cache_file) {
                 serde_json::from_str(&c).unwrap_or_default()
             } else {
@@ -296,7 +306,10 @@ impl DevUiState {
 
     /// Retorna o diretório raiz de backups configurado atualmente.
     pub fn get_backup_root(&self) -> PathBuf {
-        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
+        self.backup_root
+            .read()
+            .map(|b| b.clone())
+            .unwrap_or_default()
     }
 
     /// Atualiza dinamicamente o diretório raiz de backups e notifica o reconciliador.
@@ -317,8 +330,15 @@ impl DevUiState {
 
     /// Salva o cache de capas no disco de forma resiliente (config_dir/steam_covers.json)
     pub fn persist_cover_cache(&self) {
-        let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
-        let cache_file = self.db_path.parent().unwrap_or(std::path::Path::new(".")).join("steam_covers.json");
+        let lock = self
+            .steam_cover_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let cache_file = self
+            .db_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("steam_covers.json");
         if let Ok(json) = serde_json::to_string_pretty(&*lock) {
             let _ = std::fs::write(cache_file, json);
         }
@@ -332,7 +352,10 @@ impl DevUiState {
 
         // 1. Verifica cache em memória
         {
-            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let lock = self
+                .steam_cover_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(cached) = lock.get(app_id) {
                 return Some(cached.clone());
             }
@@ -344,14 +367,20 @@ impl DevUiState {
             .build()
             .ok()?;
 
-        let api_url = format!("https://store.steampowered.com/api/appdetails?appids={}&filters=basic", app_id);
+        let api_url = format!(
+            "https://store.steampowered.com/api/appdetails?appids={}&filters=basic",
+            app_id
+        );
         if let Ok(resp) = client.get(&api_url).send().await {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 if let Some(data) = json.get(app_id).and_then(|v| v.get("data")) {
                     if let Some(header_img) = data.get("header_image").and_then(|v| v.as_str()) {
                         let final_url = header_img.to_string();
                         {
-                            let mut lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut lock = self
+                                .steam_cover_cache
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
                             lock.insert(app_id.to_string(), final_url.clone());
                         }
                         self.persist_cover_cache();
@@ -383,7 +412,10 @@ impl DevUiState {
         // 2. Cache em memória
         let norm_key = format!("name:{}", name_trimmed.to_ascii_lowercase());
         {
-            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let lock = self
+                .steam_cover_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(cached) = lock.get(&norm_key) {
                 return Some(cached.clone());
             }
@@ -415,7 +447,10 @@ impl DevUiState {
                             let app_id = id_val.to_string();
                             if let Some(cover) = self.resolve_steam_cover(&app_id).await {
                                 {
-                                    let mut lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+                                    let mut lock = self
+                                        .steam_cover_cache
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner());
                                     lock.insert(norm_key, cover.clone());
                                 }
                                 self.persist_cover_cache();
@@ -431,7 +466,11 @@ impl DevUiState {
     }
 
     /// Resolve a capa de um jogo por AppID ou Nome do jogo com persistência de cache.
-    pub async fn resolve_cover(&self, app_id: Option<&str>, game_name: Option<&str>) -> Option<String> {
+    pub async fn resolve_cover(
+        &self,
+        app_id: Option<&str>,
+        game_name: Option<&str>,
+    ) -> Option<String> {
         if let Some(id) = app_id {
             if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
                 if let Some(cover) = self.resolve_steam_cover(id).await {
@@ -580,7 +619,10 @@ impl DevUiState {
     /// Retorna a lista de SaveLocations para a aba de Localizações.
     pub async fn get_locations(&self) -> Result<Vec<LocationView>> {
         let cached_covers = {
-            let lock = self.steam_cover_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let lock = self
+                .steam_cover_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             lock.clone()
         };
 
@@ -645,12 +687,13 @@ impl DevUiState {
         let files_repo = FilesRepo::new(&conn);
 
         // Mapeamento de último backup por save_location_id
-        let mut last_backups: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
+        let mut last_backups: std::collections::HashMap<Uuid, String> =
+            std::collections::HashMap::new();
         if let Ok(mut stmt) = conn.prepare(
             "SELECT f.save_location_id, MAX(b.created_at)
              FROM backups b
              JOIN files f ON b.file_id = f.id
-             GROUP BY f.save_location_id"
+             GROUP BY f.save_location_id",
         ) {
             if let Ok(rows) = stmt.query_map([], |r| {
                 let loc_id_str: String = r.get(0)?;
@@ -669,7 +712,7 @@ impl DevUiState {
         if let Ok(mut stmt) = conn.prepare(
             "SELECT save_location_id, MAX(modified_at)
              FROM files
-             GROUP BY save_location_id"
+             GROUP BY save_location_id",
         ) {
             if let Ok(rows) = stmt.query_map([], |r| {
                 let loc_id_str: String = r.get(0)?;
@@ -770,7 +813,10 @@ impl DevUiState {
         let mut deduped_views: Vec<LocationView> = Vec::new();
         for v in views {
             let norm_path = v.path.trim().to_ascii_lowercase();
-            if let Some(existing) = deduped_views.iter_mut().find(|e| e.path.trim().to_ascii_lowercase() == norm_path) {
+            if let Some(existing) = deduped_views
+                .iter_mut()
+                .find(|e| e.path.trim().to_ascii_lowercase() == norm_path)
+            {
                 // Se a entrada nova tem mais arquivos, tem backup ou é Steam/GOG, substitui a genérica/vazia
                 let replace = (v.monitored_files_count > existing.monitored_files_count)
                     || (v.last_backup_time.is_some() && existing.last_backup_time.is_none())
@@ -785,16 +831,16 @@ impl DevUiState {
 
         // Ordena por atividade mais recente (último backup/modificação decrescente)
         // Jogos sem backup ficam no final ordenados alfabeticamente
-        deduped_views.sort_by(|a, b| {
-            match (&a.last_backup_time, &b.last_backup_time) {
-                (Some(ta), Some(tb)) => tb.cmp(ta),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => match b.monitored_files_count.cmp(&a.monitored_files_count) {
-                    std::cmp::Ordering::Equal => a.game_name.to_lowercase().cmp(&b.game_name.to_lowercase()),
-                    other => other,
-                },
-            }
+        deduped_views.sort_by(|a, b| match (&a.last_backup_time, &b.last_backup_time) {
+            (Some(ta), Some(tb)) => tb.cmp(ta),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => match b.monitored_files_count.cmp(&a.monitored_files_count) {
+                std::cmp::Ordering::Equal => {
+                    a.game_name.to_lowercase().cmp(&b.game_name.to_lowercase())
+                }
+                other => other,
+            },
         });
 
         Ok(deduped_views)
@@ -1111,7 +1157,8 @@ impl DevUiState {
             DevUiEventLevel::Info,
             "Iniciando varredura e detecção de jogos no sistema...".to_string(),
             None,
-        ).await;
+        )
+        .await;
 
         let config_dir = self.db_path.parent().unwrap_or(std::path::Path::new("."));
         let (games, locs) = crate::orchestrator::run_full_discovery(&self.db, config_dir).await?;
@@ -1123,9 +1170,13 @@ impl DevUiState {
 
         self.record_event(
             DevUiEventLevel::Success,
-            format!("Varredura concluída: {} jogo(s) detectado(s), {} local(is) de save registrado(s).", games, locs),
+            format!(
+                "Varredura concluída: {} jogo(s) detectado(s), {} local(is) de save registrado(s).",
+                games, locs
+            ),
             None,
-        ).await;
+        )
+        .await;
 
         Ok((games, locs))
     }
@@ -1195,22 +1246,22 @@ impl DevUiState {
             );
 
             // Remove arquivos associados
-            let _ = conn.execute(
-                "DELETE FROM files WHERE save_location_id = ?1",
-                [loc_id],
-            );
+            let _ = conn.execute("DELETE FROM files WHERE save_location_id = ?1", [loc_id]);
 
             // Remove o local de save
-            if let Ok(affected) = conn.execute("DELETE FROM save_locations WHERE id = ?1", [loc_id]) {
+            if let Ok(affected) = conn.execute("DELETE FROM save_locations WHERE id = ?1", [loc_id])
+            {
                 locations_removed += affected;
             }
         }
 
         // 2. Remove jogos que ficaram sem nenhuma save_location
-        let games_removed = conn.execute(
-            "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
-            [],
-        ).unwrap_or(0);
+        let games_removed = conn
+            .execute(
+                "DELETE FROM games WHERE id NOT IN (SELECT DISTINCT game_id FROM save_locations)",
+                [],
+            )
+            .unwrap_or(0);
 
         self.record_event(
             DevUiEventLevel::Info,
@@ -1241,7 +1292,7 @@ impl DevUiState {
             "SELECT sl.path, g.name
              FROM save_locations sl
              JOIN games g ON sl.game_id = g.id
-             WHERE sl.id = ?1"
+             WHERE sl.id = ?1",
         ) {
             if let Ok(mut rows) = stmt.query([&loc_id_str]) {
                 if let Ok(Some(row)) = rows.next() {
@@ -1297,7 +1348,8 @@ impl DevUiState {
                 DevUiEventLevel::Info,
                 format!("Jogo/Local '{}' removido do monitoramento", game_name),
                 Some(path),
-            ).await;
+            )
+            .await;
         }
 
         Ok(())
@@ -1437,20 +1489,24 @@ impl DevUiState {
         let conn = self.db.lock().await;
 
         // Busca o snapshot mais recente desse location
-        let snapshot_id_opt: Option<String> = conn.query_row(
-            "SELECT b.id FROM backups b
+        let snapshot_id_opt: Option<String> = conn
+            .query_row(
+                "SELECT b.id FROM backups b
              JOIN files f ON b.file_id = f.id
              WHERE f.save_location_id = ?1
              ORDER BY b.created_at DESC LIMIT 1",
-            [location_id.to_string()],
-            |r| r.get(0),
-        ).ok();
+                [location_id.to_string()],
+                |r| r.get(0),
+            )
+            .ok();
 
         drop(conn);
 
         if let Some(s_id_str) = snapshot_id_opt {
             if let Ok(s_id) = Uuid::parse_str(&s_id_str) {
-                let res = self.trigger_restore(s_id, None, Some(target_type.to_string())).await;
+                let res = self
+                    .trigger_restore(s_id, None, Some(target_type.to_string()))
+                    .await;
                 return Ok(res);
             }
         }
@@ -1460,11 +1516,15 @@ impl DevUiState {
 
     fn config_path(&self) -> PathBuf {
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-        let checkpoint_cfg = PathBuf::from(&appdata).join("checkpoint").join("config.toml");
+        let checkpoint_cfg = PathBuf::from(&appdata)
+            .join("checkpoint")
+            .join("config.toml");
         if checkpoint_cfg.exists() {
             return checkpoint_cfg;
         }
-        let legacy_cfg = PathBuf::from(&appdata).join("SaveVault").join("config.toml");
+        let legacy_cfg = PathBuf::from(&appdata)
+            .join("SaveVault")
+            .join("config.toml");
         if legacy_cfg.exists() {
             return legacy_cfg;
         }
@@ -1482,7 +1542,10 @@ impl DevUiState {
 
         let (game_id, loc) = {
             let conn = self.db.lock().await;
-            let _ = conn.execute("DELETE FROM ignored_locations WHERE LOWER(path) = LOWER(?1)", [path_str]);
+            let _ = conn.execute(
+                "DELETE FROM ignored_locations WHERE LOWER(path) = LOWER(?1)",
+                [path_str],
+            );
             let games_repo = GamesRepo::new(&conn);
             let locations_repo = SaveLocationsRepo::new(&conn);
 
@@ -1558,7 +1621,8 @@ impl DevUiState {
                 || detected.iter().any(|d| {
                     d.provider_type == "google_drive"
                         && (lower.starts_with(&d.sync_folder.to_string_lossy().to_lowercase())
-                            || lower.starts_with(&d.savevault_folder.to_string_lossy().to_lowercase()))
+                            || lower
+                                .starts_with(&d.savevault_folder.to_string_lossy().to_lowercase()))
                 })
             {
                 "google_drive".to_string()
@@ -1744,7 +1808,9 @@ impl DevUiState {
             db.execute("VACUUM", [])?;
         }
 
-        let size = std::fs::metadata(&self.db_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&self.db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let size_formatted = format_bytes(size);
 
         self.record_event(

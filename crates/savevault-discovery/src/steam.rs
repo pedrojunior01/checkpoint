@@ -43,7 +43,10 @@ impl SteamDetector {
         let library_folders = root.join("steamapps").join("libraryfolders.vdf");
 
         if !library_folders.exists() {
-            warn!("libraryfolders.vdf não encontrado em {}", library_folders.display());
+            warn!(
+                "libraryfolders.vdf não encontrado em {}",
+                library_folders.display()
+            );
             return Ok(vec![]);
         }
 
@@ -60,7 +63,11 @@ impl SteamDetector {
             let mut entries = tokio::fs::read_dir(&apps_dir).await?;
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
 
                 if name.starts_with("appmanifest_") && name.ends_with(".acf") {
                     if let Ok(acf_content) = tokio::fs::read_to_string(&path).await {
@@ -81,7 +88,12 @@ impl SteamDetector {
 
     /// Detecta apenas os Games (sem install path) — compatibilidade com testes existentes.
     pub async fn detect(&self) -> Result<Vec<Game>> {
-        Ok(self.detect_with_paths().await?.into_iter().map(|i| i.game).collect())
+        Ok(self
+            .detect_with_paths()
+            .await?
+            .into_iter()
+            .map(|i| i.game)
+            .collect())
     }
 }
 
@@ -112,10 +124,7 @@ fn find_steam_root() -> Option<PathBuf> {
 
         // 2. Consulta HKLM\SOFTWARE\WOW6432Node\Valve\Steam / HKLM\SOFTWARE\Valve\Steam -> InstallPath
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        for subkey in &[
-            r"SOFTWARE\WOW6432Node\Valve\Steam",
-            r"SOFTWARE\Valve\Steam",
-        ] {
+        for subkey in &[r"SOFTWARE\WOW6432Node\Valve\Steam", r"SOFTWARE\Valve\Steam"] {
             if let Ok(steam_key) = hklm.open_subkey(subkey) {
                 if let Ok(val) = steam_key.get_value::<String, _>("InstallPath") {
                     let p = PathBuf::from(val.replace('/', "\\"));
@@ -186,8 +195,8 @@ fn parse_acf(content: &str, library_path: &Path) -> Option<SteamGameInfo> {
         let key = parts[1].to_lowercase();
         let value = parts[3].trim_end_matches('"');
         match key.as_str() {
-            "name"       => name = Some(value.to_string()),
-            "appid"      => app_id = Some(value.to_string()),
+            "name" => name = Some(value.to_string()),
+            "appid" => app_id = Some(value.to_string()),
             "installdir" => install_dir = Some(value.to_string()),
             _ => {}
         }
@@ -196,9 +205,8 @@ fn parse_acf(content: &str, library_path: &Path) -> Option<SteamGameInfo> {
     let name = name?;
 
     // Caminho completo: {library}/steamapps/common/{installdir}
-    let install_path = install_dir.map(|dir| {
-        library_path.join("steamapps").join("common").join(dir)
-    });
+    let install_path =
+        install_dir.map(|dir| library_path.join("steamapps").join("common").join(dir));
 
     let game = Game::new(name, Platform::Steam, app_id, Confidence::High);
     Some(SteamGameInfo { game, install_path })

@@ -33,8 +33,7 @@ impl PathContext {
                 .unwrap_or_else(|_| format!("{}\\AppData\\Local", home)),
             documents: docs,
             home: home.clone(),
-            game_install_path: install_path
-                .map(|p| p.to_string_lossy().to_string()),
+            game_install_path: install_path.map(|p| p.to_string_lossy().to_string()),
         }
     }
 }
@@ -62,10 +61,7 @@ pub fn resolve_paths(template: &str, ctx: &PathContext) -> Vec<PathBuf> {
     path = path.replace("<osUserName>", "*");
 
     // Ignorar placeholders específicos de outras plataformas
-    if path.contains("<xdg")
-        || path.contains("<mac")
-        || path.contains("<linux")
-    {
+    if path.contains("<xdg") || path.contains("<mac") || path.contains("<linux") {
         return vec![];
     }
 
@@ -154,7 +150,10 @@ mod tests {
             ..dummy_ctx()
         };
         let result = resolve_paths("<root>/saves", &ctx);
-        assert!(result.is_empty(), "Sem install path, <root> deve retornar vazio");
+        assert!(
+            result.is_empty(),
+            "Sem install path, <root> deve retornar vazio"
+        );
     }
 
     #[test]

@@ -7,11 +7,11 @@ use tauri::{
 };
 use uuid::Uuid;
 
-use savevault_core::config::Config;
 use crate::ui::state::{
     CleanResult, CloudConfigView, DashboardSummary, DevUiState, ExportResult, LocationView,
     OptimizationResult, ReconciliationView, RestoreApiResponse, SafetyBackupGroup, SnapshotView,
 };
+use savevault_core::config::Config;
 
 // ── Utilitário de Limpeza de Memória (Working Set Trim) ───────────────────────
 
@@ -120,11 +120,15 @@ pub use crate::ui::state::ConfigDto;
 
 fn config_path() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-    let checkpoint_cfg = PathBuf::from(&appdata).join("checkpoint").join("config.toml");
+    let checkpoint_cfg = PathBuf::from(&appdata)
+        .join("checkpoint")
+        .join("config.toml");
     if checkpoint_cfg.exists() {
         return checkpoint_cfg;
     }
-    let legacy_cfg = PathBuf::from(&appdata).join("SaveVault").join("config.toml");
+    let legacy_cfg = PathBuf::from(&appdata)
+        .join("SaveVault")
+        .join("config.toml");
     if legacy_cfg.exists() {
         return legacy_cfg;
     }
@@ -158,7 +162,10 @@ pub async fn save_config(
     state: State<'_, Arc<DevUiState>>,
     new_cfg: ConfigDto,
 ) -> Result<String, String> {
-    state.update_config(new_cfg).await.map_err(|e| e.to_string())
+    state
+        .update_config(new_cfg)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -202,9 +209,7 @@ pub async fn get_locations(state: State<'_, Arc<DevUiState>>) -> Result<Vec<Loca
 }
 
 #[tauri::command]
-pub async fn get_snapshots(
-    state: State<'_, Arc<DevUiState>>,
-) -> Result<Vec<SnapshotView>, String> {
+pub async fn get_snapshots(state: State<'_, Arc<DevUiState>>) -> Result<Vec<SnapshotView>, String> {
     state.get_snapshots().await.map_err(|e| e.to_string())
 }
 
@@ -241,9 +246,7 @@ pub struct ScanResultView {
 }
 
 #[tauri::command]
-pub async fn scan_games(
-    state: State<'_, Arc<DevUiState>>,
-) -> Result<ScanResultView, String> {
+pub async fn scan_games(state: State<'_, Arc<DevUiState>>) -> Result<ScanResultView, String> {
     let (games_count, locations_count) = state.scan_games().await.map_err(|e| e.to_string())?;
     Ok(ScanResultView {
         games_count,
@@ -255,7 +258,10 @@ pub async fn scan_games(
 pub async fn clean_unrecognized_games(
     state: State<'_, Arc<DevUiState>>,
 ) -> Result<CleanResult, String> {
-    state.clean_unrecognized_games().await.map_err(|e| e.to_string())
+    state
+        .clean_unrecognized_games()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -264,7 +270,10 @@ pub async fn remove_game_location(
     location_id: String,
 ) -> Result<(), String> {
     let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
-    state.remove_game_location(id).await.map_err(|e| e.to_string())
+    state
+        .remove_game_location(id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -284,7 +293,10 @@ pub async fn restore_game_saves(
     target_type: String,
 ) -> Result<RestoreApiResponse, String> {
     let id = Uuid::parse_str(&location_id).map_err(|e| e.to_string())?;
-    state.restore_location_saves(id, &target_type).await.map_err(|e| e.to_string())
+    state
+        .restore_location_saves(id, &target_type)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -293,7 +305,10 @@ pub async fn add_game(
     name: String,
     path: String,
 ) -> Result<LocationView, String> {
-    state.add_game(&name, &path).await.map_err(|e| e.to_string())
+    state
+        .add_game(&name, &path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -304,9 +319,7 @@ pub async fn optimize_database(
 }
 
 #[tauri::command]
-pub async fn export_backup_zip(
-    state: State<'_, Arc<DevUiState>>,
-) -> Result<ExportResult, String> {
+pub async fn export_backup_zip(state: State<'_, Arc<DevUiState>>) -> Result<ExportResult, String> {
     state.export_backup_zip().await.map_err(|e| e.to_string())
 }
 
@@ -336,7 +349,9 @@ pub async fn resolve_game_cover(
     app_id: Option<String>,
     game_name: Option<String>,
 ) -> Result<Option<String>, String> {
-    Ok(state.resolve_cover(app_id.as_deref(), game_name.as_deref()).await)
+    Ok(state
+        .resolve_cover(app_id.as_deref(), game_name.as_deref())
+        .await)
 }
 
 // ── App Setup ────────────────────────────────────────────────────────────────
@@ -469,18 +484,16 @@ pub fn run_tauri_app(state: Arc<DevUiState>) -> anyhow::Result<()> {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            match event {
-                tauri::WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    trim_process_memory();
-                }
-                tauri::WindowEvent::Focused(false) => {
-                    trim_process_memory();
-                }
-                _ => {}
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+                trim_process_memory();
             }
+            tauri::WindowEvent::Focused(false) => {
+                trim_process_memory();
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .map_err(|e| anyhow::anyhow!("Erro ao executar runtime do Tauri: {}", e))

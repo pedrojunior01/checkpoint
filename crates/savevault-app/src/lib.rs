@@ -12,7 +12,6 @@ pub mod ui;
 
 pub use orchestrator::{discover_and_persist_saves, run_full_discovery, DiscoverySyncReport};
 pub use pipeline::{handle_stable_event, process_file, run_pipeline};
-pub use sync_worker::{SyncWorker, SyncWorkerConfig};
 pub use reconciler::{
     run_reconciliation_loop, Reconciler, ReconciliationConfig, ReconciliationError,
     ReconciliationReport,
@@ -21,6 +20,7 @@ pub use restore::{
     restore_by_id, restore_snapshot, restore_snapshot_with_db, RestoreError, RestoreReport,
     RestoreRequest,
 };
+pub use sync_worker::{SyncWorker, SyncWorkerConfig};
 pub use ui::{start_dev_ui_server, DevUiState};
 
 /// Guarda de instância única para o Windows via Mutex de SO.
@@ -67,7 +67,9 @@ impl SingleInstanceGuard {
                 None
             } else {
                 set.insert(name.to_string());
-                Some(Self { name: name.to_string() })
+                Some(Self {
+                    name: name.to_string(),
+                })
             }
         }
     }

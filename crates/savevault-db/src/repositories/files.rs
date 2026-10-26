@@ -1,9 +1,9 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
-use savevault_core::models::FileEntry;
-use uuid::Uuid;
-use std::path::PathBuf;
 use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use savevault_core::models::FileEntry;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 pub struct FilesRepo<'a> {
     pub conn: &'a Connection,
@@ -52,14 +52,16 @@ impl<'a> FilesRepo<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT id, save_location_id, path, hash, size_bytes, modified_at FROM files WHERE save_location_id = ?1"
         )?;
-        let entries = stmt.query_map(params![location_id.to_string()], row_to_entry)?
+        let entries = stmt
+            .query_map(params![location_id.to_string()], row_to_entry)?
             .filter_map(|r| r.ok())
             .collect();
         Ok(entries)
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute("DELETE FROM files WHERE id = ?1", params![id.to_string()])?;
+        self.conn
+            .execute("DELETE FROM files WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 }
@@ -76,6 +78,8 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<FileEntry> {
         path: PathBuf::from(path),
         hash: row.get(3)?,
         size_bytes: size as u64,
-        modified_at: modified_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        modified_at: modified_str
+            .parse::<DateTime<Utc>>()
+            .unwrap_or_else(|_| Utc::now()),
     })
 }

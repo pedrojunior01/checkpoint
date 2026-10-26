@@ -125,7 +125,10 @@ impl SyncWorker {
 
     /// Retorna o diretório raiz de backups atual.
     pub fn get_backup_root(&self) -> PathBuf {
-        self.backup_root.read().map(|b| b.clone()).unwrap_or_default()
+        self.backup_root
+            .read()
+            .map(|b| b.clone())
+            .unwrap_or_default()
     }
 
     /// Retorna `true` se o loop do worker estiver em execução.

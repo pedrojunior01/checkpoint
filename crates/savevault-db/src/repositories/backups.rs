@@ -1,8 +1,8 @@
-use rusqlite::{Connection, params};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
 use savevault_core::models::{Backup, SyncStatus};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub struct BackupsRepo<'a> {
     pub conn: &'a Connection,
@@ -33,9 +33,10 @@ impl<'a> BackupsRepo<'a> {
     pub fn list_by_file(&self, file_id: Uuid) -> Result<Vec<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE file_id = ?1 ORDER BY version DESC"
+             FROM backups WHERE file_id = ?1 ORDER BY version DESC",
         )?;
-        let backups = stmt.query_map(params![file_id.to_string()], row_to_backup)?
+        let backups = stmt
+            .query_map(params![file_id.to_string()], row_to_backup)?
             .filter_map(|r| r.ok())
             .collect();
         Ok(backups)
@@ -44,7 +45,7 @@ impl<'a> BackupsRepo<'a> {
     pub fn find_by_id(&self, id: Uuid) -> Result<Option<Backup>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, file_id, version, cloud_path, drive_file_id, sync_status, created_at
-             FROM backups WHERE id = ?1"
+             FROM backups WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id.to_string()], row_to_backup)?;
         Ok(rows.next().transpose()?)
@@ -58,7 +59,6 @@ impl<'a> BackupsRepo<'a> {
         )?;
         Ok(deleted)
     }
-
 
     pub fn update_sync_status(&self, id: Uuid, status: &SyncStatus) -> Result<()> {
         self.conn.execute(
@@ -84,10 +84,8 @@ impl<'a> BackupsRepo<'a> {
 
     /// Remove um backup específico pelo ID.
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM backups WHERE id = ?1",
-            params![id.to_string()],
-        )?;
+        self.conn
+            .execute("DELETE FROM backups WHERE id = ?1", params![id.to_string()])?;
         Ok(())
     }
 
@@ -129,7 +127,8 @@ impl<'a> BackupsRepo<'a> {
                 let mut check_stmt = tx.prepare(
                     "SELECT COUNT(*) FROM sync_queue WHERE backup_id = ?1 AND operation = 'delete'",
                 )?;
-                let count: i64 = check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
+                let count: i64 =
+                    check_stmt.query_row(params![b.id.to_string()], |row| row.get(0))?;
                 if count == 0 {
                     // Cancela qualquer upload pendente deste backup antigo para não enviar versão já podada
                     tx.execute(
@@ -175,7 +174,9 @@ fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<Backup> {
         cloud_path,
         drive_file_id,
         sync_status: str_to_sync_status(&status_str),
-        created_at: created_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+        created_at: created_str
+            .parse::<DateTime<Utc>>()
+            .unwrap_or_else(|_| Utc::now()),
     })
 }
 

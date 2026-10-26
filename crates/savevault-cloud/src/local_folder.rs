@@ -156,20 +156,42 @@ pub fn auto_migrate_legacy_cloud_folder(target: &Path) {
     if let Some(parent) = target.parent() {
         let legacy_sibling = parent.join("SaveVault");
         if legacy_sibling.exists() && legacy_sibling.is_dir() && legacy_sibling != target {
-            tracing::info!("Migrando saves legados de {} para {}", legacy_sibling.display(), target.display());
+            tracing::info!(
+                "Migrando saves legados de {} para {}",
+                legacy_sibling.display(),
+                target.display()
+            );
             let _ = copy_dir_all(&legacy_sibling, target);
         }
     }
     // 2. Verifica pasta legada do usuário em USERPROFILE\Google Drive\SaveVault_Backups
     if let Ok(user_profile) = std::env::var("USERPROFILE") {
-        let legacy_user_backup = PathBuf::from(&user_profile).join("Google Drive").join("SaveVault_Backups");
-        if legacy_user_backup.exists() && legacy_user_backup.is_dir() && legacy_user_backup != target {
-            tracing::info!("Migrando backups locais legados de {} para {}", legacy_user_backup.display(), target.display());
+        let legacy_user_backup = PathBuf::from(&user_profile)
+            .join("Google Drive")
+            .join("SaveVault_Backups");
+        if legacy_user_backup.exists()
+            && legacy_user_backup.is_dir()
+            && legacy_user_backup != target
+        {
+            tracing::info!(
+                "Migrando backups locais legados de {} para {}",
+                legacy_user_backup.display(),
+                target.display()
+            );
             let _ = copy_dir_all(&legacy_user_backup, target);
         }
-        let legacy_user_savevault = PathBuf::from(&user_profile).join("Google Drive").join("SaveVault");
-        if legacy_user_savevault.exists() && legacy_user_savevault.is_dir() && legacy_user_savevault != target {
-            tracing::info!("Migrando backups legados de {} para {}", legacy_user_savevault.display(), target.display());
+        let legacy_user_savevault = PathBuf::from(&user_profile)
+            .join("Google Drive")
+            .join("SaveVault");
+        if legacy_user_savevault.exists()
+            && legacy_user_savevault.is_dir()
+            && legacy_user_savevault != target
+        {
+            tracing::info!(
+                "Migrando backups legados de {} para {}",
+                legacy_user_savevault.display(),
+                target.display()
+            );
             let _ = copy_dir_all(&legacy_user_savevault, target);
         }
     }

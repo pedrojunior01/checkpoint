@@ -41,7 +41,10 @@ pub fn discover_and_persist_saves<D: SaveDetector>(
         let discovery = detector.detect_save_locations(game)?;
 
         match discovery {
-            SaveDiscoveryResult::Found(locs) | SaveDiscoveryResult::KnownNotFoundOnDisk { expected_locations: locs } => {
+            SaveDiscoveryResult::Found(locs)
+            | SaveDiscoveryResult::KnownNotFoundOnDisk {
+                expected_locations: locs,
+            } => {
                 for loc in locs {
                     let persisted = loc_repo.upsert(&loc)?;
                     report.persisted_locations.push(persisted);
@@ -111,13 +114,16 @@ pub async fn run_full_discovery(
         let mut existing_opt = None;
 
         if let Some(ref platform_id) = game.platform_id {
-            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id) {
+            if let Ok(Some(existing)) = games_repo.find_by_platform_id(&game.platform, platform_id)
+            {
                 existing_opt = Some(existing);
             }
         }
 
         if existing_opt.is_none() {
-            if let Ok(Some(existing)) = games_repo.find_by_name_and_platform(&game.name, &game.platform) {
+            if let Ok(Some(existing)) =
+                games_repo.find_by_name_and_platform(&game.name, &game.platform)
+            {
                 existing_opt = Some(existing);
             }
         }
@@ -149,7 +155,10 @@ pub async fn run_full_discovery(
     for loc in &result.save_locations {
         let norm_loc_path = loc.path.to_string_lossy().trim().to_ascii_lowercase();
         if ignored_paths.contains(&norm_loc_path) {
-            tracing::debug!("Ignorando save location explicitamente excluído pelo usuário: {:?}", loc.path);
+            tracing::debug!(
+                "Ignorando save location explicitamente excluído pelo usuário: {:?}",
+                loc.path
+            );
             continue;
         }
 
@@ -176,4 +185,3 @@ pub async fn run_full_discovery(
 
     Ok((result.games.len(), new_locations))
 }
-

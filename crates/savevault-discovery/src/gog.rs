@@ -17,7 +17,7 @@ use savevault_core::models::{Confidence, Game, Platform, SaveLocation, SaveLocat
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
 
 // Chaves de registro onde o GOG armazena seus jogos instalados
 const GOG_REGISTRY_PATHS: &[&str] = &[
@@ -71,13 +71,19 @@ impl GogDetector {
         // Tenta ler o Registro primeiro (método principal)
         let from_registry = read_gog_games_from_registry();
         if !from_registry.is_empty() {
-            info!("GOG: {} jogo(s) detectado(s) via Registro do Windows.", from_registry.len());
+            info!(
+                "GOG: {} jogo(s) detectado(s) via Registro do Windows.",
+                from_registry.len()
+            );
             return Ok(from_registry);
         }
 
         // Fallback: varre a pasta de instalação do GOG Galaxy
         if let Some(ref root) = self.gog_root {
-            debug!("GOG: Registro não encontrado, varrendo pasta: {}", root.display());
+            debug!(
+                "GOG: Registro não encontrado, varrendo pasta: {}",
+                root.display()
+            );
             results.extend(scan_gog_games_folder(root));
         } else {
             warn!("GOG Galaxy não encontrado no sistema (Registry vazio e pasta ausente).");
@@ -155,7 +161,12 @@ fn read_gog_games_from_registry() -> Vec<GogGameInfo> {
                 name, product_id, install_path
             );
 
-            let game = Game::new(name.trim().to_string(), Platform::Gog, product_id, Confidence::High);
+            let game = Game::new(
+                name.trim().to_string(),
+                Platform::Gog,
+                product_id,
+                Confidence::High,
+            );
 
             // Tenta detectar saves associados via registry (campo `WORKINGDIR` ou `SAVEPATH`)
             let save_paths = detect_save_paths_from_registry(&game_key, game.id, &install_path);
@@ -250,9 +261,7 @@ fn scan_gog_games_folder(root: &PathBuf) -> Vec<GogGameInfo> {
             .to_string();
 
         // Ignora pastas do próprio GOG Galaxy (não são jogos)
-        if name.to_lowercase().contains("gog galaxy")
-            || name.to_lowercase().contains("redist")
-        {
+        if name.to_lowercase().contains("gog galaxy") || name.to_lowercase().contains("redist") {
             continue;
         }
 
@@ -335,7 +344,10 @@ mod tests {
         // Não importa se o GOG está instalado ou não — nunca deve panicar
         let detector = GogDetector::new();
         let result = detector.detect().await;
-        assert!(result.is_ok(), "GogDetector::detect() não deve retornar Err");
+        assert!(
+            result.is_ok(),
+            "GogDetector::detect() não deve retornar Err"
+        );
     }
 
     #[tokio::test]

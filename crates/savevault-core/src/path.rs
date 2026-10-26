@@ -89,10 +89,7 @@ pub fn normalize_windows_path_str(raw: &str) -> Result<String, PathError> {
         let remainder = &converted[2..];
 
         // Componentes após a letra da unidade
-        let segments: Vec<&str> = remainder
-            .split('\\')
-            .filter(|s| !s.is_empty())
-            .collect();
+        let segments: Vec<&str> = remainder.split('\\').filter(|s| !s.is_empty()).collect();
 
         if segments.is_empty() {
             // Raiz de disco: C:\ ou C:/ ou C:\\
@@ -108,10 +105,7 @@ pub fn normalize_windows_path_str(raw: &str) -> Result<String, PathError> {
     }
 
     // 4. Caminho relativo ou sem unidade
-    let segments: Vec<&str> = converted
-        .split('\\')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = converted.split('\\').filter(|s| !s.is_empty()).collect();
 
     if segments.is_empty() {
         return Err(PathError::EmptyPath);
@@ -318,13 +312,23 @@ mod tests {
 
     #[test]
     fn test_internal_savevault_file_detection() {
-        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav.savevault_safety_1234")));
-        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav.restore_tmp_abcd")));
+        assert!(is_internal_savevault_file(Path::new(
+            r"C:\Saves\slot1.sav.savevault_safety_1234"
+        )));
+        assert!(is_internal_savevault_file(Path::new(
+            r"C:\Saves\slot1.sav.restore_tmp_abcd"
+        )));
         assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.tmp")));
-        assert!(is_internal_savevault_file(Path::new(r"C:\Saves\slot1.crswap")));
+        assert!(is_internal_savevault_file(Path::new(
+            r"C:\Saves\slot1.crswap"
+        )));
 
-        assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.sav")));
-        assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\slot1.dat")));
+        assert!(!is_internal_savevault_file(Path::new(
+            r"C:\Saves\slot1.sav"
+        )));
+        assert!(!is_internal_savevault_file(Path::new(
+            r"C:\Saves\slot1.dat"
+        )));
         assert!(!is_internal_savevault_file(Path::new(r"C:\Saves\savegame")));
     }
 
@@ -350,7 +354,9 @@ mod tests {
         )));
 
         // Internal files
-        assert!(is_ignored_relative_save_path(Path::new(r"slot1.sav.checkpoint_safety_1234")));
+        assert!(is_ignored_relative_save_path(Path::new(
+            r"slot1.sav.checkpoint_safety_1234"
+        )));
         assert!(is_ignored_relative_save_path(Path::new(r"slot1.tmp")));
 
         // Real save files must NOT be ignored

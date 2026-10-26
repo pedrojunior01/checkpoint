@@ -1,9 +1,9 @@
+use super::resolver::{resolve_paths, PathContext};
+use super::types::GameEntry;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use anyhow::Result;
-use tracing::{info, debug};
-use super::types::GameEntry;
-use super::resolver::{PathContext, resolve_paths};
+use tracing::{debug, info};
 
 /// Detector de saves via Ludusavi Manifest.
 pub struct ManifestDetector {
@@ -59,7 +59,11 @@ impl ManifestDetector {
             skipped
         );
 
-        Ok(Self { steam_index, gog_index, games })
+        Ok(Self {
+            steam_index,
+            gog_index,
+            games,
+        })
     }
 
     /// Retorna os caminhos de save para um jogo Steam, resolvendo placeholders.
@@ -85,12 +89,7 @@ impl ManifestDetector {
             }
             let resolved_list = resolve_paths(template, ctx);
             for resolved in resolved_list {
-                debug!(
-                    "[{}] {} → {}",
-                    game_name,
-                    template,
-                    resolved.display()
-                );
+                debug!("[{}] {} → {}", game_name, template, resolved.display());
                 paths.push(resolved);
             }
         }
@@ -108,7 +107,12 @@ impl ManifestDetector {
     }
 
     /// Retorna os caminhos de save para um jogo GOG, resolvendo placeholders.
-    pub fn find_save_paths_gog(&self, gog_id: Option<u64>, title: &str, ctx: &PathContext) -> Vec<PathBuf> {
+    pub fn find_save_paths_gog(
+        &self,
+        gog_id: Option<u64>,
+        title: &str,
+        ctx: &PathContext,
+    ) -> Vec<PathBuf> {
         // Tenta achar por GOG ID primeiro
         let game_entry = gog_id
             .and_then(|id| self.gog_index.get(&id))
@@ -131,12 +135,7 @@ impl ManifestDetector {
             }
             let resolved_list = resolve_paths(template, ctx);
             for resolved in resolved_list {
-                debug!(
-                    "[GOG: {}] {} → {}",
-                    title,
-                    template,
-                    resolved.display()
-                );
+                debug!("[GOG: {}] {} → {}", title, template, resolved.display());
                 paths.push(resolved);
             }
         }

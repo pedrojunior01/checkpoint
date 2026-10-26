@@ -1,9 +1,9 @@
 use anyhow::Result;
+use chrono::Utc;
+use savevault_core::models::{Backup, SyncStatus};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
-use savevault_core::models::{Backup, SyncStatus};
 use uuid::Uuid;
-use chrono::Utc;
 
 /// Motor de snapshots/versões de saves.
 #[allow(dead_code)]
@@ -16,7 +16,10 @@ pub struct SnapshotManager {
 
 impl SnapshotManager {
     pub fn new(backup_root: PathBuf, max_versions: u32) -> Self {
-        Self { backup_root, max_versions }
+        Self {
+            backup_root,
+            max_versions,
+        }
     }
 
     /// Cria um snapshot do arquivo de save, retornando o Backup criado.
@@ -30,18 +33,15 @@ impl SnapshotManager {
         source_path: &Path,
         next_version: u32,
     ) -> Result<Backup> {
-        let filename = source_path.file_name()
+        let filename = source_path
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho inválido: sem nome de arquivo"))?;
 
         let safe_game_name = sanitize_name(game_name);
 
-        let version_dir = self.backup_root
-            .join(&safe_game_name)
-            .join("latest");
+        let version_dir = self.backup_root.join(&safe_game_name).join("latest");
 
-        let daily_dir = self.backup_root
-            .join(&safe_game_name)
-            .join("daily");
+        let daily_dir = self.backup_root.join(&safe_game_name).join("daily");
 
         tokio::fs::create_dir_all(&version_dir).await?;
         tokio::fs::create_dir_all(&daily_dir).await?;
@@ -65,7 +65,11 @@ impl SnapshotManager {
             let _ = tokio::fs::copy(source_path, &dest_daily).await;
         }
 
-        info!("Snapshot criado: {} → {}", source_path.display(), dest.display());
+        info!(
+            "Snapshot criado: {} → {}",
+            source_path.display(),
+            dest.display()
+        );
 
         let backup = Backup {
             id: Uuid::new_v4(),
@@ -93,7 +97,8 @@ impl SnapshotManager {
         version: u32,
         dest_path: &Path,
     ) -> Result<Option<PathBuf>> {
-        let filename = dest_path.file_name()
+        let filename = dest_path
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Caminho de destino inválido: sem nome de arquivo"))?;
 
         let dest_parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
@@ -104,13 +109,15 @@ impl SnapshotManager {
         let safe_game_name = sanitize_name(game_name);
 
         // Validação antecipada da versão de origem (nunca alterar o disco se a versão não existir)
-        let version_dir = self.backup_root
-            .join(&safe_game_name)
-            .join("latest");
+        let version_dir = self.backup_root.join(&safe_game_name).join("latest");
 
         let mut source = version_dir.join(filename);
         if !source.exists() {
-            let daily_source = self.backup_root.join(&safe_game_name).join("daily").join(filename);
+            let daily_source = self
+                .backup_root
+                .join(&safe_game_name)
+                .join("daily")
+                .join(filename);
             if daily_source.exists() {
                 source = daily_source;
             }
@@ -119,7 +126,9 @@ impl SnapshotManager {
         if !source.exists() {
             anyhow::bail!(
                 "Versão {} do arquivo {} não encontrada em {}",
-                version, file_id, version_dir.display()
+                version,
+                file_id,
+                version_dir.display()
             );
         }
 
@@ -148,7 +157,8 @@ impl SnapshotManager {
             tokio::fs::copy(dest_path, &candidate).await.map_err(|e| {
                 anyhow::anyhow!(
                     "Falha ao criar backup de segurança em '{}': {}",
-                    candidate.display(), e
+                    candidate.display(),
+                    e
                 )
             })?;
             debug!("Backup de segurança criado: {}", candidate.display());
@@ -159,7 +169,11 @@ impl SnapshotManager {
 
         // Passo 2: cópia atômica via arquivo temporário no mesmo diretório de destino
         let orig_name = filename.to_string_lossy();
-        let tmp_path = dest_parent.join(format!("{}.restore_tmp_{}", orig_name, Uuid::new_v4().simple()));
+        let tmp_path = dest_parent.join(format!(
+            "{}.restore_tmp_{}",
+            orig_name,
+            Uuid::new_v4().simple()
+        ));
 
         if let Err(e) = tokio::fs::copy(&source, &tmp_path).await {
             let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -171,17 +185,27 @@ impl SnapshotManager {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             anyhow::bail!(
                 "Falha ao aplicar restauração atômica em '{}': {}. Destino permanece intacto.",
-                dest_path.display(), e
+                dest_path.display(),
+                e
             );
         }
 
-        info!("Restauração concluída: {} → {}", source.display(), dest_path.display());
+        info!(
+            "Restauração concluída: {} → {}",
+            source.display(),
+            dest_path.display()
+        );
         Ok(safety_path)
     }
 
     /// Remove o diretório físico do snapshot correspondente à versão.
     /// Ex.: `backup_root/file_id/v{version}`
-    pub async fn remove_snapshot_version(&self, _file_id: Uuid, _game_name: &str, _version: u32) -> Result<()> {
+    pub async fn remove_snapshot_version(
+        &self,
+        _file_id: Uuid,
+        _game_name: &str,
+        _version: u32,
+    ) -> Result<()> {
         // O novo design não usa pastas v{}, usa apenas `latest` e `daily` que se sobrescrevem.
         // A nuvem gerencia as versões. Nada a deletar localmente.
         Ok(())

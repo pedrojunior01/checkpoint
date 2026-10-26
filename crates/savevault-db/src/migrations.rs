@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use anyhow::Result;
+use rusqlite::Connection;
 
 /// Executa as migrações do banco de dados em ordem.
 /// Novas migrações devem ser adicionadas no final do array `MIGRATIONS`.
@@ -166,5 +166,3 @@ CREATE TABLE IF NOT EXISTS ignored_locations (
 );
 CREATE INDEX IF NOT EXISTS idx_ignored_locations_path ON ignored_locations(path COLLATE NOCASE);
 ";
-
-

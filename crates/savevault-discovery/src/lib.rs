@@ -1,13 +1,13 @@
 pub mod emulators;
 pub mod generic;
 pub mod gog;
-pub mod manifest;
-pub mod steam;
-pub mod save_detector;
 pub mod ludusavi;
+pub mod manifest;
+pub mod save_detector;
+pub mod steam;
 
-pub use save_detector::{SaveDetector, SaveDiscoveryResult, SaveDiscoveryError};
 pub use ludusavi::LudusaviSaveDetector;
+pub use save_detector::{SaveDetector, SaveDiscoveryError, SaveDiscoveryResult};
 
 use anyhow::Result;
 use savevault_core::models::{Game, SaveLocation, SaveLocationType};
@@ -104,7 +104,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     // Resolução de saves para Steam
                     for info in &steam_infos {
                         let game = &info.game;
-                        let app_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
+                        let app_id = game
+                            .platform_id
+                            .as_ref()
+                            .and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
 
                         let mut paths = if let Some(id) = app_id {
@@ -118,7 +121,14 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         // para evitar monitorar DLLs e arquivos de assets gigantes (ex: .pak de 18GB).
                         if paths.is_empty() {
                             if let Some(ref install_path) = info.install_path {
-                                for sub in &["saves", "save", "saved", "savegames", "SaveData", "savedgames"] {
+                                for sub in &[
+                                    "saves",
+                                    "save",
+                                    "saved",
+                                    "savegames",
+                                    "SaveData",
+                                    "savedgames",
+                                ] {
                                     let sub_p = install_path.join(sub);
                                     if sub_p.exists() {
                                         paths.push(sub_p);
@@ -130,7 +140,11 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                                 if let Some(id) = app_id {
                                     let steam_root = std::env::var("ProgramFiles(x86)")
                                         .map(|p| std::path::PathBuf::from(p).join("Steam"))
-                                        .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Program Files (x86)\Steam"));
+                                        .unwrap_or_else(|_| {
+                                            std::path::PathBuf::from(
+                                                r"C:\Program Files (x86)\Steam",
+                                            )
+                                        });
                                     let userdata = steam_root.join("userdata");
                                     if userdata.exists() {
                                         if let Ok(entries) = std::fs::read_dir(&userdata) {
@@ -153,13 +167,14 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         }
 
                         for path in paths {
-                            let location_type = if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
-                                SaveLocationType::Glob
-                            } else if path.is_file() || path.extension().is_some() {
-                                SaveLocationType::File
-                            } else {
-                                SaveLocationType::Directory
-                            };
+                            let location_type =
+                                if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
+                                    SaveLocationType::Glob
+                                } else if path.is_file() || path.extension().is_some() {
+                                    SaveLocationType::File
+                                } else {
+                                    SaveLocationType::Directory
+                                };
 
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
@@ -175,7 +190,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     // Resolução de saves para GOG
                     for info in &gog_infos {
                         let game = &info.game;
-                        let gog_id = game.platform_id.as_ref().and_then(|id| id.parse::<u64>().ok());
+                        let gog_id = game
+                            .platform_id
+                            .as_ref()
+                            .and_then(|id| id.parse::<u64>().ok());
                         let ctx = manifest::PathContext::from_env(info.install_path.as_ref());
 
                         let mut paths = detector.find_save_paths_gog(gog_id, &game.name, &ctx);
@@ -188,13 +206,14 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                         }
 
                         for path in paths {
-                            let location_type = if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
-                                SaveLocationType::Glob
-                            } else if path.is_file() || path.extension().is_some() {
-                                SaveLocationType::File
-                            } else {
-                                SaveLocationType::Directory
-                            };
+                            let location_type =
+                                if savevault_core::path::is_glob_pattern(&path.to_string_lossy()) {
+                                    SaveLocationType::Glob
+                                } else if path.is_file() || path.extension().is_some() {
+                                    SaveLocationType::File
+                                } else {
+                                    SaveLocationType::Directory
+                                };
 
                             save_locations.push(SaveLocation {
                                 id: Uuid::new_v4(),
@@ -208,7 +227,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.", e);
+                    tracing::warn!(
+                        "Falha ao carregar manifest: {}. Saves serão detectados apenas localmente.",
+                        e
+                    );
                     for info in &steam_infos {
                         if let Some(ref install_path) = info.install_path {
                             save_locations.push(SaveLocation {
@@ -228,7 +250,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
             }
         }
         Err(e) => {
-            tracing::warn!("Manifest indisponível: {}. Saves serão detectados apenas localmente.", e);
+            tracing::warn!(
+                "Manifest indisponível: {}. Saves serão detectados apenas localmente.",
+                e
+            );
             for info in &steam_infos {
                 if let Some(ref install_path) = info.install_path {
                     save_locations.push(SaveLocation {
@@ -261,14 +286,19 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
                     break;
                 }
             }
-            if is_duplicate { break; }
+            if is_duplicate {
+                break;
+            }
         }
-        
+
         if !is_duplicate {
             save_locations.extend(info.save_locations);
             games.push(info.game);
         } else {
-            tracing::info!("Jogo genérico '{}' ignorado por sobrepor caminho de jogo oficial.", info.game.name);
+            tracing::info!(
+                "Jogo genérico '{}' ignorado por sobrepor caminho de jogo oficial.",
+                info.game.name
+            );
         }
     }
 
@@ -278,7 +308,10 @@ pub async fn run_all(cache_dir: &std::path::Path) -> Result<DiscoveryResult> {
         save_locations.len()
     );
 
-    Ok(DiscoveryResult { games, save_locations })
+    Ok(DiscoveryResult {
+        games,
+        save_locations,
+    })
 }
 
 /// Conecta os jogos encontrados pelo Game Discovery ao Save Discovery,
