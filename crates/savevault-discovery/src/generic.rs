@@ -23,8 +23,7 @@ use walkdir::WalkDir;
 
 /// Extensões de arquivo que indicam save games com alta probabilidade.
 const SAVE_EXTENSIONS: &[&str] = &[
-    "sav", "save", "sl2", "sg", "sg0", "sg1", "sg2", "sg3", "slot", "gam", "savegame", "sfs",
-    "dat",
+    "sav", "save", "sl2", "sg", "sg0", "sg1", "sg2", "sg3", "slot", "gam", "savegame", "sfs", "dat",
 ];
 
 /// Palavras-chave em nomes de pasta que indicam diretório de saves.
